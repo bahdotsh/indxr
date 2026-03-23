@@ -284,12 +284,12 @@ Different agents have different context windows. Here are recommended token budg
 
 | Agent | Context Window | Recommended `--max-tokens` |
 |-------|---------------|---------------------------|
-| Claude Code (Opus) | 200K | 15,000–30,000 |
-| Claude Code (Sonnet) | 200K | 10,000–20,000 |
-| Claude Desktop | 200K | 10,000–20,000 |
-| Cursor | Varies | 4,000–8,000 |
-| Codex CLI | 200K | 8,000–15,000 |
-| Copilot Chat | ~8K | 2,000–4,000 |
+| Claude Code (Opus) | 1M | 15,000–50,000 |
+| Claude Code (Sonnet) | 1M | 10,000–30,000 |
+| Claude Desktop | 1M | 10,000–30,000 |
+| Cursor | 200K | 4,000–8,000 |
+| Codex CLI | Varies | 8,000–15,000 |
+| Copilot Chat | 64K–192K | 4,000–10,000 |
 | Aider | Varies | 4,000–8,000 |
 
 These are starting points — adjust based on how much context you need for the task alongside the index.

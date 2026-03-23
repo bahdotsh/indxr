@@ -53,19 +53,16 @@ src/
 
 **Declarations:**
 
-`pub fn main() -> Result<()>` [async]
-> Application entry point
-> Line 10 (35 lines)
+`pub fn main() -> Result<()>`
+
+`pub struct Config`
+> Fields: `name: String`, `debug: bool`
 ```
 
 **Features:**
 - Public API Surface section at the top for quick orientation
-- Line numbers for navigating to source
-- Metadata badges: `[test]`, `[async]`, `[deprecated]`
-- Relationship annotations: `implements Trait`, `extends Class`
-- Doc comments included inline
-- Body line counts help agents decide whether to read the full source
 - Import summarization (large import lists are truncated with counts)
+- At `full` detail level: line numbers, doc comments, body line counts, metadata badges (`[test]`, `[async]`, `[deprecated]`), and relationship annotations (`implements Trait`, `extends Class`)
 
 **Markdown-specific options:**
 - `--omit-imports` — Remove import listings from output
@@ -111,12 +108,10 @@ indxr -f json -o index.json
           "visibility": "Public",
           "line": 10,
           "doc_comment": "Application entry point",
-          "metadata": {
-            "is_test": false,
-            "is_async": true,
-            "is_deprecated": false,
-            "body_lines": 35
-          },
+          "is_test": false,
+          "is_async": true,
+          "is_deprecated": false,
+          "body_lines": 35,
           "relationships": [],
           "children": []
         }
@@ -182,7 +177,7 @@ src/
 
 ### `signatures` (default)
 
-Everything in summary, plus all declarations with signatures, imports, doc comments, and line numbers.
+Everything in summary, plus all declarations with signatures and imports.
 
 ```bash
 indxr -d signatures
@@ -194,7 +189,7 @@ indxr
 
 ### `full`
 
-Everything in signatures, plus metadata badges (`[test]`, `[async]`, `[deprecated]`), relationship annotations, and body line counts.
+Everything in signatures, plus doc comments, line numbers, body line counts, metadata badges (`[test]`, `[async]`, `[deprecated]`), and relationship annotations.
 
 ```bash
 indxr -d full

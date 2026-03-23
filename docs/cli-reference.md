@@ -55,7 +55,7 @@ indxr /home/user/repos/backend
 | `-l, --languages <LANGS>` | Filter by language (comma-separated). Example: `rust,python` |
 | `--filter-path <SUBPATH>` | Only include files under this subdirectory |
 | `--symbol <SYMBOL>` | Search for a symbol by name (case-insensitive substring) |
-| `--kind <KIND>` | Filter by declaration kind (function, struct, class, trait, enum, etc.) |
+| `--kind <KIND>` | Filter by declaration kind: `function`, `struct`, `class`, `trait`, `enum`, `interface`, `module`, `method`, `constant`, `impl`, `type`, `namespace`, `macro`, `table`, `service`, `message`, `rpc`, and more |
 | `--public-only` | Only show public declarations |
 
 ### File Discovery

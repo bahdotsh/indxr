@@ -44,9 +44,18 @@ indxr --kind enum
 indxr --kind interface
 indxr --kind module
 indxr --kind constant
+indxr --kind method
+indxr --kind impl
+indxr --kind type
+indxr --kind namespace
+indxr --kind macro
+indxr --kind table
+indxr --kind service
+indxr --kind message
+indxr --kind rpc
 ```
 
-This filters the output to only show declarations of the specified kind.
+This filters the output to only show declarations of the specified kind. The full list of kinds depends on the languages being indexed — for example, `table` applies to SQL files, `service`/`message`/`rpc` to Protobuf, and `namespace` to C++.
 
 ## Symbol Search
 

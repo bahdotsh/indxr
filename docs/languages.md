@@ -127,7 +127,8 @@ These languages use pattern matching for lightweight structural extraction. Less
 
 ### Shell
 
-**Extensions:** `.sh`, `.bash`, `.zsh`, `.bashrc`, `.profile`
+**Extensions:** `.sh`, `.bash`, `.zsh`
+**Recognized filenames:** `.bashrc`, `.zshrc`, `.bash_profile`, `.profile`
 
 **Extracts:**
 - Function definitions (`function name()` and `name()`)

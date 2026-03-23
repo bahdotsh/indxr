@@ -93,7 +93,7 @@ indxr --since main -f json
 
 ## How It Works
 
-1. **Identify changed files** using `git diff --name-only <ref>..HEAD`
+1. **Identify changed files** using `git diff --name-only <ref>...HEAD`
 2. **Retrieve old file content** using `git show <ref>:<path>` for each changed file
 3. **Parse both versions** — current files from disk, old files from git
 4. **Compare declarations** — match by name and kind, detect additions, removals, and signature changes
