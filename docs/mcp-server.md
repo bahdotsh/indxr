@@ -151,6 +151,67 @@ Get index statistics. No parameters required.
 
 **Returns:** File count, line count, language breakdown, indexing duration, and generation timestamp.
 
+### `get_file_summary`
+
+Get a complete overview of a file in one call: metadata, imports, declarations (shallow), kind counts, public symbol count, and test presence.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `path` | string | yes | Relative file path |
+
+### `read_source`
+
+Read source code from a file, either by symbol name (uses indexed line info) or by explicit line range.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `path` | string | yes | Relative file path |
+| `symbol` | string | no | Symbol name to look up and extract |
+| `start_line` | number | no | Start line (1-based) for explicit range |
+| `end_line` | number | no | End line (1-based, inclusive) for explicit range |
+| `expand` | number | no | Extra context lines above/below (default: 0) |
+
+### `get_file_context`
+
+Get a file's summary plus its dependency context: which files import it (reverse dependencies) and related files (tests, siblings in the same directory).
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `path` | string | yes | Relative file path |
+
+### `regenerate_index`
+
+Re-scan the codebase, rebuild the index, and write an updated INDEX.md to the project root. Also refreshes the in-memory index used by all other tools. No parameters required.
+
+**Example request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "tools/call",
+  "params": {
+    "name": "regenerate_index",
+    "arguments": {}
+  }
+}
+```
+
+**Example response:**
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "{\"status\":\"ok\",\"message\":\"INDEX.md regenerated (44 files, 16132 lines)\",\"path\":\"/path/to/project/INDEX.md\",\"files_indexed\":44,\"total_lines\":16132}"
+  }]
+}
+```
+
 ## Configuration for AI Tools
 
 ### Claude Code

@@ -140,6 +140,10 @@ indxr serve ./my-project
 | `get_tree` | Directory/file tree, optional path prefix filter |
 | `get_imports` | Import statements for a file |
 | `get_stats` | File count, line count, language breakdown, duration |
+| `get_file_summary` | Complete file overview: metadata, declarations, kind counts, public symbols |
+| `read_source` | Read source code by symbol name or line range |
+| `get_file_context` | File summary + reverse dependencies + related files |
+| `regenerate_index` | Re-index codebase and write updated INDEX.md |
 
 MCP config:
 

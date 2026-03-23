@@ -5,6 +5,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value, json};
 
+use crate::indexer::{self, IndexConfig};
 use crate::model::declarations::{DeclKind, Declaration, Visibility};
 use crate::model::{CodebaseIndex, FileIndex};
 
@@ -448,6 +449,15 @@ fn tool_definitions() -> Value {
                     },
                     "required": ["path"]
                 }
+            },
+            {
+                "name": "regenerate_index",
+                "description": "Re-scan the codebase, rebuild the index, and write an updated INDEX.md to the project root. Use this after making code changes to keep the index current. Also refreshes the in-memory index used by all other tools.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
             }
         ]
     })
@@ -469,6 +479,28 @@ fn handle_tool_call(index: &CodebaseIndex, name: &str, args: &Value) -> Value {
         "read_source" => tool_read_source(index, args),
         "get_file_context" => tool_get_file_context(index, args),
         _ => tool_error(&format!("Unknown tool: {}", name)),
+    }
+}
+
+fn tool_regenerate_index(index: &mut CodebaseIndex, config: &IndexConfig) -> Value {
+    match indexer::regenerate_index_file(config) {
+        Ok(new_index) => {
+            let file_count = new_index.stats.total_files;
+            let line_count = new_index.stats.total_lines;
+            let output_path = new_index.root.join("INDEX.md");
+            *index = new_index;
+            tool_result(json!({
+                "status": "ok",
+                "message": format!(
+                    "INDEX.md regenerated ({} files, {} lines)",
+                    file_count, line_count
+                ),
+                "path": output_path.to_string_lossy(),
+                "files_indexed": file_count,
+                "total_lines": line_count
+            }))
+        }
+        Err(e) => tool_error(&format!("Failed to regenerate index: {}", e)),
     }
 }
 
@@ -904,7 +936,12 @@ fn handle_tools_list(id: Value) -> JsonRpcResponse {
     ok_response(id, tool_definitions())
 }
 
-fn handle_tools_call(id: Value, index: &CodebaseIndex, params: &Value) -> JsonRpcResponse {
+fn handle_tools_call(
+    id: Value,
+    index: &mut CodebaseIndex,
+    config: &IndexConfig,
+    params: &Value,
+) -> JsonRpcResponse {
     let tool_name = match params.get("name").and_then(|v| v.as_str()) {
         Some(n) => n,
         None => {
@@ -913,6 +950,12 @@ fn handle_tools_call(id: Value, index: &CodebaseIndex, params: &Value) -> JsonRp
     };
 
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
+
+    if tool_name == "regenerate_index" {
+        let result = tool_regenerate_index(index, config);
+        return ok_response(id, result);
+    }
+
     let result = handle_tool_call(index, tool_name, &arguments);
     ok_response(id, result)
 }
@@ -921,7 +964,7 @@ fn handle_tools_call(id: Value, index: &CodebaseIndex, params: &Value) -> JsonRp
 // Main server loop
 // ---------------------------------------------------------------------------
 
-pub fn run_mcp_server(index: CodebaseIndex) -> anyhow::Result<()> {
+pub fn run_mcp_server(mut index: CodebaseIndex, config: IndexConfig) -> anyhow::Result<()> {
     eprintln!("indxr MCP server starting (root: {})", index.root.display());
 
     let stdin = io::stdin();
@@ -970,7 +1013,7 @@ pub fn run_mcp_server(index: CodebaseIndex) -> anyhow::Result<()> {
         let response = match request.method.as_str() {
             "initialize" => handle_initialize(id),
             "tools/list" => handle_tools_list(id),
-            "tools/call" => handle_tools_call(id, &index, &params),
+            "tools/call" => handle_tools_call(id, &mut index, &config, &params),
             _ => err_response(id, -32601, format!("Method not found: {}", request.method)),
         };
 

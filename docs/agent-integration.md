@@ -63,7 +63,7 @@ Or use the CLI to add it:
 claude mcp add indxr -- indxr serve .
 ```
 
-Claude Code will automatically discover the MCP tools and can call `lookup_symbol`, `list_declarations`, etc. during conversations.
+Claude Code will automatically discover the MCP tools and can call `lookup_symbol`, `list_declarations`, `regenerate_index`, etc. during conversations.
 
 **Tips for Claude Code:**
 - Use the MCP server for interactive sessions where you're exploring or debugging

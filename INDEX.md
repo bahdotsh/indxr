@@ -1,20 +1,40 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-23 09:15:10 UTC | Files: 23 | Lines: 4636
-> Languages: Rust (23)
+> Generated: 2026-03-23 12:59:07 UTC | Files: 44 | Lines: 15907
+> Languages: Markdown (12), Python (1), Rust (29), Shell (1), TOML (1)
 
 ## Directory Structure
 
 ```
 indxr/
+  CLAUDE.md
+  Cargo.toml
+  INDEX.md
+  README.md
+  benchmark.sh
+  docs/
+    agent-integration.md
+    caching.md
+    cli-reference.md
+    filtering.md
+    git-diffing.md
+    languages.md
+    mcp-server.md
+    output-formats.md
+    token-budget.md
   src/
+    budget.rs
     cache/
       fingerprint.rs
       mod.rs
     cli.rs
+    diff.rs
     error.rs
+    filter.rs
+    indexer.rs
     languages.rs
     main.rs
+    mcp.rs
     model/
       declarations.rs
       mod.rs
@@ -34,33 +54,464 @@ indxr/
         python.rs
         rust.rs
         typescript.rs
+      regex_parser.rs
       tree_sitter_parser.rs
     walker/
       mod.rs
+  token_count.py
 ```
+
+---
+
+## Public API Surface
+
+**CLAUDE.md**
+- `# indxr`
+
+**Cargo.toml**
+- `[package]`
+- `[dependencies]`
+
+**INDEX.md**
+- `# Codebase Index: indxr`
+
+**README.md**
+- `# indxr`
+- `# Codebase Index: my-project`
+
+**benchmark.sh**
+- `count_tokens_openai()`
+- `count_tokens_claude()`
+- `_fallback_count()`
+- `fmt_num()`
+- `pct()`
+- `ratio()`
+- `sep()`
+- `section()`
+- `run_indxr()`
+- `run_indxr_cold()`
+- `run_indxr_warm()`
+- `mcp_query()`
+- `fmt_tok()`
+- `fmt_ratio()`
+- `benchmark_project()`
+
+**docs/agent-integration.md**
+- `# Agent Integration Guide`
+- `# Generate a compact index`
+- `# Include in Codex instructions`
+- `# Full structured index`
+- `# Pipe to your agent`
+- `# Generate a scoped index for the area you're working in`
+- `# Show structural changes since the last release`
+- `# Show what changed on this branch`
+- `# Public API only, compact`
+- `# Summary for high-level overview`
+- `# Full signatures for detailed reference`
+- `# .github/workflows/index.yml`
+- `# Only the Rust backend`
+- `# Only the TypeScript frontend`
+
+**docs/caching.md**
+- `# Caching`
+
+**docs/cli-reference.md**
+- `# CLI Reference`
+- `# Index current directory`
+- `# Index a specific project`
+- `# Write to file`
+- `# JSON for programmatic use`
+- `# YAML for human-readable structured output`
+- `# Summary only (no declarations)`
+- `# Full detail with metadata`
+- `# Only Rust and Python files`
+- `# Only files under src/parser`
+- `# Only public functions`
+- `# Find all "parse" symbols`
+- `# Combined: public structs in src/model`
+- `# Changes since main branch`
+- `# Changes since a tag`
+- `# Changes in last 5 commits`
+- `# Changes since a commit hash`
+- `# JSON diff output`
+- `# Fit in 4000 tokens`
+- `# Compact public API within budget`
+- `# Budget with JSON output`
+- `# Limit depth`
+- `# Exclude test directories`
+- `# Include gitignored files`
+- `# Skip large files`
+- `# Compact public API index for an agent`
+- `# Quick structural diff of backend changes`
+- `# Full JSON index without cache`
+
+**docs/filtering.md**
+- `# Filtering & Scoped Output`
+- `# Single language`
+- `# Multiple languages`
+- `# Config files only`
+- `# Find anything with "parse" in the name`
+- `# Find the Cache type`
+- `# Find all "new" constructors`
+- `# Public functions in src/parser`
+- `# All structs named "Config" in Rust files`
+- `# Public API of the model layer`
+- `# Find all async functions`
+- `# Limit directory depth`
+- `# Skip large files (default is 512 KB)`
+- `# Exclude patterns`
+- `# Include gitignored files`
+- `# Skip imports section`
+- `# Skip directory tree`
+- `# Both — just declarations`
+
+**docs/git-diffing.md**
+- `# Git-Aware Structural Diffing`
+- `# Since a branch`
+- `# Since a tag`
+- `# Since a relative commit`
+- `# Since a specific commit`
+- `# Structural Changes (since main)`
+- `# Only show structural changes in Rust files`
+- `# Only changes in a specific directory`
+- `# JSON output for programmatic use`
+- `# Only public API changes`
+
+**docs/languages.md**
+- `# Supported Languages`
+- `# Only Rust`
+- `# Rust and Python`
+- `# All config files`
+
+**docs/mcp-server.md**
+- `# MCP Server`
+- `# Send initialize`
+- `# Send initialized notification`
+- `# Call a tool`
+
+**docs/output-formats.md**
+- `# Output Formats`
+- `# or just`
+- `# Codebase Index: project-name`
+- `# Codebase Index: my-project`
+- `# or just`
+
+**docs/token-budget.md**
+- `# Token Budget`
+- `# Public API within budget`
+- `# Scoped to a directory within budget`
+- `# Specific language within budget`
+
+**src/budget.rs**
+- `pub fn estimate_tokens(text: &str) -> usize`
+- `pub fn apply_token_budget(index: &mut CodebaseIndex, max_tokens: usize)`
+
+**src/cache/fingerprint.rs**
+- `pub fn compute_hash(content: &[u8]) -> u64`
+- `pub fn metadata_matches( cached_mtime: u64, cached_size: u64, current_mtime: u64, current_size: u64, ) -> bool`
+
+**src/cache/mod.rs**
+- `pub mod fingerprint`
+- `pub struct Cache`
+
+**src/cli.rs**
+- `pub struct Cli`
+- `pub enum Command`
+- `pub enum OutputFormat`
+
+**src/diff.rs**
+- `pub struct StructuralDiff`
+- `pub struct FileDiff`
+- `pub struct DeclChange`
+- `pub struct DeclModification`
+- `pub fn get_changed_files(root: &Path, since_ref: &str) -> Result<Vec<PathBuf>>`
+- `pub fn get_added_files(root: &Path, since_ref: &str) -> Result<Vec<PathBuf>>`
+- `pub fn get_deleted_files(root: &Path, since_ref: &str) -> Result<Vec<PathBuf>>`
+- `pub fn get_file_at_ref(root: &Path, file_path: &Path, git_ref: &str) -> Result<Option<String>>`
+- `pub fn compute_structural_diff( current_index: &CodebaseIndex, old_files: &HashMap<PathBuf, FileIndex>, changed_paths: &[PathBuf], ) -> StructuralDiff`
+- `pub fn format_diff_markdown(diff: &StructuralDiff) -> String`
+- `pub fn format_diff_json(diff: &StructuralDiff) -> Result<String>`
+
+**src/error.rs**
+- `pub enum IndxrError`
+
+**src/filter.rs**
+- `pub struct FilterOptions`
+- `pub fn apply_filters(index: &mut CodebaseIndex, opts: &FilterOptions)`
+
+**src/indexer.rs**
+- `pub struct IndexConfig`
+- `pub struct ParseResult`
+- `pub fn parse_files( files: &[&FileEntry], cache: &Cache, registry: &ParserRegistry, ) -> Vec<ParseResult>`
+- `pub fn collect_results( results: Vec<ParseResult>, cache: &mut Cache, ) -> (Vec<FileIndex>, usize, HashMap<String, usize>, usize)`
+- `pub fn build_index(config: &IndexConfig) -> anyhow::Result<CodebaseIndex>`
+- `pub fn generate_index_markdown(index: &CodebaseIndex) -> anyhow::Result<String>`
+- `pub fn regenerate_index_file(config: &IndexConfig) -> anyhow::Result<CodebaseIndex>`
+
+**src/languages.rs**
+- `pub enum Language`
+
+**src/mcp.rs**
+- `pub fn run_mcp_server(mut index: CodebaseIndex, config: IndexConfig) -> anyhow::Result<()>`
+
+**src/model/declarations.rs**
+- `pub struct Declaration`
+- `pub struct Relationship`
+- `pub enum RelKind`
+- `pub enum DeclKind`
+- `pub enum Visibility`
+
+**src/model/mod.rs**
+- `pub mod declarations`
+- `pub enum DetailLevel`
+- `pub struct CodebaseIndex`
+- `pub struct FileIndex`
+- `pub struct Import`
+- `pub struct TreeEntry`
+- `pub struct IndexStats`
+
+**src/output/markdown.rs**
+- `pub struct MarkdownOptions`
+- `pub struct MarkdownFormatter`
+
+**src/output/mod.rs**
+- `pub mod markdown`
+- `pub mod yaml`
+- `pub trait OutputFormatter`
+
+**src/output/yaml.rs**
+- `pub struct YamlFormatter`
+
+**src/parser/mod.rs**
+- `pub mod queries`
+- `pub mod regex_parser`
+- `pub mod tree_sitter_parser`
+- `pub trait LanguageParser: Send + Sync`
+- `pub struct ParserRegistry`
+
+**src/parser/queries/c.rs**
+- `pub struct CExtractor`
+
+**src/parser/queries/cpp.rs**
+- `pub struct CppExtractor`
+
+**src/parser/queries/go.rs**
+- `pub struct GoExtractor`
+
+**src/parser/queries/java.rs**
+- `pub struct JavaExtractor`
+
+**src/parser/queries/javascript.rs**
+- `pub struct JavaScriptExtractor`
+
+**src/parser/queries/mod.rs**
+- `pub mod c`
+- `pub mod cpp`
+- `pub mod go`
+- `pub mod java`
+- `pub mod javascript`
+- `pub mod python`
+- `pub mod rust`
+- `pub mod typescript`
+- `pub trait DeclExtractor: Send + Sync`
+- `pub fn get_extractor(language: &Language) -> Box<dyn DeclExtractor>`
+
+**src/parser/queries/python.rs**
+- `pub struct PythonExtractor`
+
+**src/parser/queries/rust.rs**
+- `pub struct RustExtractor`
+
+**src/parser/queries/typescript.rs**
+- `pub struct TypeScriptExtractor`
+
+**src/parser/regex_parser.rs**
+- `pub struct RegexParser`
+
+**src/parser/tree_sitter_parser.rs**
+- `pub struct TreeSitterParser`
+
+**src/walker/mod.rs**
+- `pub struct WalkResult`
+- `pub struct FileEntry`
+- `pub fn walk_directory( root: &Path, respect_gitignore: bool, max_file_size: u64, max_depth: Option<usize>, exclude_patterns: &[String], ) -> Result<WalkResult>`
+
+**token_count.py**
+- `def count_openai(text: str) -> int | None`
+- `def count_claude(text: str) -> int | None`
+- `def main()`
+
+---
+
+## CLAUDE.md
+
+**Language:** Markdown | **Size:** 947 B | **Lines:** 19
+
+**Declarations:**
+
+---
+
+## Cargo.toml
+
+**Language:** TOML | **Size:** 650 B | **Lines:** 28
+
+**Imports:**
+- `anyhow`
+- `bincode`
+- `chrono`
+- `clap`
+- `ignore`
+- `rayon`
+- `regex`
+- `serde`
+- `serde_json`
+- `serde_yaml`
+- *... and 11 more imports*
+
+**Declarations:**
+
+---
+
+## INDEX.md
+
+**Language:** Markdown | **Size:** 38.5 KB | **Lines:** 1534
+
+**Declarations:**
+
+---
+
+## README.md
+
+**Language:** Markdown | **Size:** 6.1 KB | **Lines:** 210
+
+**Declarations:**
+
+---
+
+## benchmark.sh
+
+**Language:** Shell | **Size:** 24.9 KB | **Lines:** 620
+
+**Declarations:**
+
+---
+
+## docs/agent-integration.md
+
+**Language:** Markdown | **Size:** 7.9 KB | **Lines:** 304
+
+**Declarations:**
+
+---
+
+## docs/caching.md
+
+**Language:** Markdown | **Size:** 2.5 KB | **Lines:** 87
+
+**Declarations:**
+
+---
+
+## docs/cli-reference.md
+
+**Language:** Markdown | **Size:** 4.4 KB | **Lines:** 195
+
+**Declarations:**
+
+---
+
+## docs/filtering.md
+
+**Language:** Markdown | **Size:** 3.3 KB | **Lines:** 166
+
+**Declarations:**
+
+---
+
+## docs/git-diffing.md
+
+**Language:** Markdown | **Size:** 3.3 KB | **Lines:** 154
+
+**Declarations:**
+
+---
+
+## docs/languages.md
+
+**Language:** Markdown | **Size:** 5.0 KB | **Lines:** 222
+
+**Declarations:**
+
+---
+
+## docs/mcp-server.md
+
+**Language:** Markdown | **Size:** 7.2 KB | **Lines:** 323
+
+**Declarations:**
+
+---
+
+## docs/output-formats.md
+
+**Language:** Markdown | **Size:** 4.8 KB | **Lines:** 217
+
+**Declarations:**
+
+---
+
+## docs/token-budget.md
+
+**Language:** Markdown | **Size:** 3.3 KB | **Lines:** 92
+
+**Declarations:**
+
+---
+
+## src/budget.rs
+
+**Language:** Rust | **Size:** 8.5 KB | **Lines:** 263
+
+**Imports:**
+- `crate::model::CodebaseIndex`
+- `crate::model::declarations::{Declaration, Visibility}`
+
+**Declarations:**
+
+`fn estimate_index_tokens(index: &CodebaseIndex) -> usize`
+
+`fn estimate_declarations_tokens(decls: &[Declaration]) -> usize`
+
+`fn estimate_file_tokens(file: &crate::model::FileIndex) -> usize`
+
+`fn file_importance(file: &crate::model::FileIndex) -> i64`
+
+`fn count_public_decls(decls: &[Declaration]) -> usize`
+
+`fn truncate_doc_comments(decls: &mut [Declaration], max_len: usize) -> usize`
+
+`fn strip_doc_comments(decls: &mut [Declaration]) -> usize`
+
+`fn remove_private_declarations(decls: &[Declaration]) -> Vec<Declaration>`
+
+`fn strip_children(decls: &mut [Declaration])`
 
 ---
 
 ## src/cache/fingerprint.rs
 
-**Language:** Rust | **Size:** 464 B | **Lines:** 12
+**Language:** Rust | **Size:** 483 B | **Lines:** 17
 
 **Imports:**
 - `xxhash_rust::xxh3::xxh3_64`
 
 **Declarations:**
 
-`pub fn compute_hash(content: &[u8]) -> u64`
-> Fast non-cryptographic hash of file content for change detection.
-
-`pub fn metadata_matches(cached_mtime: u64, cached_size: u64, current_mtime: u64, current_size: u64) -> bool`
-> Quick change check using mtime + size. Returns true if the file appears unchanged based on metadata alone.
-
 ---
 
 ## src/cache/mod.rs
 
-**Language:** Rust | **Size:** 3.5 KB | **Lines:** 128
+**Language:** Rust | **Size:** 3.6 KB | **Lines:** 135
 
 **Imports:**
 - `std::collections::HashMap`
@@ -68,14 +519,12 @@ indxr/
 - `std::path::{Path, PathBuf}`
 - `anyhow::Result`
 - `serde::{Deserialize, Serialize}`
-- `crate::model::FileIndex`
 - `self::fingerprint::{compute_hash, metadata_matches}`
+- `crate::model::FileIndex`
 
 **Declarations:**
 
-`pub mod fingerprint`
-
-`const CACHE_VERSION: u32 = 1`
+`const CACHE_VERSION: u32 = 2`
 
 `const CACHE_FILENAME: &str = "cache.bin"`
 
@@ -85,29 +534,20 @@ indxr/
 `struct CacheEntry`
 > Fields: `mtime: u64`, `size: u64`, `content_hash: u64`, `file_index: FileIndex`
 
-`pub struct Cache`
-> Fields: `store: CacheStore`, `cache_dir: PathBuf`, `dirty: bool`
-
 **`impl Cache`**
   `pub fn load(cache_dir: &Path) -> Self`
-  > Load cache from disk, or create empty if not found / incompatible.
 
   `pub fn disabled() -> Self`
-  > Create a no-op cache that never hits and never saves.
 
   `fn empty_store() -> CacheStore`
 
   `pub fn get(&self, relative_path: &Path, size: u64, mtime: u64) -> Option<FileIndex>`
-  > Try to get a cached FileIndex for a file. Returns Some if the file hasn't changed (based on mtime + size).
 
-  `pub fn insert(&mut self, relative_path: &Path, size: u64, mtime: u64, content: &[u8], file_index: FileIndex)`
-  > Insert or update a cache entry for a file.
+  `pub fn insert( &mut self, relative_path: &Path, size: u64, mtime: u64, content: &[u8], file_index: FileIndex, )`
 
   `pub fn prune(&mut self, existing_paths: &[PathBuf])`
-  > Remove entries for files that no longer exist.
 
   `pub fn save(&self) -> Result<()>`
-  > Save cache to disk if it has been modified.
 
   `pub fn len(&self) -> usize`
 
@@ -116,20 +556,39 @@ indxr/
 
 ## src/cli.rs
 
-**Language:** Rust | **Size:** 1.6 KB | **Lines:** 68
+**Language:** Rust | **Size:** 3.4 KB | **Lines:** 137
 
 **Imports:**
 - `std::path::PathBuf`
-- `clap::Parser`
+- `clap::{Parser, Subcommand}`
 - `crate::model::DetailLevel`
 
 **Declarations:**
 
-`pub struct Cli`
-> Fields: `path: PathBuf`, `output: Option<PathBuf>`, `format: OutputFormat`, `detail: DetailLevel`, `max_depth: Option<usize>`, `max_file_size: u64`, `languages: Option<Vec<String>>`, `exclude: Option<Vec<String>>`, `no_gitignore: bool`, `no_cache: bool`, `cache_dir: PathBuf`, `quiet: bool`, `stats: bool`
+---
 
-`pub enum OutputFormat`
-> Variants: `Markdown`, `Json`, `Yaml`
+## src/diff.rs
+
+**Language:** Rust | **Size:** 16.3 KB | **Lines:** 484
+
+**Imports:**
+- `std::collections::{HashMap, HashSet}`
+- `std::path::{Path, PathBuf}`
+- `std::process::Command`
+- `anyhow::{Context, Result}`
+- `serde::Serialize`
+- `crate::model::declarations::{DeclKind, Declaration}`
+- `crate::model::{CodebaseIndex, FileIndex}`
+
+**Declarations:**
+
+`fn git_diff_names(root: &Path, since_ref: &str, diff_filter: Option<&str>) -> Result<Vec<PathBuf>>`
+
+`fn diff_declarations(path: PathBuf, old: &[Declaration], new: &[Declaration]) -> FileDiff`
+
+`fn flatten_declarations(decls: &[Declaration]) -> HashMap<(DeclKind, String), String>`
+
+`mod tests`
 
 ---
 
@@ -142,14 +601,56 @@ indxr/
 
 **Declarations:**
 
-`pub enum IndxrError`
-> Variants: `Io`, `Parse`, `UnsupportedLanguage`
+---
+
+## src/filter.rs
+
+**Language:** Rust | **Size:** 4.6 KB | **Lines:** 138
+
+**Imports:**
+- `std::path::Path`
+- `crate::model::CodebaseIndex`
+- `crate::model::declarations::{DeclKind, Declaration, Visibility}`
+
+**Declarations:**
+
+**`impl FilterOptions`**
+  `pub fn is_active(&self) -> bool`
+
+
+`fn filter_declarations_by_kind(decls: &[Declaration], kind: &DeclKind) -> Vec<Declaration>`
+
+`fn filter_declarations_by_visibility(decls: &[Declaration]) -> Vec<Declaration>`
+
+`fn filter_declarations_by_symbol(decls: &[Declaration], query: &str) -> Vec<Declaration>`
+
+`fn recalculate_stats(index: &mut CodebaseIndex)`
+
+---
+
+## src/indexer.rs
+
+**Language:** Rust | **Size:** 5.3 KB | **Lines:** 176
+
+**Imports:**
+- `std::collections::HashMap`
+- `std::fs`
+- `std::path::PathBuf`
+- `rayon::prelude::*`
+- `crate::cache::Cache`
+- `crate::model::{CodebaseIndex, FileIndex, IndexStats}`
+- `crate::output::OutputFormatter`
+- `crate::output::markdown::{MarkdownFormatter, MarkdownOptions}`
+- `crate::parser::ParserRegistry`
+- `crate::walker::{self, FileEntry}`
+
+**Declarations:**
 
 ---
 
 ## src/languages.rs
 
-**Language:** Rust | **Size:** 1.9 KB | **Lines:** 66
+**Language:** Rust | **Size:** 6.3 KB | **Lines:** 178
 
 **Imports:**
 - `std::fmt`
@@ -158,15 +659,14 @@ indxr/
 
 **Declarations:**
 
-`pub enum Language`
-> Variants: `Rust`, `Python`, `TypeScript`, `JavaScript`, `Go`, `Java`, `C`, `Cpp`
-
 **`impl Language`**
   `pub fn detect(path: &Path) -> Option<Self>`
 
   `pub fn name(&self) -> &str`
 
   `pub fn from_name(name: &str) -> Option<Self>`
+
+  `pub fn uses_tree_sitter(&self) -> bool`
 
 
 **`impl fmt::Display for Language`**
@@ -177,7 +677,7 @@ indxr/
 
 ## src/main.rs
 
-**Language:** Rust | **Size:** 6.2 KB | **Lines:** 223
+**Language:** Rust | **Size:** 7.6 KB | **Lines:** 275
 
 **Imports:**
 - `std::collections::HashMap`
@@ -185,25 +685,32 @@ indxr/
 - `std::time::Instant`
 - `anyhow::Result`
 - `clap::Parser`
-- `rayon::prelude::*`
 - `crate::cache::Cache`
-- `crate::cli::{Cli, OutputFormat}`
+- `crate::cli::{Cli, Command, OutputFormat}`
+- `crate::filter::FilterOptions`
 - `crate::languages::Language`
-- `crate::model::{CodebaseIndex, IndexStats}`
-- `crate::output::OutputFormatter`
-- `crate::output::markdown::MarkdownFormatter`
-- `crate::output::yaml::YamlFormatter`
-- `crate::parser::ParserRegistry`
+- `crate::model::declarations::DeclKind`
+- *... and 5 more imports*
 
 **Declarations:**
+
+`mod budget`
 
 `mod cache`
 
 `mod cli`
 
+`mod diff`
+
 `mod error`
 
+`mod filter`
+
+`mod indexer`
+
 `mod languages`
+
+`mod mcp`
 
 `mod model`
 
@@ -215,11 +722,103 @@ indxr/
 
 `fn main() -> Result<()>`
 
+`fn handle_git_diff( root: &std::path::Path, since_ref: &str, current_files: &[model::FileIndex], registry: &ParserRegistry, cli: &Cli, ) -> Result<()>`
+
+---
+
+## src/mcp.rs
+
+**Language:** Rust | **Size:** 33.0 KB | **Lines:** 1028
+
+**Imports:**
+- `std::collections::HashMap`
+- `std::io::{self, BufRead, Write}`
+- `std::path::Path`
+- `serde::{Deserialize, Serialize}`
+- `serde_json::{self, Value, json}`
+- `crate::indexer::{self, IndexConfig}`
+- `crate::model::declarations::{DeclKind, Declaration, Visibility}`
+- `crate::model::{CodebaseIndex, FileIndex}`
+
+**Declarations:**
+
+`struct JsonRpcRequest`
+> Fields: `jsonrpc: String`, `id: Option<Value>`, `method: String`, `params: Option<Value>`
+
+`struct JsonRpcResponse`
+> Fields: `jsonrpc: String`, `id: Value`, `result: Option<Value>`, `error: Option<JsonRpcError>`
+
+`struct JsonRpcError`
+> Fields: `code: i32`, `message: String`
+
+`fn ok_response(id: Value, result: Value) -> JsonRpcResponse`
+
+`fn err_response(id: Value, code: i32, message: String) -> JsonRpcResponse`
+
+`fn tool_result(content: Value) -> Value`
+
+`fn tool_error(msg: &str) -> Value`
+
+`struct SymbolMatch`
+> Fields: `file: String`, `kind: String`, `name: String`, `signature: String`, `line: usize`, `doc_comment: Option<String>`
+
+`fn find_symbols_in_decl( decl: &Declaration, query: &str, file_path: &str, results: &mut Vec<SymbolMatch>, limit: usize, )`
+
+`struct SignatureMatch`
+> Fields: `file: String`, `kind: String`, `name: String`, `signature: String`, `line: usize`
+
+`fn find_signatures_in_decl( decl: &Declaration, query: &str, file_path: &str, results: &mut Vec<SignatureMatch>, limit: usize, )`
+
+`fn filter_declarations<'a>(decls: &'a [Declaration], kind: &DeclKind) -> Vec<&'a Declaration>`
+
+`struct ShallowDeclaration`
+> Fields: `kind: String`, `name: String`, `signature: String`, `line: usize`, `children_count: Option<usize>`
+
+`fn to_shallow(decl: &Declaration) -> ShallowDeclaration`
+
+`fn file_summary_data(file: &FileIndex) -> Value`
+
+`fn find_decl_by_name<'a>(decls: &'a [Declaration], name: &str) -> Option<&'a Declaration>`
+
+`fn read_line_range(path: &Path, start: usize, end: usize) -> Result<String, String>`
+
+`fn tool_definitions() -> Value`
+
+`fn handle_tool_call(index: &CodebaseIndex, name: &str, args: &Value) -> Value`
+
+`fn tool_regenerate_index(index: &mut CodebaseIndex, config: &IndexConfig) -> Value`
+
+`fn tool_lookup_symbol(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn tool_list_declarations(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn tool_search_signatures(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn tool_get_tree(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn tool_get_imports(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn tool_get_stats(index: &CodebaseIndex) -> Value`
+
+`fn tool_get_file_summary(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn tool_read_source(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn tool_get_file_context(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn find_file<'a>(index: &'a CodebaseIndex, path: &str) -> Option<&'a FileIndex>`
+
+`fn handle_initialize(id: Value) -> JsonRpcResponse`
+
+`fn handle_tools_list(id: Value) -> JsonRpcResponse`
+
+`fn handle_tools_call( id: Value, index: &mut CodebaseIndex, config: &IndexConfig, params: &Value, ) -> JsonRpcResponse`
+
 ---
 
 ## src/model/declarations.rs
 
-**Language:** Rust | **Size:** 1.7 KB | **Lines:** 67
+**Language:** Rust | **Size:** 5.1 KB | **Lines:** 177
 
 **Imports:**
 - `std::fmt`
@@ -227,14 +826,9 @@ indxr/
 
 **Declarations:**
 
-`pub struct Declaration`
-> Fields: `kind: DeclKind`, `name: String`, `signature: String`, `visibility: Visibility`, `line: usize`, `doc_comment: Option<String>`, `children: Vec<Declaration>`
+**`impl Declaration`**
+  `pub fn new( kind: DeclKind, name: String, signature: String, visibility: Visibility, line: usize, ) -> Self`
 
-`pub enum DeclKind`
-> Variants: `Function`, `Struct`, `Enum`, `Trait`, `Impl`, `Constant`, `Static`, `TypeAlias`, `Module`, `Class`, `Field`, `Variant`, `Method`
-
-`pub enum Visibility`
-> Variants: `Public`, `PublicCrate`, `Private`
 
 **`impl fmt::Display for Visibility`**
   `fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result`
@@ -242,6 +836,10 @@ indxr/
 
 **`impl fmt::Display for DeclKind`**
   `fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result`
+
+
+**`impl DeclKind`**
+  `pub fn from_name(name: &str) -> Option<Self>`
 
 
 ---
@@ -254,38 +852,19 @@ indxr/
 - `std::collections::HashMap`
 - `std::path::PathBuf`
 - `serde::{Deserialize, Serialize}`
-- `crate::languages::Language`
 - `self::declarations::Declaration`
+- `crate::languages::Language`
 
 **Declarations:**
-
-`pub mod declarations`
-
-`pub enum DetailLevel`
-> Variants: `Summary`, `Signatures`, `Full`
-
-`pub struct CodebaseIndex`
-> Fields: `root: PathBuf`, `root_name: String`, `generated_at: String`, `files: Vec<FileIndex>`, `tree: Vec<TreeEntry>`, `stats: IndexStats`
-
-`pub struct FileIndex`
-> Fields: `path: PathBuf`, `language: Language`, `size: u64`, `lines: usize`, `imports: Vec<Import>`, `declarations: Vec<Declaration>`
-
-`pub struct Import`
-> Fields: `text: String`
-
-`pub struct TreeEntry`
-> Fields: `path: String`, `is_dir: bool`, `depth: usize`
-
-`pub struct IndexStats`
-> Fields: `total_files: usize`, `total_lines: usize`, `languages: HashMap<String, usize>`, `duration_ms: u64`
 
 ---
 
 ## src/output/markdown.rs
 
-**Language:** Rust | **Size:** 5.9 KB | **Lines:** 195
+**Language:** Rust | **Size:** 11.5 KB | **Lines:** 352
 
 **Imports:**
+- `std::collections::HashSet`
 - `std::fmt::Write`
 - `anyhow::Result`
 - `crate::model::CodebaseIndex`
@@ -295,15 +874,25 @@ indxr/
 
 **Declarations:**
 
-`pub struct MarkdownFormatter`
+**`impl MarkdownFormatter`**
+  `pub fn new() -> Self`
+
+  `pub fn with_options(options: MarkdownOptions) -> Self`
+
 
 **`impl OutputFormatter for MarkdownFormatter`**
   `fn format(&self, index: &CodebaseIndex, detail: DetailLevel) -> Result<String>`
 
 
-`fn format_declaration( out: &mut String, decl: &Declaration, depth: usize, detail: DetailLevel, ) -> std::fmt::Result`
+`fn write_badges(out: &mut String, decl: &Declaration) -> std::fmt::Result`
+
+`fn format_declaration( out: &mut String, decl: &Declaration, depth: usize, detail: DetailLevel, shown_in_api: &HashSet<(String, usize)>, file_path: &str, ) -> std::fmt::Result`
 
 `fn format_size(bytes: u64) -> String`
+
+**`impl std::fmt::Display for crate::model::declarations::RelKind`**
+  `fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result`
+
 
 ---
 
@@ -317,14 +906,6 @@ indxr/
 - `crate::model::DetailLevel`
 
 **Declarations:**
-
-`pub mod markdown`
-
-`pub mod yaml`
-
-`pub trait OutputFormatter`
-  `fn format(&self, index: &CodebaseIndex, detail: DetailLevel) -> Result<String>`
-
 
 ---
 
@@ -340,8 +921,6 @@ indxr/
 
 **Declarations:**
 
-`pub struct YamlFormatter`
-
 **`impl OutputFormatter for YamlFormatter`**
   `fn format(&self, index: &CodebaseIndex, _detail: DetailLevel) -> Result<String>`
 
@@ -350,7 +929,7 @@ indxr/
 
 ## src/parser/mod.rs
 
-**Language:** Rust | **Size:** 1.2 KB | **Lines:** 49
+**Language:** Rust | **Size:** 2.0 KB | **Lines:** 80
 
 **Imports:**
 - `std::path::Path`
@@ -359,19 +938,6 @@ indxr/
 - `crate::model::FileIndex`
 
 **Declarations:**
-
-`pub mod queries`
-
-`pub mod tree_sitter_parser`
-
-`pub trait LanguageParser: Send + Sync`
-  `fn language(&self) -> Language`
-
-  `fn parse_file(&self, path: &Path, content: &str) -> Result<FileIndex>`
-
-
-`pub struct ParserRegistry`
-> Fields: `parsers: Vec<Box<dyn LanguageParser>>`
 
 **`impl ParserRegistry`**
   `pub fn new() -> Self`
@@ -383,7 +949,7 @@ indxr/
 
 ## src/parser/queries/c.rs
 
-**Language:** Rust | **Size:** 13.6 KB | **Lines:** 422
+**Language:** Rust | **Size:** 15.9 KB | **Lines:** 474
 
 **Imports:**
 - `tree_sitter::Node`
@@ -392,8 +958,6 @@ indxr/
 - `super::DeclExtractor`
 
 **Declarations:**
-
-`pub struct CExtractor`
 
 **`impl DeclExtractor for CExtractor`**
   `fn extract(&self, root: Node<'_>, source: &str) -> (Vec<Import>, Vec<Declaration>)`
@@ -410,7 +974,6 @@ indxr/
 `fn extract_include(node: Node<'_>, source: &str) -> Option<Import>`
 
 `fn extract_function_name<'a>(declarator: Node<'_>, source: &'a str) -> Option<&'a str>`
-> Extract function name from a function_declarator by traversing nested declarators. function_definition → declarator (function_declarator) → declarator (identifier)
 
 `fn extract_function_definition(node: Node<'_>, source: &str) -> Option<Declaration>`
 
@@ -438,17 +1001,15 @@ indxr/
 
 ## src/parser/queries/cpp.rs
 
-**Language:** Rust | **Size:** 22.5 KB | **Lines:** 662
+**Language:** Rust | **Size:** 31.6 KB | **Lines:** 890
 
 **Imports:**
 - `tree_sitter::Node`
 - `crate::model::Import`
-- `crate::model::declarations::{DeclKind, Declaration, Visibility}`
+- `crate::model::declarations::{DeclKind, Declaration, RelKind, Relationship, Visibility}`
 - `super::DeclExtractor`
 
 **Declarations:**
-
-`pub struct CppExtractor`
 
 **`impl DeclExtractor for CppExtractor`**
   `fn extract(&self, root: Node<'_>, source: &str) -> (Vec<Import>, Vec<Declaration>)`
@@ -468,8 +1029,9 @@ indxr/
 
 `fn extract_using(node: Node<'_>, source: &str) -> Option<Import>`
 
+`fn is_deprecated_cpp(node: Node<'_>, source: &str, doc_comment: &Option<String>) -> bool`
+
 `fn extract_function_name<'a>(declarator: Node<'_>, source: &'a str) -> Option<&'a str>`
-> Extract function name from a function_declarator by traversing nested declarators.
 
 `fn extract_function_definition(node: Node<'_>, source: &str) -> Option<Declaration>`
 
@@ -480,6 +1042,8 @@ indxr/
 `fn extract_function_name_from_decl<'a>(node: Node<'_>, source: &'a str) -> Option<&'a str>`
 
 `fn extract_var_name<'a>(node: Node<'_>, source: &'a str) -> Option<&'a str>`
+
+`fn extract_class_inheritance(node: Node<'_>, source: &str) -> Vec<Relationship>`
 
 `fn extract_class( node: Node<'_>, source: &str, default_visibility: Visibility, ) -> Option<Declaration>`
 
@@ -503,7 +1067,7 @@ indxr/
 
 ## src/parser/queries/go.rs
 
-**Language:** Rust | **Size:** 13.0 KB | **Lines:** 437
+**Language:** Rust | **Size:** 14.7 KB | **Lines:** 462
 
 **Imports:**
 - `tree_sitter::Node`
@@ -512,8 +1076,6 @@ indxr/
 - `super::DeclExtractor`
 
 **Declarations:**
-
-`pub struct GoExtractor`
 
 **`impl DeclExtractor for GoExtractor`**
   `fn extract(&self, root: Node<'_>, source: &str) -> (Vec<Import>, Vec<Declaration>)`
@@ -528,6 +1090,8 @@ indxr/
 `fn extract_signature(node: Node<'_>, source: &str) -> String`
 
 `fn extract_import(node: Node<'_>, source: &str) -> Option<Import>`
+
+`fn is_go_test_name(name: &str) -> bool`
 
 `fn extract_function(node: Node<'_>, source: &str) -> Option<Declaration>`
 
@@ -559,17 +1123,15 @@ indxr/
 
 ## src/parser/queries/java.rs
 
-**Language:** Rust | **Size:** 12.0 KB | **Lines:** 381
+**Language:** Rust | **Size:** 18.3 KB | **Lines:** 532
 
 **Imports:**
 - `tree_sitter::Node`
 - `crate::model::Import`
-- `crate::model::declarations::{DeclKind, Declaration, Visibility}`
+- `crate::model::declarations::{DeclKind, Declaration, RelKind, Relationship, Visibility}`
 - `super::DeclExtractor`
 
 **Declarations:**
-
-`pub struct JavaExtractor`
 
 **`impl DeclExtractor for JavaExtractor`**
   `fn extract(&self, root: Node<'_>, source: &str) -> (Vec<Import>, Vec<Declaration>)`
@@ -589,6 +1151,10 @@ indxr/
 
 `fn extract_import(node: Node<'_>, source: &str) -> Option<Import>`
 
+`fn has_annotation(node: Node<'_>, source: &str, annotation_name: &str) -> bool`
+
+`fn extract_class_relationships(node: Node<'_>, source: &str) -> Vec<Relationship>`
+
 `fn extract_class(node: Node<'_>, source: &str) -> Option<Declaration>`
 
 `fn extract_interface(node: Node<'_>, source: &str) -> Option<Declaration>`
@@ -607,17 +1173,15 @@ indxr/
 
 ## src/parser/queries/javascript.rs
 
-**Language:** Rust | **Size:** 10.0 KB | **Lines:** 336
+**Language:** Rust | **Size:** 13.0 KB | **Lines:** 429
 
 **Imports:**
 - `tree_sitter::Node`
 - `crate::model::Import`
-- `crate::model::declarations::{DeclKind, Declaration, Visibility}`
+- `crate::model::declarations::{DeclKind, Declaration, RelKind, Relationship, Visibility}`
 - `super::DeclExtractor`
 
 **Declarations:**
-
-`pub struct JavaScriptExtractor`
 
 **`impl DeclExtractor for JavaScriptExtractor`**
   `fn extract(&self, root: Node<'_>, source: &str) -> (Vec<Import>, Vec<Declaration>)`
@@ -629,9 +1193,15 @@ indxr/
 
 `fn extract_doc_comment(node: Node<'_>, source: &str) -> Option<String>`
 
+`fn get_raw_doc_comment(node: Node<'_>, source: &str) -> Option<String>`
+
 `fn extract_signature(node: Node<'_>, source: &str) -> String`
 
 `fn extract_import(node: Node<'_>, source: &str) -> Option<Import>`
+
+`fn is_test_name(name: &str) -> bool`
+
+`fn extract_class_relationships(node: Node<'_>, source: &str) -> Vec<Relationship>`
 
 `fn extract_function(node: Node<'_>, source: &str) -> Option<Declaration>`
 
@@ -651,7 +1221,7 @@ indxr/
 
 ## src/parser/queries/mod.rs
 
-**Language:** Rust | **Size:** 947 B | **Lines:** 29
+**Language:** Rust | **Size:** 1.0 KB | **Lines:** 31
 
 **Imports:**
 - `crate::languages::Language`
@@ -660,43 +1230,19 @@ indxr/
 
 **Declarations:**
 
-`pub mod c`
-
-`pub mod cpp`
-
-`pub mod go`
-
-`pub mod java`
-
-`pub mod javascript`
-
-`pub mod python`
-
-`pub mod rust`
-
-`pub mod typescript`
-
-`pub trait DeclExtractor: Send + Sync`
-  `fn extract(&self, root: tree_sitter::Node<'_>, source: &str) -> (Vec<Import>, Vec<Declaration>)`
-
-
-`pub fn get_extractor(language: &Language) -> Box<dyn DeclExtractor>`
-
 ---
 
 ## src/parser/queries/python.rs
 
-**Language:** Rust | **Size:** 11.0 KB | **Lines:** 334
+**Language:** Rust | **Size:** 13.5 KB | **Lines:** 395
 
 **Imports:**
 - `tree_sitter::Node`
 - `crate::model::Import`
-- `crate::model::declarations::{DeclKind, Declaration, Visibility}`
+- `crate::model::declarations::{DeclKind, Declaration, RelKind, Relationship, Visibility}`
 - `super::DeclExtractor`
 
 **Declarations:**
-
-`pub struct PythonExtractor`
 
 **`impl DeclExtractor for PythonExtractor`**
   `fn extract(&self, root: Node<'_>, source: &str) -> (Vec<Import>, Vec<Declaration>)`
@@ -714,6 +1260,18 @@ indxr/
 
 `fn extract_import(node: Node<'_>, source: &str) -> Option<Import>`
 
+`fn body_lines(node: Node<'_>) -> Option<usize>`
+
+`fn detect_is_test_function(name: &str) -> bool`
+
+`fn detect_is_test_class(name: &str) -> bool`
+
+`fn detect_is_async(signature: &str) -> bool`
+
+`fn has_deprecated_decorator(decorators: &[String]) -> bool`
+
+`fn extract_base_classes(node: Node<'_>, source: &str) -> Vec<String>`
+
 `fn extract_function(node: Node<'_>, source: &str, kind: DeclKind) -> Option<Declaration>`
 
 `fn extract_class(node: Node<'_>, source: &str) -> Option<Declaration>`
@@ -730,17 +1288,15 @@ indxr/
 
 ## src/parser/queries/rust.rs
 
-**Language:** Rust | **Size:** 12.8 KB | **Lines:** 416
+**Language:** Rust | **Size:** 14.4 KB | **Lines:** 422
 
 **Imports:**
 - `tree_sitter::Node`
 - `crate::model::Import`
-- `crate::model::declarations::{DeclKind, Declaration, Visibility}`
+- `crate::model::declarations::{DeclKind, Declaration, RelKind, Relationship, Visibility}`
 - `super::DeclExtractor`
 
 **Declarations:**
-
-`pub struct RustExtractor`
 
 **`impl DeclExtractor for RustExtractor`**
   `fn extract(&self, root: Node<'_>, source: &str) -> (Vec<Import>, Vec<Declaration>)`
@@ -756,6 +1312,16 @@ indxr/
 
 `fn extract_import(node: Node<'_>, source: &str) -> Option<Import>`
 
+`fn body_lines(node: Node<'_>) -> Option<usize>`
+
+`fn has_attribute(node: Node<'_>, source: &str, attr_text: &str) -> bool`
+
+`fn detect_is_test(node: Node<'_>, source: &str) -> bool`
+
+`fn detect_is_async(signature: &str) -> bool`
+
+`fn detect_is_deprecated(node: Node<'_>, source: &str) -> bool`
+
 `fn extract_function(node: Node<'_>, source: &str, kind: DeclKind) -> Option<Declaration>`
 
 `fn extract_struct(node: Node<'_>, source: &str) -> Option<Declaration>`
@@ -770,7 +1336,7 @@ indxr/
 
 `fn extract_impl(node: Node<'_>, source: &str) -> Option<Declaration>`
 
-`fn extract_const_or_static( node: Node<'_>, source: &str, kind: DeclKind, ) -> Option<Declaration>`
+`fn extract_const_or_static(node: Node<'_>, source: &str, kind: DeclKind) -> Option<Declaration>`
 
 `fn extract_type_alias(node: Node<'_>, source: &str) -> Option<Declaration>`
 
@@ -780,17 +1346,15 @@ indxr/
 
 ## src/parser/queries/typescript.rs
 
-**Language:** Rust | **Size:** 16.2 KB | **Lines:** 526
+**Language:** Rust | **Size:** 21.7 KB | **Lines:** 677
 
 **Imports:**
 - `tree_sitter::Node`
 - `crate::model::Import`
-- `crate::model::declarations::{DeclKind, Declaration, Visibility}`
+- `crate::model::declarations::{DeclKind, Declaration, RelKind, Relationship, Visibility}`
 - `super::DeclExtractor`
 
 **Declarations:**
-
-`pub struct TypeScriptExtractor`
 
 **`impl DeclExtractor for TypeScriptExtractor`**
   `fn extract(&self, root: Node<'_>, source: &str) -> (Vec<Import>, Vec<Declaration>)`
@@ -802,9 +1366,15 @@ indxr/
 
 `fn extract_doc_comment(node: Node<'_>, source: &str) -> Option<String>`
 
+`fn get_raw_doc_comment(node: Node<'_>, source: &str) -> Option<String>`
+
 `fn extract_signature(node: Node<'_>, source: &str) -> String`
 
 `fn extract_import(node: Node<'_>, source: &str) -> Option<Import>`
+
+`fn is_test_name(name: &str) -> bool`
+
+`fn extract_class_relationships(node: Node<'_>, source: &str) -> Vec<Relationship>`
 
 `fn extract_function(node: Node<'_>, source: &str) -> Option<Declaration>`
 
@@ -815,7 +1385,6 @@ indxr/
 `fn extract_class_field(node: Node<'_>, source: &str) -> Option<Declaration>`
 
 `fn extract_member_visibility(node: Node<'_>, source: &str) -> Visibility`
-> Check for accessibility_modifier (public/private/protected) on class members.
 
 `fn extract_interface(node: Node<'_>, source: &str) -> Option<Declaration>`
 
@@ -835,9 +1404,82 @@ indxr/
 
 ---
 
+## src/parser/regex_parser.rs
+
+**Language:** Rust | **Size:** 118.3 KB | **Lines:** 3602
+
+**Imports:**
+- `std::path::Path`
+- `anyhow::Result`
+- `regex::Regex`
+- `crate::languages::Language`
+- `crate::model::declarations::{DeclKind, Declaration, Visibility}`
+- `crate::model::{FileIndex, Import}`
+- `super::LanguageParser`
+
+**Declarations:**
+
+**`impl RegexParser`**
+  `pub fn new(language: Language) -> Self`
+
+
+**`impl LanguageParser for RegexParser`**
+  `fn language(&self) -> Language`
+
+  `fn parse_file(&self, path: &Path, content: &str) -> Result<FileIndex>`
+
+
+`fn parse_shell(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_toml(path: &Path, content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_yaml(path: &Path, content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_json(path: &Path, content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_sql(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_markdown(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_protobuf(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_graphql(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_ruby(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_kotlin(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_swift(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_csharp(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_objc(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_xml(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_html(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_css(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_gradle(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_cmake(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn parse_properties(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn count_braces(line: &str, depth: &mut i32)`
+
+`fn pop_containers(stack: &mut Vec<(i32, usize)>, brace_depth: i32)`
+
+`fn truncate_value(s: &str, max: usize) -> String`
+
+`mod tests`
+
+---
+
 ## src/parser/tree_sitter_parser.rs
 
-**Language:** Rust | **Size:** 1.9 KB | **Lines:** 65
+**Language:** Rust | **Size:** 2.3 KB | **Lines:** 73
 
 **Imports:**
 - `std::path::Path`
@@ -849,13 +1491,10 @@ indxr/
 
 **Declarations:**
 
-`pub struct TreeSitterParser`
-> Fields: `language: Language`
-
 **`impl TreeSitterParser`**
   `pub fn new(language: Language) -> Self`
 
-  `fn get_ts_language(&self) -> tree_sitter::Language`
+  `fn get_ts_language(&self, path: &Path) -> tree_sitter::Language`
 
 
 **`impl LanguageParser for TreeSitterParser`**
@@ -880,11 +1519,16 @@ indxr/
 
 **Declarations:**
 
-`pub struct WalkResult`
-> Fields: `files: Vec<FileEntry>`, `tree: Vec<TreeEntry>`
+---
 
-`pub struct FileEntry`
-> Fields: `path: PathBuf`, `relative_path: PathBuf`, `language: Language`, `size: u64`, `mtime: u64`
+## token_count.py
 
-`pub fn walk_directory( root: &Path, respect_gitignore: bool, max_file_size: u64, max_depth: Option<usize>, exclude_patterns: &[String], ) -> Result<WalkResult>`
+**Language:** Python | **Size:** 2.9 KB | **Lines:** 89
+
+**Imports:**
+- `import sys`
+- `import os`
+- `import argparse`
+
+**Declarations:**
 
