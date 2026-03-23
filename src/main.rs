@@ -25,7 +25,7 @@ use crate::filter::FilterOptions;
 use crate::languages::Language;
 use crate::model::declarations::DeclKind;
 use crate::model::{CodebaseIndex, IndexStats};
-use crate::output::markdown::MarkdownFormatter;
+use crate::output::markdown::{MarkdownFormatter, MarkdownOptions};
 use crate::output::yaml::YamlFormatter;
 use crate::output::OutputFormatter;
 use crate::parser::ParserRegistry;
@@ -213,7 +213,10 @@ fn main() -> Result<()> {
     // Format output
     let formatted = match cli.format {
         OutputFormat::Markdown => {
-            let formatter = MarkdownFormatter;
+            let formatter = MarkdownFormatter::with_options(MarkdownOptions {
+                omit_imports: cli.omit_imports,
+                omit_tree: cli.omit_tree,
+            });
             formatter.format(&index, cli.detail)?
         }
         OutputFormat::Json => serde_json::to_string_pretty(&index)?,

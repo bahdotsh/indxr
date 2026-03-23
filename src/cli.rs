@@ -88,6 +88,15 @@ pub struct Cli {
     /// Maximum tokens in output (approximate, ~4 chars/token)
     #[arg(long, value_name = "N")]
     pub max_tokens: Option<usize>,
+
+    // === Output control ===
+    /// Omit import listings from output
+    #[arg(long)]
+    pub omit_imports: bool,
+
+    /// Omit directory tree from output
+    #[arg(long)]
+    pub omit_tree: bool,
 }
 
 #[derive(Subcommand, Debug)]

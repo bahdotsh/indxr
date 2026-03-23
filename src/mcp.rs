@@ -58,11 +58,12 @@ fn err_response(id: Value, code: i32, message: String) -> JsonRpcResponse {
 }
 
 fn tool_result(content: Value) -> Value {
+    // Use compact JSON instead of pretty-printed to save tokens
     json!({
         "content": [
             {
                 "type": "text",
-                "text": serde_json::to_string_pretty(&content).unwrap_or_default()
+                "text": serde_json::to_string(&content).unwrap_or_default()
             }
         ]
     })
@@ -91,29 +92,43 @@ struct SymbolMatch {
     name: String,
     signature: String,
     line: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
     doc_comment: Option<String>,
 }
 
 /// Recursively walk declarations and their children, collecting any whose name
-/// contains `query` (case-insensitive).
+/// contains `query` (case-insensitive). Stops at `limit`.
 fn find_symbols_in_decl(
     decl: &Declaration,
     query: &str,
     file_path: &str,
     results: &mut Vec<SymbolMatch>,
+    limit: usize,
 ) {
+    if results.len() >= limit {
+        return;
+    }
     if decl.name.to_lowercase().contains(query) {
+        // Truncate long doc comments in results to save tokens
+        let doc = decl.doc_comment.as_ref().map(|d| {
+            if d.len() > 120 {
+                let truncated: String = d.chars().take(120).collect();
+                format!("{}...", truncated.trim_end_matches('.'))
+            } else {
+                d.clone()
+            }
+        });
         results.push(SymbolMatch {
             file: file_path.to_string(),
             kind: format!("{}", decl.kind),
             name: decl.name.clone(),
             signature: decl.signature.clone(),
             line: decl.line,
-            doc_comment: decl.doc_comment.clone(),
+            doc_comment: doc,
         });
     }
     for child in &decl.children {
-        find_symbols_in_decl(child, query, file_path, results);
+        find_symbols_in_decl(child, query, file_path, results, limit);
     }
 }
 
@@ -161,6 +176,31 @@ fn filter_declarations<'a>(decls: &'a [Declaration], kind: &DeclKind) -> Vec<&'a
     out
 }
 
+/// Shallow representation of a declaration (no children, no doc_comment).
+#[derive(Serialize)]
+struct ShallowDeclaration {
+    kind: String,
+    name: String,
+    signature: String,
+    line: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    children_count: Option<usize>,
+}
+
+fn to_shallow(decl: &Declaration) -> ShallowDeclaration {
+    ShallowDeclaration {
+        kind: format!("{}", decl.kind),
+        name: decl.name.clone(),
+        signature: decl.signature.clone(),
+        line: decl.line,
+        children_count: if decl.children.is_empty() {
+            None
+        } else {
+            Some(decl.children.len())
+        },
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tool definitions for tools/list
 // ---------------------------------------------------------------------------
@@ -177,6 +217,10 @@ fn tool_definitions() -> Value {
                         "name": {
                             "type": "string",
                             "description": "Symbol name to search for"
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of results (default 50, max 200)"
                         }
                     },
                     "required": ["name"]
@@ -195,6 +239,10 @@ fn tool_definitions() -> Value {
                         "kind": {
                             "type": "string",
                             "description": "Optional declaration kind filter (e.g. fn, struct, class, trait)"
+                        },
+                        "shallow": {
+                            "type": "boolean",
+                            "description": "If true, omit children and doc_comments to reduce output size (default false)"
                         }
                     },
                     "required": ["path"]
@@ -212,7 +260,7 @@ fn tool_definitions() -> Value {
                         },
                         "limit": {
                             "type": "number",
-                            "description": "Maximum number of results (default 20)"
+                            "description": "Maximum number of results (default 20, max 100)"
                         }
                     },
                     "required": ["query"]
@@ -280,20 +328,39 @@ fn tool_lookup_symbol(index: &CodebaseIndex, args: &Value) -> Value {
         Some(n) => n,
         None => return tool_error("Missing required parameter: name"),
     };
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(50)
+        .min(200) as usize;
+
     let query = name.to_lowercase();
     let mut results = Vec::new();
 
     for file in &index.files {
+        if results.len() >= limit {
+            break;
+        }
         let file_path = file.path.to_string_lossy().to_string();
         for decl in &file.declarations {
-            find_symbols_in_decl(decl, &query, &file_path, &mut results);
+            find_symbols_in_decl(decl, &query, &file_path, &mut results, limit);
+            if results.len() >= limit {
+                break;
+            }
         }
     }
 
-    tool_result(json!({
-        "matches": results.len(),
+    let total = results.len();
+    let truncated = total >= limit;
+    let mut result = json!({
+        "matches": total,
         "symbols": results
-    }))
+    });
+    if truncated {
+        result["truncated"] = json!(true);
+        result["limit"] = json!(limit);
+    }
+    tool_result(result)
 }
 
 fn tool_list_declarations(index: &CodebaseIndex, args: &Value) -> Value {
@@ -308,12 +375,32 @@ fn tool_list_declarations(index: &CodebaseIndex, args: &Value) -> Value {
         None => return tool_error(&format!("File not found in index: {}", path)),
     };
 
+    let shallow = args
+        .get("shallow")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     let kind_filter = args
         .get("kind")
         .and_then(|v| v.as_str())
         .and_then(DeclKind::from_name);
 
-    if let Some(ref kind) = kind_filter {
+    if shallow {
+        // Shallow mode: return compact representation without children/doc_comments
+        let decls: Vec<ShallowDeclaration> = if let Some(ref kind) = kind_filter {
+            filter_declarations(&file.declarations, kind)
+                .into_iter()
+                .map(to_shallow)
+                .collect()
+        } else {
+            file.declarations.iter().map(to_shallow).collect()
+        };
+        tool_result(json!({
+            "file": path,
+            "count": decls.len(),
+            "declarations": decls
+        }))
+    } else if let Some(ref kind) = kind_filter {
         let filtered = filter_declarations(&file.declarations, kind);
         let serialized: Vec<Value> = filtered
             .iter()
@@ -341,7 +428,8 @@ fn tool_search_signatures(index: &CodebaseIndex, args: &Value) -> Value {
     let limit = args
         .get("limit")
         .and_then(|v| v.as_u64())
-        .unwrap_or(20) as usize;
+        .unwrap_or(20)
+        .min(100) as usize;
 
     let query_lower = query.to_lowercase();
     let mut results = Vec::new();
@@ -359,10 +447,17 @@ fn tool_search_signatures(index: &CodebaseIndex, args: &Value) -> Value {
         }
     }
 
-    tool_result(json!({
-        "matches": results.len(),
+    let total = results.len();
+    let truncated = total >= limit;
+    let mut result = json!({
+        "matches": total,
         "signatures": results
-    }))
+    });
+    if truncated {
+        result["truncated"] = json!(true);
+        result["limit"] = json!(limit);
+    }
+    tool_result(result)
 }
 
 fn tool_get_tree(index: &CodebaseIndex, args: &Value) -> Value {

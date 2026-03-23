@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt::Write;
 
 use anyhow::Result;
@@ -8,7 +9,29 @@ use crate::model::declarations::{DeclKind, Declaration, Visibility};
 
 use super::OutputFormatter;
 
-pub struct MarkdownFormatter;
+/// Options that control what sections appear in markdown output.
+#[derive(Debug, Clone, Default)]
+pub struct MarkdownOptions {
+    pub omit_imports: bool,
+    pub omit_tree: bool,
+}
+
+pub struct MarkdownFormatter {
+    pub options: MarkdownOptions,
+}
+
+impl MarkdownFormatter {
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        Self {
+            options: MarkdownOptions::default(),
+        }
+    }
+
+    pub fn with_options(options: MarkdownOptions) -> Self {
+        Self { options }
+    }
+}
 
 impl OutputFormatter for MarkdownFormatter {
     fn format(&self, index: &CodebaseIndex, detail: DetailLevel) -> Result<String> {
@@ -35,27 +58,32 @@ impl OutputFormatter for MarkdownFormatter {
         writeln!(out)?;
 
         // Directory tree
-        writeln!(out, "## Directory Structure")?;
-        writeln!(out)?;
-        writeln!(out, "```")?;
-        writeln!(out, "{}/", index.root_name)?;
-        for entry in &index.tree {
-            let indent = "  ".repeat(entry.depth);
-            if entry.is_dir {
-                writeln!(out, "{}{}/", indent, entry.path)?;
-            } else {
-                writeln!(out, "{}{}", indent, entry.path)?;
+        if !self.options.omit_tree {
+            writeln!(out, "## Directory Structure")?;
+            writeln!(out)?;
+            writeln!(out, "```")?;
+            writeln!(out, "{}/", index.root_name)?;
+            for entry in &index.tree {
+                let indent = "  ".repeat(entry.depth);
+                if entry.is_dir {
+                    writeln!(out, "{}{}/", indent, entry.path)?;
+                } else {
+                    writeln!(out, "{}{}", indent, entry.path)?;
+                }
             }
+            writeln!(out, "```")?;
+            writeln!(out)?;
         }
-        writeln!(out, "```")?;
-        writeln!(out)?;
 
         // Summary mode stops here
         if detail == DetailLevel::Summary {
             return Ok(out);
         }
 
-        // Public API surface section
+        // Public API surface section — collect which declarations we show here
+        // so we can avoid duplicating them in per-file sections
+        let mut shown_in_api: HashSet<(String, usize)> = HashSet::new();
+
         let has_public = index.files.iter().any(|f| {
             f.declarations
                 .iter()
@@ -71,16 +99,22 @@ impl OutputFormatter for MarkdownFormatter {
                 let public_decls: Vec<&Declaration> = file
                     .declarations
                     .iter()
-                    .filter(|d| matches!(d.visibility, Visibility::Public) && !matches!(d.kind, DeclKind::Impl))
+                    .filter(|d| {
+                        matches!(d.visibility, Visibility::Public)
+                            && !matches!(d.kind, DeclKind::Impl)
+                    })
                     .collect();
                 if public_decls.is_empty() {
                     continue;
                 }
-                writeln!(out, "**{}**", file.path.display())?;
+                let file_path = file.path.display().to_string();
+                writeln!(out, "**{}**", file_path)?;
                 for decl in &public_decls {
                     write!(out, "- `{}`", decl.signature)?;
                     write_badges(&mut out, decl)?;
                     writeln!(out)?;
+                    // Track that we showed this declaration in the API surface
+                    shown_in_api.insert((file_path.clone(), decl.line));
                 }
                 writeln!(out)?;
             }
@@ -88,9 +122,11 @@ impl OutputFormatter for MarkdownFormatter {
 
         // File sections
         for file in &index.files {
+            let file_path = file.path.display().to_string();
+
             writeln!(out, "---")?;
             writeln!(out)?;
-            writeln!(out, "## {}", file.path.display())?;
+            writeln!(out, "## {}", file_path)?;
             writeln!(out)?;
             writeln!(
                 out,
@@ -101,11 +137,16 @@ impl OutputFormatter for MarkdownFormatter {
             )?;
             writeln!(out)?;
 
-            // Imports
-            if !file.imports.is_empty() {
+            // Imports (with summarization for large import lists)
+            if !self.options.omit_imports && !file.imports.is_empty() {
                 writeln!(out, "**Imports:**")?;
-                for import in &file.imports {
+                let max_shown = 10;
+                let total = file.imports.len();
+                for import in file.imports.iter().take(max_shown) {
                     writeln!(out, "- `{}`", import.text)?;
+                }
+                if total > max_shown {
+                    writeln!(out, "- *... and {} more imports*", total - max_shown)?;
                 }
                 writeln!(out)?;
             }
@@ -115,7 +156,7 @@ impl OutputFormatter for MarkdownFormatter {
                 writeln!(out, "**Declarations:**")?;
                 writeln!(out)?;
                 for decl in &file.declarations {
-                    format_declaration(&mut out, decl, 0, detail)?;
+                    format_declaration(&mut out, decl, 0, detail, &shown_in_api, &file_path)?;
                 }
             }
         }
@@ -147,8 +188,20 @@ fn format_declaration(
     decl: &Declaration,
     depth: usize,
     detail: DetailLevel,
+    shown_in_api: &HashSet<(String, usize)>,
+    file_path: &str,
 ) -> std::fmt::Result {
     let indent = "  ".repeat(depth);
+
+    // Skip top-level public declarations that were already shown in the API surface
+    // (but always show impl blocks and their children)
+    if depth == 0
+        && matches!(decl.visibility, Visibility::Public)
+        && !matches!(decl.kind, DeclKind::Impl)
+        && shown_in_api.contains(&(file_path.to_string(), decl.line))
+    {
+        return Ok(());
+    }
 
     match decl.kind {
         DeclKind::Impl => {
@@ -223,7 +276,7 @@ fn format_declaration(
                 // Methods inside class/struct
                 for child in &decl.children {
                     if child.kind == DeclKind::Method || child.kind == DeclKind::Function {
-                        format_declaration(out, child, depth + 1, detail)?;
+                        format_declaration(out, child, depth + 1, detail, shown_in_api, file_path)?;
                     }
                 }
             }
@@ -240,28 +293,25 @@ fn format_declaration(
             }
             DeclKind::Impl | DeclKind::Trait | DeclKind::Module => {
                 for child in &decl.children {
-                    format_declaration(out, child, depth + 1, detail)?;
+                    format_declaration(out, child, depth + 1, detail, shown_in_api, file_path)?;
                 }
             }
             DeclKind::Message | DeclKind::Service | DeclKind::SchemaType | DeclKind::Interface => {
                 for child in &decl.children {
-                    format_declaration(out, child, depth + 1, detail)?;
+                    format_declaration(out, child, depth + 1, detail, shown_in_api, file_path)?;
                 }
             }
             DeclKind::Heading => {
-                // Headings with children (sub-headings)
                 for child in &decl.children {
-                    format_declaration(out, child, depth + 1, detail)?;
+                    format_declaration(out, child, depth + 1, detail, shown_in_api, file_path)?;
                 }
             }
             DeclKind::ConfigKey => {
-                // Config keys with children (nested keys)
                 for child in &decl.children {
-                    format_declaration(out, child, depth + 1, detail)?;
+                    format_declaration(out, child, depth + 1, detail, shown_in_api, file_path)?;
                 }
             }
             DeclKind::TableDef => {
-                // Table columns
                 let cols: Vec<String> = decl
                     .children
                     .iter()
