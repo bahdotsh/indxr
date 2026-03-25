@@ -1,7 +1,7 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
-use std::{fs, thread};
 
 use anyhow::Result;
 use notify::RecursiveMode;
@@ -9,6 +9,11 @@ use notify_debouncer_mini::new_debouncer;
 
 use crate::indexer::{self, IndexConfig};
 use crate::languages::Language;
+
+/// Keeps the file watcher alive. The watcher stops when this guard is dropped.
+pub struct WatchGuard {
+    _debouncer: notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
+}
 
 pub struct WatchOptions {
     pub config: IndexConfig,
@@ -40,7 +45,7 @@ pub fn run_watch(opts: WatchOptions) -> Result<()> {
 
     let cache_dir = fs::canonicalize(root.join(&opts.config.cache_dir))
         .unwrap_or_else(|_| root.join(&opts.config.cache_dir));
-    let rx = spawn_watcher(&root, &cache_dir, &output_path, opts.debounce_ms)?;
+    let (rx, _guard) = spawn_watcher(&root, &cache_dir, &output_path, opts.debounce_ms)?;
 
     while let Ok(()) = rx.recv() {
         // Coalesce: drain any additional queued events so we re-index only once per burst
@@ -77,14 +82,15 @@ fn write_index(config: &IndexConfig, output_path: &Path) -> Result<crate::model:
     Ok(index)
 }
 
-/// Spawn a background file watcher thread that sends a signal on a channel whenever
-/// source files change. Returns a Receiver that yields `()` on each debounced change batch.
+/// Spawn a file watcher that sends a signal on a channel whenever source files change.
+/// Returns a Receiver that yields `()` on each debounced change batch, and a
+/// [`WatchGuard`] that keeps the watcher alive — drop it to stop watching.
 pub fn spawn_watcher(
     root: &Path,
     cache_dir: &Path,
     output_path: &Path,
     debounce_ms: u64,
-) -> Result<mpsc::Receiver<()>> {
+) -> Result<(mpsc::Receiver<()>, WatchGuard)> {
     let (tx, rx) = mpsc::channel();
     let root = root.to_path_buf();
     let cache_dir = cache_dir.to_path_buf();
@@ -110,17 +116,11 @@ pub fn spawn_watcher(
 
     debouncer.watcher().watch(&root, RecursiveMode::Recursive)?;
 
-    // The debouncer must be kept alive for its internal watcher thread to continue
-    // running. We move it into a parked background thread solely to hold ownership;
-    // the debouncer's own thread does the actual filesystem watching.
-    thread::spawn(move || {
-        let _debouncer = debouncer;
-        loop {
-            thread::park();
-        }
-    });
+    let guard = WatchGuard {
+        _debouncer: debouncer,
+    };
 
-    Ok(rx)
+    Ok((rx, guard))
 }
 
 /// Determines if a path change should trigger re-indexing.

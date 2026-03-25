@@ -234,7 +234,8 @@ pub fn run_mcp_server(
         let output_path = root.join("INDEX.md");
         let cache_dir = std::fs::canonicalize(root.join(&config.cache_dir))
             .unwrap_or_else(|_| root.join(&config.cache_dir));
-        let watch_rx = crate::watch::spawn_watcher(&root, &cache_dir, &output_path, debounce_ms)?;
+        let (watch_rx, _watch_guard) =
+            crate::watch::spawn_watcher(&root, &cache_dir, &output_path, debounce_ms)?;
 
         let watch_tx = tx.clone();
         thread::spawn(move || {
@@ -255,18 +256,14 @@ pub fn run_mcp_server(
         match event {
             ServerEvent::StdinClosed => break,
             ServerEvent::FileChanged => {
-                // Coalesce: drain any additional queued FileChanged events so we
-                // re-index only once per burst. Preserve non-FileChanged events
-                // so stdin messages are never lost.
+                // Coalesce: drain ALL queued events, discarding FileChanged
+                // duplicates so we re-index only once per burst. Non-FileChanged
+                // events are preserved and replayed after the reindex.
                 let mut deferred = Vec::new();
-                loop {
-                    match rx.try_recv() {
-                        Ok(ServerEvent::FileChanged) => continue,
-                        Ok(other) => {
-                            deferred.push(other);
-                            break;
-                        }
-                        Err(_) => break,
+                while let Ok(evt) = rx.try_recv() {
+                    match evt {
+                        ServerEvent::FileChanged => {}
+                        other => deferred.push(other),
                     }
                 }
 
@@ -311,7 +308,8 @@ mod coalesce_tests {
     use std::sync::mpsc;
 
     /// Reproduces the scenario where a StdinLine arrives between FileChanged
-    /// events. The coalescing logic must preserve it.
+    /// events. Greedy coalescing drains all queued events, so we get a single
+    /// reindex with all non-FileChanged events preserved and replayed after.
     #[test]
     fn coalesce_preserves_stdin_events() {
         let (tx, rx) = mpsc::channel::<ServerEvent>();
@@ -329,14 +327,10 @@ mod coalesce_tests {
             match event {
                 ServerEvent::FileChanged => {
                     let mut deferred = Vec::new();
-                    loop {
-                        match rx.try_recv() {
-                            Ok(ServerEvent::FileChanged) => continue,
-                            Ok(other) => {
-                                deferred.push(other);
-                                break;
-                            }
-                            Err(_) => break,
+                    while let Ok(evt) = rx.try_recv() {
+                        match evt {
+                            ServerEvent::FileChanged => {}
+                            other => deferred.push(other),
                         }
                     }
                     collected.push("reindex".to_string());
@@ -359,12 +353,12 @@ mod coalesce_tests {
             "StdinLine must not be lost during coalescing. Got: {:?}",
             collected
         );
-        // Adjacent FileChanged events coalesce, but the one after StdinLine is separate
-        // Expect: ["reindex", "stdin:hello", "reindex", "closed"]
+        // Greedy coalescing: all FileChanged events collapse into a single reindex
+        // Expect: ["reindex", "stdin:hello", "closed"]
         assert_eq!(
             collected.iter().filter(|e| *e == "reindex").count(),
-            2,
-            "Expect 2 reindexes: first coalesces the adjacent pair, second for the post-stdin one. Got: {:?}",
+            1,
+            "Expect 1 reindex: greedy coalescing collapses all FileChanged events. Got: {:?}",
             collected
         );
     }
@@ -384,14 +378,10 @@ mod coalesce_tests {
             match event {
                 ServerEvent::FileChanged => {
                     let mut deferred = Vec::new();
-                    loop {
-                        match rx.try_recv() {
-                            Ok(ServerEvent::FileChanged) => continue,
-                            Ok(other) => {
-                                deferred.push(other);
-                                break;
-                            }
-                            Err(_) => break,
+                    while let Ok(evt) = rx.try_recv() {
+                        match evt {
+                            ServerEvent::FileChanged => {}
+                            other => deferred.push(other),
                         }
                     }
                     for evt in deferred {
