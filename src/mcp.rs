@@ -1633,19 +1633,27 @@ fn bigram_similarity(a: &str, b: &str) -> f64 {
 ///   - BlockComment: pass through until `*/`.
 ///   - String: pass through until unescaped closing quote (tracks escape state properly
 ///     so `"\\\\"` is handled as two escaped backslashes followed by an end-quote).
+///   - RawString: pass through until `"` followed by the same number of `#` chars that
+///     opened the raw string (e.g., `r#"..."#`, `r##"..."##`).
 fn collapse_nested_bodies(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let len = chars.len();
     let mut result = String::with_capacity(source.len());
     let mut depth: i32 = 0;
     let mut in_string = false;
-    let mut string_char = '"';
     let mut escaped = false; // tracks backslash escaping inside strings
+    let mut in_raw_string = false;
+    let mut raw_hash_count: usize = 0;
     let mut in_line_comment = false;
     let mut in_block_comment = false;
     let mut prev_char = '\0';
     let mut skip_until_close = false;
     let mut collapse_depth: i32 = 0;
+    let mut i = 0;
 
-    for ch in source.chars() {
+    while i < len {
+        let ch = chars[i];
+
         // --- Line comment mode: pass through until newline ---
         if in_line_comment {
             if !skip_until_close {
@@ -1655,6 +1663,7 @@ fn collapse_nested_bodies(source: &str) -> String {
                 in_line_comment = false;
             }
             prev_char = ch;
+            i += 1;
             continue;
         }
 
@@ -1667,6 +1676,34 @@ fn collapse_nested_bodies(source: &str) -> String {
                 in_block_comment = false;
             }
             prev_char = ch;
+            i += 1;
+            continue;
+        }
+
+        // --- Raw string mode: pass through until `"` + N `#` chars ---
+        if in_raw_string {
+            if !skip_until_close {
+                result.push(ch);
+            }
+            if ch == '"' {
+                // Check if followed by raw_hash_count '#' chars
+                let mut hashes = 0;
+                while i + 1 + hashes < len && chars[i + 1 + hashes] == '#' && hashes < raw_hash_count {
+                    hashes += 1;
+                }
+                if hashes == raw_hash_count {
+                    // Consume the '#' chars
+                    for _ in 0..hashes {
+                        i += 1;
+                        if !skip_until_close {
+                            result.push(chars[i]);
+                        }
+                    }
+                    in_raw_string = false;
+                }
+            }
+            prev_char = chars[i];
+            i += 1;
             continue;
         }
 
@@ -1675,12 +1712,13 @@ fn collapse_nested_bodies(source: &str) -> String {
             if !skip_until_close {
                 result.push(ch);
             }
-            if ch == string_char && !escaped {
+            if ch == '"' && !escaped {
                 in_string = false;
             }
             // Track escape state: `\` flips it on, `\\` flips it back off
             escaped = ch == '\\' && !escaped;
             prev_char = ch;
+            i += 1;
             continue;
         }
 
@@ -1693,6 +1731,7 @@ fn collapse_nested_bodies(source: &str) -> String {
                 result.push(ch);
             }
             prev_char = ch;
+            i += 1;
             continue;
         }
         // Detect block comment start: /*
@@ -1702,7 +1741,34 @@ fn collapse_nested_bodies(source: &str) -> String {
                 result.push(ch);
             }
             prev_char = ch;
+            i += 1;
             continue;
+        }
+        // Detect raw string start: r"...", r#"..."#, r##"..."##, etc.
+        if ch == 'r' {
+            let mut hashes = 0;
+            while i + 1 + hashes < len && chars[i + 1 + hashes] == '#' {
+                hashes += 1;
+            }
+            if i + 1 + hashes < len && chars[i + 1 + hashes] == '"' {
+                // This is a raw string: consume r, #s, and opening "
+                in_raw_string = true;
+                raw_hash_count = hashes;
+                if !skip_until_close {
+                    result.push(ch); // 'r'
+                }
+                for j in 0..hashes {
+                    if !skip_until_close {
+                        result.push(chars[i + 1 + j]); // '#'
+                    }
+                }
+                if !skip_until_close {
+                    result.push(chars[i + 1 + hashes]); // '"'
+                }
+                prev_char = '"';
+                i += 1 + hashes + 1; // skip r + hashes + "
+                continue;
+            }
         }
         // Detect double-quoted string start.
         // Single quotes are NOT treated as string delimiters because in Rust
@@ -1711,11 +1777,11 @@ fn collapse_nested_bodies(source: &str) -> String {
         if ch == '"' {
             in_string = true;
             escaped = false;
-            string_char = ch;
             if !skip_until_close {
                 result.push(ch);
             }
             prev_char = ch;
+            i += 1;
             continue;
         }
 
@@ -1740,6 +1806,7 @@ fn collapse_nested_bodies(source: &str) -> String {
         }
 
         prev_char = ch;
+        i += 1;
     }
     result
 }
@@ -2207,11 +2274,11 @@ fn tool_get_related_tests(index: &CodebaseIndex, args: &Value) -> Value {
 }
 
 /// Find a FileIndex whose path matches the given string. Supports both exact
-/// match and suffix match so callers can use relative paths.
+/// match and suffix match (with `/` boundary) so callers can use relative paths.
 fn find_file<'a>(index: &'a CodebaseIndex, path: &str) -> Option<&'a FileIndex> {
     index.files.iter().find(|f| {
         let file_path = f.path.to_string_lossy();
-        file_path == path || file_path.ends_with(path)
+        file_path == path || file_path.ends_with(&format!("/{}", path))
     })
 }
 
@@ -3038,5 +3105,420 @@ mod tests {
         let result = tool_get_token_estimate(&index, &json!({}));
         let text = result["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("Provide"));
+    }
+
+    // -----------------------------------------------------------------------
+    // find_file: suffix matching requires `/` boundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_find_file_exact_match() {
+        let index = make_test_index();
+        let f = find_file(&index, "src/parser.rs");
+        assert!(f.is_some());
+        assert_eq!(f.unwrap().path.to_string_lossy(), "src/parser.rs");
+    }
+
+    #[test]
+    fn test_find_file_suffix_with_slash_boundary() {
+        let index = make_test_index();
+        // "parser.rs" should match "src/parser.rs" via "/parser.rs" suffix
+        let f = find_file(&index, "parser.rs");
+        assert!(f.is_some());
+        assert_eq!(f.unwrap().path.to_string_lossy(), "src/parser.rs");
+    }
+
+    #[test]
+    fn test_find_file_no_partial_suffix() {
+        let index = make_test_index();
+        // "rs" should NOT match "src/parser.rs" (no `/` boundary)
+        assert!(find_file(&index, "rs").is_none());
+        // "arser.rs" should NOT match either
+        assert!(find_file(&index, "arser.rs").is_none());
+        // "che.rs" should NOT match "src/cache.rs"
+        assert!(find_file(&index, "che.rs").is_none());
+    }
+
+    #[test]
+    fn test_find_file_not_found() {
+        let index = make_test_index();
+        assert!(find_file(&index, "nonexistent.rs").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // collapse_nested_bodies: raw strings
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_collapse_raw_string_with_braces() {
+        // Build input containing: r#"{ raw braces }"#
+        // Can't embed raw string delimiters directly in a Rust string literal,
+        // so we construct the input programmatically.
+        let mut input = String::from("fn foo() {\n    let s = r#\"{ raw braces }\"#;\n    if x {\n        bar();\n    }\n}");
+        // Verify our input is well-formed
+        assert!(input.contains("r#"));
+        let result = collapse_nested_bodies(&input);
+        // Raw string braces should not affect depth tracking
+        assert!(result.contains("{ raw braces }"));
+        // The if block should be collapsed
+        assert!(result.contains("{ ... }"));
+        assert!(!result.contains("bar()"));
+    }
+
+    #[test]
+    fn test_collapse_raw_string_double_hash() {
+        // r##"has a " and { braces }"##
+        let mut input = String::new();
+        input.push_str("fn foo() {\n    let s = r##\"has a ");
+        input.push('"');
+        input.push_str(" and { braces }\"##;\n    if x {\n        bar();\n    }\n}");
+        let result = collapse_nested_bodies(&input);
+        assert!(result.contains("{ ... }"));
+        assert!(!result.contains("bar()"));
+    }
+
+    #[test]
+    fn test_collapse_raw_string_no_hash() {
+        // r"{ raw }"
+        let input = "fn foo() {\n    let s = r\"{ raw }\"; if x {\n        bar();\n    }\n}";
+        let result = collapse_nested_bodies(input);
+        assert!(result.contains("{ ... }"));
+        assert!(!result.contains("bar()"));
+    }
+
+    // -----------------------------------------------------------------------
+    // compact output mode tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_tool_lookup_symbol_compact() {
+        let index = make_test_index();
+        let result = tool_lookup_symbol(&index, &json!({
+            "name": "parse_file",
+            "compact": true
+        }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert!(content["matches"].as_u64().unwrap() >= 1);
+        // Compact format has columns and rows
+        assert!(content["columns"].is_array());
+        assert!(content["rows"].is_array());
+        let columns = content["columns"].as_array().unwrap();
+        assert!(columns.contains(&json!("name")));
+        assert!(columns.contains(&json!("file")));
+        let rows = content["rows"].as_array().unwrap();
+        assert!(!rows.is_empty());
+    }
+
+    #[test]
+    fn test_tool_lookup_symbol_non_compact() {
+        let index = make_test_index();
+        let result = tool_lookup_symbol(&index, &json!({ "name": "parse_file" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        // Non-compact has "symbols" array of objects
+        assert!(content["symbols"].is_array());
+        let symbols = content["symbols"].as_array().unwrap();
+        assert!(!symbols.is_empty());
+        assert!(symbols[0]["name"].is_string());
+    }
+
+    #[test]
+    fn test_tool_list_declarations_compact() {
+        let index = make_test_index();
+        let result = tool_list_declarations(&index, &json!({
+            "path": "src/parser.rs",
+            "compact": true
+        }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert_eq!(content["file"], "src/parser.rs");
+        // Compact: declarations has columns/rows format
+        let decls = &content["declarations"];
+        assert!(decls["columns"].is_array());
+        assert!(decls["rows"].is_array());
+    }
+
+    #[test]
+    fn test_tool_search_signatures_compact() {
+        let index = make_test_index();
+        let result = tool_search_signatures(&index, &json!({
+            "query": "Result<",
+            "compact": true
+        }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert!(content["matches"].as_u64().unwrap() >= 1);
+        assert!(content["columns"].is_array());
+        assert!(content["rows"].is_array());
+    }
+
+    #[test]
+    fn test_tool_search_relevant_compact() {
+        let index = make_test_index();
+        let result = tool_search_relevant(&index, &json!({
+            "query": "parse",
+            "compact": true
+        }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert!(content["matches"].as_u64().unwrap() >= 1);
+        let results_val = &content["results"];
+        assert!(results_val["columns"].is_array());
+        assert!(results_val["rows"].is_array());
+    }
+
+    // -----------------------------------------------------------------------
+    // search_relevant: kind filter
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_tool_search_relevant_kind_filter() {
+        let index = make_test_index();
+        // Filter to only structs
+        let result = tool_search_relevant(&index, &json!({
+            "query": "cache",
+            "kind": "struct"
+        }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        let results_arr = content["results"].as_array().unwrap();
+        // All results should be structs (no path matches since kind filter is active)
+        for r in results_arr {
+            if let Some(kind) = r["kind"].as_str() {
+                assert_eq!(kind, "struct", "Expected only struct results with kind filter");
+            }
+        }
+        // Should find the Cache struct
+        let has_cache = results_arr.iter().any(|r| {
+            r["symbol"].as_str() == Some("Cache")
+        });
+        assert!(has_cache, "Expected Cache struct in results");
+    }
+
+    #[test]
+    fn test_tool_search_relevant_kind_filter_fn() {
+        let index = make_test_index();
+        // Filter to only functions
+        let result = tool_search_relevant(&index, &json!({
+            "query": "parse",
+            "kind": "fn"
+        }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        let results_arr = content["results"].as_array().unwrap();
+        // All symbol results should be functions
+        for r in results_arr {
+            if r["symbol"].is_string() {
+                assert_eq!(r["kind"].as_str().unwrap(), "fn");
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // read_source: multi-symbol and collapse modes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_tool_read_source_multi_symbol() {
+        use std::io::Write as IoWrite;
+
+        let mut index = make_test_index();
+        // Create a temp file with source content matching the fixture declarations
+        let dir = std::env::temp_dir().join("indxr_test_read_source");
+        let _ = std::fs::create_dir_all(dir.join("src"));
+        let source = "// line 1\n// line 2\n// line 3\n// line 4\n// line 5\n// line 6\n// line 7\n// line 8\n// line 9\nfn parse_file() {\n    // body line 11\n    // body line 12\n    // body line 13\n    // body line 14\n    // body line 15\n    // body line 16\n    // body line 17\n    // body line 18\n    // body line 19\n    // body line 20\n    // body line 21\n    // body line 22\n    // body line 23\n    // body line 24\n    // body line 25\n    // body line 26\n    // body line 27\n    // body line 28\n    // body line 29\n}\n// line 31\n// line 32\n// line 33\n// line 34\nfn internal_helper() {\n    // helper body\n}\n// line 38\n// line 39\n// line 40\n// line 41\n// line 42\n// line 43\n// line 44\n// line 45\n// line 46\n// line 47\n// line 48\n// line 49\nfn test_parse_file() {\n    // test body\n    // test body\n    // test body\n    // test body\n    // test body\n    // test body\n    // test body\n    // test body\n    // test body\n    // test body\n}\n";
+        let file_path = dir.join("src/parser.rs");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        f.write_all(source.as_bytes()).unwrap();
+
+        // Point index root at our temp dir
+        index.root = dir.clone();
+
+        let result = tool_read_source(&index, &json!({
+            "path": "src/parser.rs",
+            "symbols": ["parse_file", "internal_helper"]
+        }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        let symbols = content["symbols"].as_array().unwrap();
+        assert_eq!(symbols.len(), 2);
+        assert_eq!(symbols[0]["symbol"], "parse_file");
+        assert_eq!(symbols[1]["symbol"], "internal_helper");
+        assert!(symbols[0]["source"].as_str().unwrap().contains("parse_file"));
+        assert!(symbols[1]["source"].as_str().unwrap().contains("internal_helper"));
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_tool_read_source_multi_symbol_not_found() {
+        use std::io::Write as IoWrite;
+
+        let mut index = make_test_index();
+        let dir = std::env::temp_dir().join("indxr_test_read_source_nf");
+        let _ = std::fs::create_dir_all(dir.join("src"));
+        // Need 30+ lines since parse_file starts at line 10 with body_lines=20
+        let mut source = String::new();
+        for i in 1..=40 {
+            source.push_str(&format!("// line {}\n", i));
+        }
+        let file_path = dir.join("src/parser.rs");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        f.write_all(source.as_bytes()).unwrap();
+        index.root = dir.clone();
+
+        let result = tool_read_source(&index, &json!({
+            "path": "src/parser.rs",
+            "symbols": ["parse_file", "nonexistent_fn"]
+        }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        let symbols = content["symbols"].as_array().unwrap();
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0]["symbol"], "parse_file");
+        let not_found = content["not_found"].as_array().unwrap();
+        assert!(not_found.contains(&json!("nonexistent_fn")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_tool_read_source_collapse() {
+        use std::io::Write as IoWrite;
+
+        let mut index = make_test_index();
+        let dir = std::env::temp_dir().join("indxr_test_read_source_collapse");
+        let _ = std::fs::create_dir_all(dir.join("src"));
+        let source = "// lines 1-9\n\n\n\n\n\n\n\n\nfn parse_file() {\n    if true {\n        nested();\n    }\n}\n";
+        let file_path = dir.join("src/parser.rs");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        f.write_all(source.as_bytes()).unwrap();
+        index.root = dir.clone();
+
+        let result = tool_read_source(&index, &json!({
+            "path": "src/parser.rs",
+            "symbol": "parse_file",
+            "collapse": true
+        }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        let src = content["source"].as_str().unwrap();
+        assert!(content["collapsed"].as_bool().unwrap());
+        assert!(src.contains("{ ... }"), "Expected collapsed nested body");
+        assert!(!src.contains("nested()"), "Nested call should be collapsed away");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_tool_read_source_multi_symbol_collapse() {
+        use std::io::Write as IoWrite;
+
+        let mut index = make_test_index();
+        let dir = std::env::temp_dir().join("indxr_test_multi_collapse");
+        let _ = std::fs::create_dir_all(dir.join("src"));
+        let source = "// lines 1-9\n\n\n\n\n\n\n\n\nfn parse_file() {\n    if true {\n        nested();\n    }\n}\n// lines 15-34\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nfn internal_helper() {\n    match x {\n        _ => deep(),\n    }\n}\n";
+        let file_path = dir.join("src/parser.rs");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        f.write_all(source.as_bytes()).unwrap();
+        index.root = dir.clone();
+
+        let result = tool_read_source(&index, &json!({
+            "path": "src/parser.rs",
+            "symbols": ["parse_file", "internal_helper"],
+            "collapse": true
+        }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        let symbols = content["symbols"].as_array().unwrap();
+        assert_eq!(symbols.len(), 2);
+        // Both should have collapsed bodies
+        for sym in symbols {
+            let src = sym["source"].as_str().unwrap();
+            assert!(src.contains("{ ... }"), "Expected collapsed body for {}", sym["symbol"]);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------------
+    // batch_file_summaries: cap boundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_tool_batch_file_summaries_cap() {
+        use crate::model::{FileIndex, Import, IndexStats};
+
+        // Create an index with 35 files (over the 30-file cap)
+        let mut files = Vec::new();
+        for i in 0..35 {
+            files.push(FileIndex {
+                path: PathBuf::from(format!("src/file_{}.rs", i)),
+                language: Language::Rust,
+                size: 100,
+                lines: 10,
+                imports: vec![],
+                declarations: vec![],
+            });
+        }
+        let index = CodebaseIndex {
+            root: PathBuf::from("/tmp/test_cap"),
+            root_name: "test_cap".to_string(),
+            generated_at: "2026-01-01T00:00:00Z".to_string(),
+            stats: IndexStats {
+                total_files: 35,
+                total_lines: 350,
+                languages: HashMap::from([("Rust".to_string(), 35)]),
+                duration_ms: 5,
+            },
+            tree: vec![],
+            files,
+        };
+
+        let result = tool_batch_file_summaries(&index, &json!({ "glob": "*.rs" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        // Should cap at 30
+        assert_eq!(content["count"], 30);
+        assert_eq!(content["total_matched"], 35);
+    }
+
+    // -----------------------------------------------------------------------
+    // get_callers: common word symbol
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_tool_get_callers_common_word() {
+        let index = make_test_index();
+        // "get" is a method on Cache — should only match word-boundary occurrences
+        let result = tool_get_callers(&index, &json!({ "symbol": "get" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        // Should not produce false positives from "budget", "widget", etc.
+        let refs = content["references"].as_array().unwrap();
+        for r in refs {
+            if let Some(sig) = r.get("match_type").and_then(|v| v.as_str()) {
+                if sig == "signature" {
+                    // The matched signature should contain "get" at a word boundary
+                    let name = r["name"].as_str().unwrap();
+                    assert_ne!(name, "get", "Should not match the symbol's own declaration");
+                }
+            }
+        }
     }
 }
