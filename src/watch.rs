@@ -326,6 +326,11 @@ mod tests {
         let got = rx.recv_timeout(Duration::from_secs(5));
         assert!(got.is_ok(), "Expected event while guard is alive");
 
+        // Let any remaining debounced events from the initial write settle
+        // (Windows NTFS can emit multiple notifications per file operation)
+        std::thread::sleep(Duration::from_millis(200));
+        while rx.try_recv().is_ok() {}
+
         // Drop the guard — watcher should stop, channel should disconnect
         drop(guard);
         // Drain any in-flight events
