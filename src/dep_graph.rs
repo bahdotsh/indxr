@@ -165,14 +165,13 @@ fn normalize_import_separators(text: &str) -> String {
 
     // Replace dots only if not preceded by a `/` and followed by a short extension-like suffix
     let mut result = String::with_capacity(after_colons.len());
-    let chars: Vec<char> = after_colons.chars().collect();
-    for (i, &c) in chars.iter().enumerate() {
+    for (byte_pos, c) in after_colons.char_indices() {
         if c == '.' {
-            // Check if this looks like a file extension: dot followed by 1-4 alnum chars at end or before non-alnum
-            let rest = &after_colons[i + 1..];
+            // Check if this looks like a file extension: dot followed by 1-3 alnum chars at end or before non-alnum
+            let rest = &after_colons[byte_pos + c.len_utf8()..];
             let ext_len = rest.chars().take_while(|c| c.is_alphanumeric()).count();
             let after_ext = rest.chars().nth(ext_len);
-            let is_extension = (1..=4).contains(&ext_len)
+            let is_extension = (1..=3).contains(&ext_len)
                 && (after_ext.is_none() || !after_ext.unwrap().is_alphanumeric());
 
             // Preserve dot for file extensions: at end of string, or before a
@@ -611,6 +610,9 @@ fn collect_relationship_edges(
     edge_set: &mut HashSet<(String, String, EdgeKind)>,
 ) {
     for decl in decls {
+        if decl.name.is_empty() {
+            continue;
+        }
         let from_id = format!("{}::{}", file_path, decl.name);
         for rel in &decl.relationships {
             let edge_kind = match rel.kind {
@@ -716,10 +718,11 @@ pub fn format_mermaid(graph: &DepGraph) -> String {
         id_map.insert(&node.id, format!("n{}", i));
     }
 
-    // Emit node declarations once
+    // Emit node declarations once (escape chars that break Mermaid label syntax)
+    let escape_mermaid = |s: &str| s.replace('\\', "\\\\").replace('"', "#quot;").replace(']', "#93;");
     for node in &graph.nodes {
         let nid = &id_map[node.id.as_str()];
-        out.push_str(&format!("  {}[\"{}\"]\n", nid, node.id));
+        out.push_str(&format!("  {}[\"{}\"]\n", nid, escape_mermaid(&node.id)));
     }
 
     // Emit edges referencing mapped ids
@@ -1356,11 +1359,11 @@ mod tests {
 
     #[test]
     fn test_normalize_replaces_module_dots() {
-        // Python-style module separators become slashes; final short segment
-        // is ambiguous with a file extension so the last dot is preserved.
-        assert_eq!(normalize_import_separators("app.models.user"), "app/models.user");
-        // Longer final segments are not extension-like, so all dots become slashes
+        // Python-style module separators become slashes (4+ char segments are not extension-like)
+        assert_eq!(normalize_import_separators("app.models.user"), "app/models/user");
         assert_eq!(normalize_import_separators("app.models.views"), "app/models/views");
+        // 1-3 char final segments still preserved as extensions
+        assert_eq!(normalize_import_separators("app.models.py"), "app/models.py");
     }
 
     #[test]
