@@ -1,7 +1,7 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-25 12:01:08 UTC | Files: 47 | Lines: 19316
-> Languages: Markdown (12), Python (1), Rust (32), Shell (1), TOML (1)
+> Generated: 2026-03-25 13:21:35 UTC | Files: 50 | Lines: 20595
+> Languages: Markdown (13), Python (1), Rust (34), Shell (1), TOML (1)
 
 ## Directory Structure
 
@@ -22,6 +22,7 @@ indxr/
     mcp-server.md
     output-formats.md
     token-budget.md
+  plan.md
   src/
     budget.rs
     cache/
@@ -32,6 +33,7 @@ indxr/
     error.rs
     filter.rs
     indexer.rs
+    init.rs
     languages.rs
     main.rs
     mcp/
@@ -62,6 +64,7 @@ indxr/
       tree_sitter_parser.rs
     walker/
       mod.rs
+    watch.rs
   token_count.py
 ```
 
@@ -79,11 +82,14 @@ indxr/
 - `# Output control`
 - `# Caching`
 - `# MCP server`
+- `# File watching`
+- `# Agent setup`
 - `# Other`
 
 **Cargo.toml**
 - `[package]`
 - `[dependencies]`
+- `[dev-dependencies]`
 
 **INDEX.md**
 - `# Codebase Index: indxr`
@@ -154,6 +160,19 @@ indxr/
 - `# Exclude test directories`
 - `# Include gitignored files`
 - `# Skip large files`
+- `# Watch current directory, keep INDEX.md updated`
+- `# Watch a specific project`
+- `# Custom output path`
+- `# Slower debounce for high-frequency saves`
+- `# Quiet mode (no progress output)`
+- `# MCP server with auto-reindex`
+- `# Set up for all agents (Claude Code, Cursor, Windsurf)`
+- `# Claude Code only`
+- `# Cursor and Windsurf only`
+- `# Config files only, skip INDEX.md generation`
+- `# Skip PreToolUse hooks`
+- `# Overwrite existing files`
+- `# Re-run after initial setup (skips existing files)`
 - `# Compact public API index for an agent`
 - `# Quick structural diff of backend changes`
 - `# Full JSON index without cache`
@@ -215,6 +234,9 @@ indxr/
 - `# Scoped to a directory within budget`
 - `# Specific language within budget`
 
+**plan.md**
+- `# indxr Feature Plan`
+
 **src/budget.rs**
 - `pub fn estimate_tokens(text: &str) -> usize`
 - `pub fn apply_token_budget(index: &mut CodebaseIndex, max_tokens: usize)`
@@ -261,6 +283,10 @@ indxr/
 - `pub fn generate_index_markdown(index: &CodebaseIndex) -> anyhow::Result<String>`
 - `pub fn regenerate_index_file(config: &IndexConfig) -> anyhow::Result<CodebaseIndex>`
 
+**src/init.rs**
+- `pub struct InitOptions`
+- `pub fn run_init(opts: InitOptions) -> Result<()>`
+
 **src/languages.rs**
 - `pub enum Language`
 
@@ -296,7 +322,7 @@ indxr/
 - `pub(super) const APPROX_SUMMARY_TOKENS: usize = 300`
 
 **src/mcp/mod.rs**
-- `pub fn run_mcp_server(mut index: CodebaseIndex, config: IndexConfig) -> anyhow::Result<()>`
+- `pub fn run_mcp_server( mut index: CodebaseIndex, config: IndexConfig, watch: bool, debounce_ms: u64, ) -> anyhow::Result<()>`
 
 **src/mcp/tools.rs**
 - `pub(super) fn tool_definitions() -> Value`
@@ -402,6 +428,11 @@ indxr/
 - `pub struct FileEntry`
 - `pub fn walk_directory( root: &Path, respect_gitignore: bool, max_file_size: u64, max_depth: Option<usize>, exclude_patterns: &[String], ) -> Result<WalkResult>`
 
+**src/watch.rs**
+- `pub struct WatchOptions`
+- `pub fn run_watch(opts: WatchOptions) -> Result<()>`
+- `pub fn spawn_watcher( root: &Path, cache_dir: &Path, output_path: &Path, debounce_ms: u64, ) -> Result<mpsc::Receiver<()>>`
+
 **token_count.py**
 - `def count_openai(text: str) -> int | None`
 - `def count_claude(text: str) -> int | None`
@@ -411,7 +442,7 @@ indxr/
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 8.6 KB | **Lines:** 145
+**Language:** Markdown | **Size:** 9.5 KB | **Lines:** 161
 
 **Declarations:**
 
@@ -419,7 +450,7 @@ indxr/
 
 ## Cargo.toml
 
-**Language:** TOML | **Size:** 921 B | **Lines:** 36
+**Language:** TOML | **Size:** 999 B | **Lines:** 41
 
 **Imports:**
 - `anyhow`
@@ -432,7 +463,7 @@ indxr/
 - `regex`
 - `serde`
 - `serde_json`
-- *... and 12 more imports*
+- *... and 15 more imports*
 
 **Declarations:**
 
@@ -448,7 +479,7 @@ indxr/
 
 ## README.md
 
-**Language:** Markdown | **Size:** 8.9 KB | **Lines:** 256
+**Language:** Markdown | **Size:** 9.2 KB | **Lines:** 252
 
 **Declarations:**
 
@@ -464,7 +495,7 @@ indxr/
 
 ## docs/agent-integration.md
 
-**Language:** Markdown | **Size:** 14.2 KB | **Lines:** 430
+**Language:** Markdown | **Size:** 15.7 KB | **Lines:** 465
 
 **Declarations:**
 
@@ -480,7 +511,7 @@ indxr/
 
 ## docs/cli-reference.md
 
-**Language:** Markdown | **Size:** 4.4 KB | **Lines:** 195
+**Language:** Markdown | **Size:** 7.4 KB | **Lines:** 291
 
 **Declarations:**
 
@@ -512,7 +543,7 @@ indxr/
 
 ## docs/mcp-server.md
 
-**Language:** Markdown | **Size:** 13.6 KB | **Lines:** 537
+**Language:** Markdown | **Size:** 14.6 KB | **Lines:** 553
 
 **Declarations:**
 
@@ -529,6 +560,14 @@ indxr/
 ## docs/token-budget.md
 
 **Language:** Markdown | **Size:** 3.3 KB | **Lines:** 92
+
+**Declarations:**
+
+---
+
+## plan.md
+
+**Language:** Markdown | **Size:** 4.8 KB | **Lines:** 151
 
 **Declarations:**
 
@@ -622,7 +661,7 @@ indxr/
 
 ## src/cli.rs
 
-**Language:** Rust | **Size:** 3.4 KB | **Lines:** 137
+**Language:** Rust | **Size:** 5.7 KB | **Lines:** 223
 
 **Imports:**
 - `std::path::PathBuf`
@@ -714,6 +753,52 @@ indxr/
 
 ---
 
+## src/init.rs
+
+**Language:** Rust | **Size:** 17.9 KB | **Lines:** 500
+
+**Imports:**
+- `std::fs`
+- `std::path::{Path, PathBuf}`
+- `anyhow::Result`
+- `crate::indexer::{self, IndexConfig}`
+- `crate::model::DetailLevel`
+- `crate::output::OutputFormatter`
+- `crate::output::markdown::{MarkdownFormatter, MarkdownOptions}`
+
+**Declarations:**
+
+`enum WriteResult`
+> Variants: `Created`, `Skipped`, `Appended`
+
+`fn display_relative(path: &Path, root: &Path) -> String`
+
+`fn write_file_safe(path: &Path, content: &str, force: bool) -> Result<WriteResult>`
+
+`fn setup_claude(root: &Path, force: bool, include_hooks: bool) -> Result<Vec<WriteResult>>`
+
+`fn setup_cursor(root: &Path, force: bool) -> Result<Vec<WriteResult>>`
+
+`fn setup_windsurf(root: &Path, force: bool) -> Result<Vec<WriteResult>>`
+
+`fn setup_gitignore(root: &Path) -> Result<WriteResult>`
+
+`fn generate_index(root: &Path, max_file_size: u64) -> Result<WriteResult>`
+
+`fn mcp_json_content() -> String`
+
+`fn claude_md_content(root: &Path) -> String`
+
+`fn claude_settings_content() -> String`
+
+`fn cursorrules_content() -> String`
+
+`fn windsurfrules_content() -> String`
+
+`mod tests`
+
+---
+
 ## src/languages.rs
 
 **Language:** Rust | **Size:** 6.3 KB | **Lines:** 178
@@ -743,7 +828,7 @@ indxr/
 
 ## src/main.rs
 
-**Language:** Rust | **Size:** 7.6 KB | **Lines:** 274
+**Language:** Rust | **Size:** 9.2 KB | **Lines:** 343
 
 **Imports:**
 - `std::collections::HashMap`
@@ -774,6 +859,8 @@ indxr/
 
 `mod indexer`
 
+`mod init`
+
 `mod languages`
 
 `mod mcp`
@@ -786,6 +873,8 @@ indxr/
 
 `mod walker`
 
+`mod watch`
+
 `fn main() -> Result<()>`
 
 `fn handle_git_diff( root: &std::path::Path, since_ref: &str, current_files: &[model::FileIndex], registry: &ParserRegistry, cli: &Cli, ) -> Result<()>`
@@ -794,7 +883,7 @@ indxr/
 
 ## src/mcp/helpers.rs
 
-**Language:** Rust | **Size:** 26.5 KB | **Lines:** 831
+**Language:** Rust | **Size:** 26.7 KB | **Lines:** 842
 
 **Imports:**
 - `std::collections::{HashMap, HashSet}`
@@ -811,17 +900,21 @@ indxr/
 
 ## src/mcp/mod.rs
 
-**Language:** Rust | **Size:** 5.3 KB | **Lines:** 192
+**Language:** Rust | **Size:** 8.1 KB | **Lines:** 266
 
 **Imports:**
 - `std::io::{self, BufRead, Write}`
+- `std::sync::mpsc`
+- `std::thread`
 - `serde::Deserialize`
 - `serde::Serialize`
 - `serde_json::{self, Value, json}`
-- `crate::indexer::IndexConfig`
+- `crate::indexer::{self, IndexConfig}`
 - `crate::model::CodebaseIndex`
 - `crate::parser::ParserRegistry`
-- `self::tools::{handle_tool_call, tool_definitions, tool_get_diff_summary, tool_regenerate_index}`
+- `self::tools::{
+    handle_tool_call, tool_definitions, tool_get_diff_summary, tool_regenerate_index,
+}`
 
 **Declarations:**
 
@@ -850,18 +943,21 @@ indxr/
 
 `fn handle_tools_call( id: Value, index: &mut CodebaseIndex, config: &IndexConfig, registry: &ParserRegistry, params: &Value, ) -> JsonRpcResponse`
 
+`enum ServerEvent`
+> Variants: `StdinLine`, `StdinClosed`, `FileChanged`
+
 ---
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 40.8 KB | **Lines:** 1196
+**Language:** Rust | **Size:** 40.9 KB | **Lines:** 1183
 
 **Imports:**
 - `std::collections::HashMap`
 - `std::path::PathBuf`
 - `serde_json::{Value, json}`
 - `crate::languages::Language`
-- `crate::model::declarations::{DeclKind, Declaration, Relationship, RelKind, Visibility}`
+- `crate::model::declarations::{DeclKind, Declaration, RelKind, Relationship, Visibility}`
 - `crate::model::{CodebaseIndex, FileIndex, Import, IndexStats}`
 - `super::helpers::*`
 - `super::tools::*`
@@ -1012,7 +1108,7 @@ indxr/
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 52.7 KB | **Lines:** 1467
+**Language:** Rust | **Size:** 52.5 KB | **Lines:** 1454
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1735,6 +1831,31 @@ indxr/
 - `crate::model::TreeEntry`
 
 **Declarations:**
+
+---
+
+## src/watch.rs
+
+**Language:** Rust | **Size:** 7.1 KB | **Lines:** 250
+
+**Imports:**
+- `std::path::{Path, PathBuf}`
+- `std::sync::mpsc`
+- `std::time::Duration`
+- `std::{fs, thread}`
+- `anyhow::Result`
+- `notify::RecursiveMode`
+- `notify_debouncer_mini::new_debouncer`
+- `crate::indexer::{self, IndexConfig}`
+- `crate::languages::Language`
+
+**Declarations:**
+
+`fn write_index(config: &IndexConfig, output_path: &Path) -> Result<crate::model::CodebaseIndex>`
+
+`fn should_trigger_reindex(path: &Path, root: &Path, output_path: &Path, cache_dir: &Path) -> bool`
+
+`mod tests`
 
 ---
 
