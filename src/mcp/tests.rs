@@ -1280,6 +1280,30 @@ fn test_tool_dependency_graph_scoped() {
 }
 
 #[test]
+fn test_tool_dependency_graph_depth_limit() {
+    let index = make_test_index();
+    // Full graph: cache.rs → parser.rs (at least 1 edge)
+    let full = tool_get_dependency_graph(&index, &json!({ "format": "json" }));
+    let full_content: Value =
+        serde_json::from_str(full["content"][0]["text"].as_str().unwrap()).unwrap();
+    let full_edges = full_content["edges"].as_u64().unwrap();
+    assert!(full_edges >= 1, "Full graph should have at least 1 edge");
+
+    // depth=0 scoped to cache: no hops allowed, so no edges
+    let d0 = tool_get_dependency_graph(
+        &index,
+        &json!({ "path": "src/cache", "depth": 0, "format": "json" }),
+    );
+    let d0_content: Value =
+        serde_json::from_str(d0["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        d0_content["edges"].as_u64().unwrap(),
+        0,
+        "depth=0 should produce no edges"
+    );
+}
+
+#[test]
 fn test_tool_dependency_graph_defaults_to_mermaid() {
     let index = make_test_index();
     let result = tool_get_dependency_graph(&index, &json!({}));

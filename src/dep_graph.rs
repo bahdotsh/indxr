@@ -361,7 +361,7 @@ fn match_path_candidate<'a>(candidate_lower: &str, path_infos: &'a [PathInfo<'a>
             || info.no_ext_lower.ends_with(&index_candidate);
 
         if matches {
-            // Prefer shorter paths (more specific match)
+            // Prefer shortest matching path (avoids deep vendored/duplicated copies)
             let len = info.lower.len();
             if len < best_len {
                 best = Some(info.path);
@@ -741,6 +741,15 @@ pub fn format_dot(graph: &DepGraph) -> String {
     out.push_str("  node [shape=box, style=filled, fillcolor=\"#f0f0f0\"];\n");
     out.push('\n');
 
+    for node in &graph.nodes {
+        out.push_str(&format!(
+            "  \"{}\" [label=\"{}\"];\n",
+            escape(&node.id),
+            escape(&node.label)
+        ));
+    }
+    out.push('\n');
+
     for edge in &graph.edges {
         let from = escape(&edge.from);
         let to = escape(&edge.to);
@@ -791,7 +800,7 @@ pub fn format_mermaid(graph: &DepGraph) -> String {
     };
     for node in &graph.nodes {
         let nid = &id_map[node.id.as_str()];
-        out.push_str(&format!("  {}[\"{}\"]\n", nid, escape_mermaid(&node.id)));
+        out.push_str(&format!("  {}[\"{}\"]\n", nid, escape_mermaid(&node.label)));
     }
 
     // Emit edges referencing mapped ids
@@ -1247,6 +1256,8 @@ mod tests {
 
         let dot = format_dot(&graph);
         assert!(dot.contains("digraph dependencies"));
+        assert!(dot.contains("\"a.rs\" [label=\"a.rs\"]"));
+        assert!(dot.contains("\"b.rs\" [label=\"b.rs\"]"));
         assert!(dot.contains("\"a.rs\" -> \"b.rs\""));
         assert!(dot.contains("rankdir=LR"));
     }
@@ -1392,9 +1403,9 @@ mod tests {
         };
 
         let mermaid = format_mermaid(&graph);
-        // Both nodes must appear with distinct IDs
-        assert!(mermaid.contains("n0[\"src/a-b.rs\"]"));
-        assert!(mermaid.contains("n1[\"src/a_b.rs\"]"));
+        // Both nodes must appear with distinct IDs, labels show short names
+        assert!(mermaid.contains("n0[\"a-b.rs\"]"));
+        assert!(mermaid.contains("n1[\"a_b.rs\"]"));
         assert!(mermaid.contains("n0 --> n1"));
     }
 
