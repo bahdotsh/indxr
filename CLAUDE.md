@@ -130,7 +130,10 @@ Key source files:
 - `src/main.rs` — entry point, CLI dispatch
 - `src/cli.rs` — clap argument definitions
 - `src/indexer.rs` — core indexing orchestration
-- `src/mcp.rs` — MCP server + all 18 tool implementations
+- `src/mcp/mod.rs` — MCP server loop, JSON-RPC protocol handling
+- `src/mcp/tools.rs` — tool definitions, dispatch, and 18 tool implementations
+- `src/mcp/helpers.rs` — shared structs, search/scoring/glob/string helpers
+- `src/mcp/tests.rs` — MCP module tests
 - `src/budget.rs` — token estimation and progressive truncation
 - `src/filter.rs` — path/kind/visibility/symbol filtering
 - `src/diff.rs` — git structural diffing

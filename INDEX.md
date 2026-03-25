@@ -1,7 +1,7 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-25 09:47:32 UTC | Files: 44 | Lines: 17642
-> Languages: Markdown (12), Python (1), Rust (29), Shell (1), TOML (1)
+> Generated: 2026-03-25 11:52:23 UTC | Files: 47 | Lines: 18975
+> Languages: Markdown (12), Python (1), Rust (32), Shell (1), TOML (1)
 
 ## Directory Structure
 
@@ -34,7 +34,11 @@ indxr/
     indexer.rs
     languages.rs
     main.rs
-    mcp.rs
+    mcp/
+      helpers.rs
+      mod.rs
+      tests.rs
+      tools.rs
     model/
       declarations.rs
       mod.rs
@@ -260,8 +264,61 @@ indxr/
 **src/languages.rs**
 - `pub enum Language`
 
-**src/mcp.rs**
+**src/mcp/helpers.rs**
+- `pub(super) fn tool_result(content: Value) -> Value`
+- `pub(super) fn tool_error(msg: &str) -> Value`
+- `pub(super) struct SymbolMatch`
+- `pub(super) fn find_symbols_in_decl( decl: &Declaration, query: &str, file_path: &str, results: &mut Vec<SymbolMatch>, limit: usize, )`
+- `pub(super) struct SignatureMatch`
+- `pub(super) fn find_signatures_in_decl( decl: &Declaration, query: &str, file_path: &str, results: &mut Vec<SignatureMatch>, limit: usize, )`
+- `pub(super) fn filter_declarations<'a>( decls: &'a [Declaration], kind: &DeclKind, ) -> Vec<&'a Declaration>`
+- `pub(super) struct ShallowDeclaration`
+- `pub(super) fn to_shallow(decl: &Declaration) -> ShallowDeclaration`
+- `pub(super) fn file_summary_data(file: &FileIndex) -> Value`
+- `pub(super) fn find_decl_by_name<'a>( decls: &'a [Declaration], name: &str, ) -> Option<&'a Declaration>`
+- `pub(super) fn read_line_range(path: &Path, start: usize, end: usize) -> Result<String, String>`
+- `pub(super) fn find_file<'a>(index: &'a CodebaseIndex, path: &str) -> Option<&'a FileIndex>`
+- `pub(super) struct RelevanceMatch`
+- `pub(super) fn score_match(text: &str, query: &str, terms: &[&str]) -> u32`
+- `pub(super) fn score_decls_recursive( decls: &[Declaration], file_path: &str, query: &str, terms: &[&str], results: &mut Vec<RelevanceMatch>, kind_filter: Option<&DeclKind>, )`
+- `pub(super) fn compile_glob_matcher(pattern: &str) -> Option<GlobMatcher>`
+- `pub(super) fn simple_glob_match(pattern: &str, path: &str) -> bool`
+- `pub(super) fn split_identifier(name: &str) -> Vec<String>`
+- `pub(super) fn bigram_similarity(a: &str, b: &str) -> f64`
+- `pub(super) fn collapse_nested_bodies(source: &str) -> String`
+- `pub(super) fn is_compact(args: &Value) -> bool`
+- `pub(super) fn serialize_compact<T: Serialize>(items: &[T], columns: &[&str]) -> Value`
+- `pub(super) fn to_compact_rows(columns: &[&str], items: &[Value]) -> Value`
+- `pub(super) fn contains_word_boundary(text: &str, word: &str) -> bool`
+- `pub(super) fn collect_public_decls(decls: &[Declaration], file_path: &str, out: &mut Vec<Value>)`
+- `pub(super) fn find_tests_for_symbol( decls: &[Declaration], symbol_lower: &str, file_path: &str, results: &mut Vec<Value>, reason: &str, )`
+- `pub(super) fn explain_decl(decl: &Declaration, file_path: &str) -> Value`
+- `pub(super) const APPROX_SUMMARY_TOKENS: usize = 300`
+
+**src/mcp/mod.rs**
 - `pub fn run_mcp_server(mut index: CodebaseIndex, config: IndexConfig) -> anyhow::Result<()>`
+
+**src/mcp/tools.rs**
+- `pub(super) fn tool_definitions() -> Value`
+- `pub(super) fn handle_tool_call(index: &CodebaseIndex, name: &str, args: &Value) -> Value`
+- `pub(super) fn tool_regenerate_index(index: &mut CodebaseIndex, config: &IndexConfig) -> Value`
+- `pub(super) fn tool_lookup_symbol(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_list_declarations(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_search_signatures(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_tree(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_imports(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_stats(index: &CodebaseIndex) -> Value`
+- `pub(super) fn tool_get_file_summary(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_read_source(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_file_context(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_token_estimate(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_search_relevant(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_diff_summary( index: &CodebaseIndex, config: &IndexConfig, registry: &ParserRegistry, args: &Value, ) -> Value`
+- `pub(super) fn tool_batch_file_summaries(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_callers(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_public_api(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_explain_symbol(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_related_tests(index: &CodebaseIndex, args: &Value) -> Value`
 
 **src/model/declarations.rs**
 - `pub struct Declaration`
@@ -354,7 +411,7 @@ indxr/
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 8.2 KB | **Lines:** 141
+**Language:** Markdown | **Size:** 8.4 KB | **Lines:** 144
 
 **Declarations:**
 
@@ -362,20 +419,20 @@ indxr/
 
 ## Cargo.toml
 
-**Language:** TOML | **Size:** 905 B | **Lines:** 35
+**Language:** TOML | **Size:** 921 B | **Lines:** 36
 
 **Imports:**
 - `anyhow`
 - `bincode`
 - `chrono`
 - `clap`
+- `globset`
 - `ignore`
 - `rayon`
 - `regex`
 - `serde`
 - `serde_json`
-- `serde_yaml`
-- *... and 11 more imports*
+- *... and 12 more imports*
 
 **Declarations:**
 
@@ -383,7 +440,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 39.5 KB | **Lines:** 1561
+**Language:** Markdown | **Size:** 40.6 KB | **Lines:** 1591
 
 **Declarations:**
 
@@ -735,24 +792,44 @@ indxr/
 
 ---
 
-## src/mcp.rs
+## src/mcp/helpers.rs
 
-**Language:** Rust | **Size:** 82.6 KB | **Lines:** 2387
+**Language:** Rust | **Size:** 26.5 KB | **Lines:** 831
 
 **Imports:**
-- `std::collections::HashMap`
-- `std::io::{self, BufRead, Write}`
-- `std::path::{Path, PathBuf}`
-- `serde::{Deserialize, Serialize}`
-- `serde_json::{self, Value, json}`
-- `crate::budget::estimate_tokens`
-- `crate::diff`
-- `crate::indexer::{self, IndexConfig}`
-- `crate::languages::Language`
+- `std::collections::{HashMap, HashSet}`
+- `std::path::Path`
+- `globset::{GlobBuilder, GlobMatcher}`
+- `serde::Serialize`
+- `serde_json::{Value, json}`
 - `crate::model::declarations::{DeclKind, Declaration, Visibility}`
-- *... and 2 more imports*
+- `crate::model::{CodebaseIndex, FileIndex}`
 
 **Declarations:**
+
+---
+
+## src/mcp/mod.rs
+
+**Language:** Rust | **Size:** 5.3 KB | **Lines:** 192
+
+**Imports:**
+- `std::io::{self, BufRead, Write}`
+- `serde::Deserialize`
+- `serde::Serialize`
+- `serde_json::{self, Value, json}`
+- `crate::indexer::IndexConfig`
+- `crate::model::CodebaseIndex`
+- `crate::parser::ParserRegistry`
+- `self::tools::{handle_tool_call, tool_definitions, tool_get_diff_summary, tool_regenerate_index}`
+
+**Declarations:**
+
+`mod helpers`
+
+`mod tools`
+
+`mod tests`
 
 `struct JsonRpcRequest`
 > Fields: `jsonrpc: String`, `id: Option<Value>`, `method: String`, `params: Option<Value>`
@@ -767,107 +844,190 @@ indxr/
 
 `fn err_response(id: Value, code: i32, message: String) -> JsonRpcResponse`
 
-`fn tool_result(content: Value) -> Value`
-
-`fn tool_error(msg: &str) -> Value`
-
-`struct SymbolMatch`
-> Fields: `file: String`, `kind: String`, `name: String`, `signature: String`, `line: usize`, `doc_comment: Option<String>`
-
-`fn find_symbols_in_decl( decl: &Declaration, query: &str, file_path: &str, results: &mut Vec<SymbolMatch>, limit: usize, )`
-
-`struct SignatureMatch`
-> Fields: `file: String`, `kind: String`, `name: String`, `signature: String`, `line: usize`
-
-`fn find_signatures_in_decl( decl: &Declaration, query: &str, file_path: &str, results: &mut Vec<SignatureMatch>, limit: usize, )`
-
-`fn filter_declarations<'a>(decls: &'a [Declaration], kind: &DeclKind) -> Vec<&'a Declaration>`
-
-`struct ShallowDeclaration`
-> Fields: `kind: String`, `name: String`, `signature: String`, `line: usize`, `children_count: Option<usize>`
-
-`fn to_shallow(decl: &Declaration) -> ShallowDeclaration`
-
-`fn file_summary_data(file: &FileIndex) -> Value`
-
-`fn find_decl_by_name<'a>(decls: &'a [Declaration], name: &str) -> Option<&'a Declaration>`
-
-`fn read_line_range(path: &Path, start: usize, end: usize) -> Result<String, String>`
-
-`fn tool_definitions() -> Value`
-
-`fn handle_tool_call(index: &CodebaseIndex, name: &str, args: &Value) -> Value`
-
-`fn tool_regenerate_index(index: &mut CodebaseIndex, config: &IndexConfig) -> Value`
-
-`fn tool_lookup_symbol(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn tool_list_declarations(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn tool_search_signatures(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn tool_get_tree(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn tool_get_imports(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn tool_get_stats(index: &CodebaseIndex) -> Value`
-
-`fn tool_get_file_summary(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn tool_read_source(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn tool_get_file_context(index: &CodebaseIndex, args: &Value) -> Value`
-
-`const APPROX_SUMMARY_TOKENS: usize = 300`
-
-`fn tool_get_token_estimate(index: &CodebaseIndex, args: &Value) -> Value`
-
-`struct RelevanceMatch`
-> Fields: `file: String`, `symbol: Option<String>`, `kind: Option<String>`, `signature: Option<String>`, `line: Option<usize>`, `match_on: String`, `score: u32`
-
-`fn tool_search_relevant(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn score_match(text: &str, query: &str, terms: &[&str]) -> u32`
-
-`fn score_decls_recursive( decls: &[Declaration], file_path: &str, query: &str, terms: &[&str], results: &mut Vec<RelevanceMatch>, kind_filter: Option<&DeclKind>, )`
-
-`fn simple_glob_match(pattern: &str, path: &str) -> bool`
-
-`fn split_identifier(name: &str) -> Vec<String>`
-
-`fn bigram_similarity(a: &str, b: &str) -> f64`
-
-`fn collapse_nested_bodies(source: &str) -> String`
-
-`fn to_compact_rows(columns: &[&str], items: &[Value]) -> Value`
-
-`fn collect_public_decls(decls: &[Declaration], file_path: &str, out: &mut Vec<Value>)`
-
-`fn find_tests_for_symbol( decls: &[Declaration], symbol_lower: &str, file_path: &str, results: &mut Vec<Value>, reason: &str, )`
-
-`fn explain_decl(decl: &Declaration, file_path: &str) -> Value`
-
-`fn tool_get_diff_summary(index: &CodebaseIndex, config: &IndexConfig, args: &Value) -> Value`
-
-`fn tool_batch_file_summaries(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn tool_get_callers(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn tool_get_public_api(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn tool_explain_symbol(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn tool_get_related_tests(index: &CodebaseIndex, args: &Value) -> Value`
-
-`fn find_file<'a>(index: &'a CodebaseIndex, path: &str) -> Option<&'a FileIndex>`
-
 `fn handle_initialize(id: Value) -> JsonRpcResponse`
 
 `fn handle_tools_list(id: Value) -> JsonRpcResponse`
 
-`fn handle_tools_call( id: Value, index: &mut CodebaseIndex, config: &IndexConfig, params: &Value, ) -> JsonRpcResponse`
+`fn handle_tools_call( id: Value, index: &mut CodebaseIndex, config: &IndexConfig, registry: &ParserRegistry, params: &Value, ) -> JsonRpcResponse`
 
-`mod tests`
+---
+
+## src/mcp/tests.rs
+
+**Language:** Rust | **Size:** 40.8 KB | **Lines:** 1196
+
+**Imports:**
+- `std::collections::HashMap`
+- `std::path::PathBuf`
+- `serde_json::{Value, json}`
+- `crate::languages::Language`
+- `crate::model::declarations::{DeclKind, Declaration, Relationship, RelKind, Visibility}`
+- `crate::model::{CodebaseIndex, FileIndex, Import, IndexStats}`
+- `super::helpers::*`
+- `super::tools::*`
+
+**Declarations:**
+
+`fn test_score_match_exact_full_match()`
+
+`fn test_score_match_substring()`
+
+`fn test_score_match_no_match()`
+
+`fn test_score_match_multi_term()`
+
+`fn test_score_match_partial_term_match()`
+
+`fn test_score_match_empty_query()`
+
+`fn test_score_match_case_sensitivity()`
+
+`fn test_score_match_camel_case_aware()`
+
+`fn test_split_identifier()`
+
+`fn test_simple_glob_match()`
+
+`fn test_tool_definitions_include_new_tools()`
+
+`fn test_handle_tool_call_unknown_tool()`
+
+`fn test_name_match_scores_higher_than_signature()`
+
+`fn test_collapse_simple_nested()`
+
+`fn test_collapse_string_with_braces()`
+
+`fn test_collapse_escaped_quotes()`
+
+`fn test_collapse_block_comment_with_braces()`
+
+`fn test_collapse_line_comment_with_braces()`
+
+`fn test_collapse_empty_input()`
+
+`fn test_collapse_no_nesting()`
+
+`fn test_collapse_rust_lifetimes()`
+
+`fn test_bigram_identical()`
+
+`fn test_bigram_completely_different()`
+
+`fn test_bigram_partial_overlap()`
+
+`fn test_bigram_short_strings()`
+
+`fn test_bigram_no_duplicate_inflation()`
+
+`fn test_compact_rows_basic()`
+
+`fn test_compact_rows_missing_column()`
+
+`fn test_word_boundary_basic()`
+
+`fn test_word_boundary_at_edges()`
+
+`fn test_word_boundary_not_partial()`
+
+`fn test_word_boundary_with_generics()`
+
+`fn test_word_boundary_empty()`
+
+`fn make_test_index() -> CodebaseIndex`
+
+`fn test_tool_batch_file_summaries_paths()`
+
+`fn test_tool_batch_file_summaries_glob()`
+
+`fn test_tool_batch_file_summaries_no_args()`
+
+`fn test_tool_get_callers()`
+
+`fn test_tool_get_callers_no_false_positive()`
+
+`fn test_tool_get_public_api()`
+
+`fn test_tool_get_public_api_scoped()`
+
+`fn test_tool_explain_symbol()`
+
+`fn test_tool_explain_symbol_case_insensitive()`
+
+`fn test_tool_explain_symbol_not_found()`
+
+`fn test_tool_get_related_tests()`
+
+`fn test_tool_get_related_tests_scoped()`
+
+`fn test_tool_get_related_tests_no_match()`
+
+`fn test_tool_get_token_estimate_directory()`
+
+`fn test_tool_get_token_estimate_glob()`
+
+`fn test_tool_get_token_estimate_no_args()`
+
+`fn test_find_file_exact_match()`
+
+`fn test_find_file_suffix_with_slash_boundary()`
+
+`fn test_find_file_no_partial_suffix()`
+
+`fn test_find_file_not_found()`
+
+`fn test_collapse_raw_string_with_braces()`
+
+`fn test_collapse_raw_string_double_hash()`
+
+`fn test_collapse_raw_string_no_hash()`
+
+`fn test_tool_lookup_symbol_compact()`
+
+`fn test_tool_lookup_symbol_non_compact()`
+
+`fn test_tool_list_declarations_compact()`
+
+`fn test_tool_search_signatures_compact()`
+
+`fn test_tool_search_relevant_compact()`
+
+`fn test_tool_search_relevant_kind_filter()`
+
+`fn test_tool_search_relevant_kind_filter_fn()`
+
+`fn test_tool_read_source_multi_symbol()`
+
+`fn test_tool_read_source_multi_symbol_not_found()`
+
+`fn test_tool_read_source_collapse()`
+
+`fn test_tool_read_source_multi_symbol_collapse()`
+
+`fn test_tool_batch_file_summaries_cap()`
+
+`fn test_tool_get_callers_common_word()`
+
+---
+
+## src/mcp/tools.rs
+
+**Language:** Rust | **Size:** 52.7 KB | **Lines:** 1467
+
+**Imports:**
+- `std::collections::HashMap`
+- `std::path::{Path, PathBuf}`
+- `serde::Serialize`
+- `serde_json::{Value, json}`
+- `crate::budget::estimate_tokens`
+- `crate::diff`
+- `crate::indexer::{self, IndexConfig}`
+- `crate::languages::Language`
+- `crate::model::declarations::{DeclKind, Declaration}`
+- `crate::model::{CodebaseIndex, FileIndex}`
+- *... and 2 more imports*
+
+**Declarations:**
 
 ---
 
