@@ -37,25 +37,12 @@ fn main() -> Result<()> {
 
     // Handle MCP server subcommand
     if let Some(Command::Serve {
-        path,
-        cache_dir,
-        max_file_size,
-        max_depth,
-        exclude,
-        no_gitignore,
+        opts,
         watch: enable_watch,
         debounce_ms,
     }) = &cli.command
     {
-        let config = indexer::IndexConfig {
-            root: path.clone(),
-            cache_dir: cache_dir.clone(),
-            max_file_size: *max_file_size,
-            max_depth: *max_depth,
-            exclude: exclude.clone().unwrap_or_default(),
-            no_gitignore: *no_gitignore,
-        };
-
+        let config = index_config_from(opts);
         let index = indexer::build_index(&config)?;
 
         eprintln!(
@@ -67,34 +54,22 @@ fn main() -> Result<()> {
 
     // Handle watch subcommand
     if let Some(Command::Watch {
-        path,
+        opts,
         output,
-        cache_dir,
-        max_file_size,
-        max_depth,
-        exclude,
-        no_gitignore,
         debounce_ms,
         quiet,
     }) = &cli.command
     {
-        let config = indexer::IndexConfig {
-            root: path.clone(),
-            cache_dir: cache_dir.clone(),
-            max_file_size: *max_file_size,
-            max_depth: *max_depth,
-            exclude: exclude.clone().unwrap_or_default(),
-            no_gitignore: *no_gitignore,
-        };
+        let config = index_config_from(opts);
 
-        let opts = watch::WatchOptions {
+        let watch_opts = watch::WatchOptions {
             config,
             output: output.clone(),
             debounce_ms: *debounce_ms,
             quiet: *quiet,
         };
 
-        return watch::run_watch(opts);
+        return watch::run_watch(watch_opts);
     }
 
     // Handle init subcommand
@@ -283,6 +258,17 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn index_config_from(opts: &cli::IndexOpts) -> indexer::IndexConfig {
+    indexer::IndexConfig {
+        root: opts.path.clone(),
+        cache_dir: opts.cache_dir.clone(),
+        max_file_size: opts.max_file_size,
+        max_depth: opts.max_depth,
+        exclude: opts.exclude.clone().unwrap_or_default(),
+        no_gitignore: opts.no_gitignore,
+    }
 }
 
 fn handle_git_diff(

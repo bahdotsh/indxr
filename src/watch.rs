@@ -129,6 +129,12 @@ pub fn spawn_watcher(
 /// Determines if a path change should trigger re-indexing.
 /// Filters out: the output file itself, the cache directory, non-source files, and hidden files.
 fn should_trigger_reindex(path: &Path, root: &Path, output_path: &Path, cache_dir: &Path) -> bool {
+    // Cheap extension check first — skip non-source files (images, binaries,
+    // config, etc.) without any filesystem syscall.
+    if Language::detect(path).is_none() {
+        return false;
+    }
+
     // Canonicalize the event path once so symlinks / /private/var vs /var
     // differences on macOS don't bypass any of the checks below.
     let canonical = fs::canonicalize(path);
@@ -144,8 +150,10 @@ fn should_trigger_reindex(path: &Path, root: &Path, output_path: &Path, cache_di
         return false;
     }
 
-    // Ignore hidden files/directories (e.g., .git)
-    if let Ok(rel) = path.strip_prefix(root) {
+    // Ignore hidden files/directories (e.g., .git).
+    // Uses canonicalized check_path so macOS /private/var vs /var symlinks
+    // don't cause strip_prefix to fail and skip this check.
+    if let Ok(rel) = check_path.strip_prefix(root) {
         for component in rel.components() {
             if let std::path::Component::Normal(name) = component {
                 if name.to_string_lossy().starts_with('.') {
@@ -155,8 +163,7 @@ fn should_trigger_reindex(path: &Path, root: &Path, output_path: &Path, cache_di
         }
     }
 
-    // Only trigger for files with a recognized language extension
-    Language::detect(path).is_some()
+    true
 }
 
 #[cfg(test)]
@@ -255,6 +262,51 @@ mod tests {
                 path
             );
         }
+    }
+
+    #[test]
+    fn test_nonexistent_source_file_triggers() {
+        // When canonicalize fails (file doesn't exist), the fallback raw path is used.
+        // The filter should still work correctly with raw paths.
+        assert!(should_trigger_reindex(
+            Path::new("/project/deleted.rs"),
+            &root(),
+            &output(),
+            &cache(),
+        ));
+    }
+
+    #[test]
+    fn test_path_outside_root_with_source_ext() {
+        // A source file outside the root can't be checked for hidden components
+        // via strip_prefix, but should still trigger (it passed Language::detect).
+        assert!(should_trigger_reindex(
+            Path::new("/other/project/lib.rs"),
+            &root(),
+            &output(),
+            &cache(),
+        ));
+    }
+
+    #[test]
+    fn test_nested_source_file_triggers() {
+        assert!(should_trigger_reindex(
+            Path::new("/project/src/parser/mod.rs"),
+            &root(),
+            &output(),
+            &cache(),
+        ));
+    }
+
+    #[test]
+    fn test_hidden_nested_source_file_ignored() {
+        // Source file inside a deeply nested hidden dir
+        assert!(!should_trigger_reindex(
+            Path::new("/project/src/.secret/deep/main.rs"),
+            &root(),
+            &output(),
+            &cache(),
+        ));
     }
 
     /// Verifies that `spawn_watcher` delivers events while the guard is alive,
