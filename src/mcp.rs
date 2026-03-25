@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
-use globset::GlobBuilder;
+use globset::{GlobBuilder, GlobMatcher};
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value, json};
 
@@ -1230,6 +1230,7 @@ fn tool_get_token_estimate(index: &CodebaseIndex, args: &Value) -> Value {
     // Directory/glob mode: estimate tokens for multiple files
     if let Some(dir_or_glob) = directory.or(glob) {
         let is_dir = directory.is_some();
+        let glob_matcher = if !is_dir { compile_glob_matcher(dir_or_glob) } else { None };
         let matched_files: Vec<&FileIndex> = index
             .files
             .iter()
@@ -1238,32 +1239,28 @@ fn tool_get_token_estimate(index: &CodebaseIndex, args: &Value) -> Value {
                 if is_dir {
                     fp.starts_with(dir_or_glob) || fp.starts_with(&format!("{}/", dir_or_glob))
                 } else {
-                    simple_glob_match(dir_or_glob, &fp)
+                    match &glob_matcher {
+                        Some(m) => m.is_match(fp.as_ref()),
+                        None => fp == dir_or_glob || fp.starts_with(&format!("{}/", dir_or_glob)),
+                    }
                 }
             })
             .collect();
 
         let mut total_tokens = 0usize;
         let mut total_lines = 0usize;
-        let breakdown: Vec<Value> = matched_files
-            .iter()
-            .take(50)
-            .map(|f| {
-                let tokens = (f.size as usize).div_ceil(4);
-                total_tokens += tokens;
-                total_lines += f.lines;
-                json!({
+        let mut breakdown = Vec::new();
+        for f in matched_files.iter() {
+            let tokens = (f.size as usize).div_ceil(4);
+            total_tokens += tokens;
+            total_lines += f.lines;
+            if breakdown.len() < 50 {
+                breakdown.push(json!({
                     "path": f.path.to_string_lossy(),
                     "tokens": tokens,
                     "lines": f.lines
-                })
-            })
-            .collect();
-
-        // Count remaining if > 50
-        for f in matched_files.iter().skip(50) {
-            total_tokens += (f.size as usize).div_ceil(4);
-            total_lines += f.lines;
+                }));
+            }
         }
 
         return tool_result(json!({
@@ -1541,32 +1538,43 @@ fn score_decls_recursive(
 // Shared helpers for new tools
 // ---------------------------------------------------------------------------
 
+/// Compile a glob pattern into a reusable matcher, or `None` if the pattern
+/// has no glob metacharacters (callers should fall back to exact/prefix matching).
+/// Patterns without `/` (e.g., `*.rs`) are treated as recursive (`**/*.rs`).
+fn compile_glob_matcher(pattern: &str) -> Option<GlobMatcher> {
+    if !pattern.contains('*') && !pattern.contains('?') && !pattern.contains('[') {
+        return None;
+    }
+
+    let effective = if !pattern.contains('/') {
+        format!("**/{}", pattern)
+    } else {
+        pattern.to_string()
+    };
+
+    GlobBuilder::new(&effective)
+        .literal_separator(true)
+        .build()
+        .ok()
+        .map(|g| g.compile_matcher())
+}
+
 /// Glob matching against a path string using the `globset` crate.
 /// Falls back to exact/directory-prefix matching if the pattern has no glob chars.
 /// Patterns without `/` (e.g., `*.rs`) are treated as recursive (`**/*.rs`).
+///
+/// For hot loops (matching many paths against the same pattern), prefer
+/// [`compile_glob_matcher`] to compile once and reuse.
 fn simple_glob_match(pattern: &str, path: &str) -> bool {
     // If no glob metacharacters, treat as exact or directory prefix match
     if !pattern.contains('*') && !pattern.contains('?') && !pattern.contains('[') {
         return path == pattern || path.starts_with(&format!("{}/", pattern));
     }
 
-    // Bare glob without path separator (e.g. "*.rs") → make recursive ("**/*.rs")
-    let owned;
-    let effective = if !pattern.contains('/') {
-        owned = format!("**/{}", pattern);
-        &owned
-    } else {
-        pattern
-    };
-
-    let glob = match GlobBuilder::new(effective)
-        .literal_separator(true)
-        .build()
-    {
-        Ok(g) => g,
-        Err(_) => return false,
-    };
-    glob.compile_matcher().is_match(path)
+    match compile_glob_matcher(pattern) {
+        Some(matcher) => matcher.is_match(path),
+        None => path == pattern || path.starts_with(&format!("{}/", pattern)),
+    }
 }
 
 /// Split an identifier into constituent words.
@@ -1964,10 +1972,17 @@ fn tool_batch_file_summaries(index: &CodebaseIndex, args: &Value) -> Value {
             .filter_map(|p| find_file(index, p))
             .collect()
     } else if let Some(pattern) = glob {
+        let matcher = compile_glob_matcher(pattern);
         index
             .files
             .iter()
-            .filter(|f| simple_glob_match(pattern, &f.path.to_string_lossy()))
+            .filter(|f| {
+                let fp = f.path.to_string_lossy();
+                match &matcher {
+                    Some(m) => m.is_match(fp.as_ref()),
+                    None => fp == pattern || fp.starts_with(&format!("{}/", pattern)),
+                }
+            })
             .collect()
     } else {
         return tool_error("Provide either 'paths' array or 'glob' pattern");
@@ -2167,7 +2182,10 @@ fn tool_get_related_tests(index: &CodebaseIndex, args: &Value) -> Value {
         };
 
         // Skip if we already searched this file in scope_path
-        if scope_path.is_some_and(|p| file_path.ends_with(p) || file_path == p) {
+        if scope_path.is_some_and(|p| {
+            file_path == p
+                || file_path.ends_with(&format!("/{}", p))
+        }) {
             continue;
         }
 
@@ -2719,5 +2737,306 @@ mod tests {
     #[test]
     fn test_word_boundary_empty() {
         assert!(!contains_word_boundary("anything", ""));
+    }
+
+    // -----------------------------------------------------------------------
+    // Integration tests for new tool functions
+    // -----------------------------------------------------------------------
+
+    /// Build a minimal CodebaseIndex fixture for integration tests.
+    fn make_test_index() -> CodebaseIndex {
+        use crate::model::declarations::{DeclKind, Declaration, Relationship, RelKind, Visibility};
+        use crate::model::{CodebaseIndex, FileIndex, Import, IndexStats};
+
+        let parse_fn = {
+            let mut d = Declaration::new(
+                DeclKind::Function,
+                "parse_file".to_string(),
+                "pub fn parse_file(path: &Path) -> Result<FileIndex>".to_string(),
+                Visibility::Public,
+                10,
+            );
+            d.body_lines = Some(20);
+            d.doc_comment = Some("Parse a single source file.".to_string());
+            d.relationships.push(Relationship {
+                kind: RelKind::Implements,
+                target: "Parser".to_string(),
+            });
+            d
+        };
+
+        let test_parse = {
+            let mut d = Declaration::new(
+                DeclKind::Function,
+                "test_parse_file".to_string(),
+                "fn test_parse_file()".to_string(),
+                Visibility::Private,
+                50,
+            );
+            d.is_test = true;
+            d.body_lines = Some(10);
+            d
+        };
+
+        let helper_fn = Declaration::new(
+            DeclKind::Function,
+            "internal_helper".to_string(),
+            "fn internal_helper(x: &str) -> bool".to_string(),
+            Visibility::Private,
+            35,
+        );
+
+        let cache_struct = {
+            let mut d = Declaration::new(
+                DeclKind::Struct,
+                "Cache".to_string(),
+                "pub struct Cache".to_string(),
+                Visibility::Public,
+                5,
+            );
+            d.doc_comment = Some("In-memory caching layer.".to_string());
+            d.children.push(Declaration::new(
+                DeclKind::Method,
+                "get".to_string(),
+                "pub fn get(&self, key: &str) -> Option<&Value>".to_string(),
+                Visibility::Public,
+                8,
+            ));
+            d
+        };
+
+        let parser_file = FileIndex {
+            path: PathBuf::from("src/parser.rs"),
+            language: Language::Rust,
+            size: 1200,
+            lines: 80,
+            imports: vec![
+                Import { text: "use std::path::Path;".to_string() },
+                Import { text: "use crate::model::FileIndex;".to_string() },
+            ],
+            declarations: vec![parse_fn, helper_fn, test_parse],
+        };
+
+        let cache_file = FileIndex {
+            path: PathBuf::from("src/cache.rs"),
+            language: Language::Rust,
+            size: 600,
+            lines: 40,
+            imports: vec![
+                Import { text: "use crate::parser::parse_file;".to_string() },
+            ],
+            declarations: vec![cache_struct],
+        };
+
+        CodebaseIndex {
+            root: PathBuf::from("/tmp/test_project"),
+            root_name: "test_project".to_string(),
+            generated_at: "2026-01-01T00:00:00Z".to_string(),
+            stats: IndexStats {
+                total_files: 2,
+                total_lines: 120,
+                languages: HashMap::from([("Rust".to_string(), 2)]),
+                duration_ms: 10,
+            },
+            tree: vec![],
+            files: vec![parser_file, cache_file],
+        }
+    }
+
+    #[test]
+    fn test_tool_batch_file_summaries_paths() {
+        let index = make_test_index();
+        let result = tool_batch_file_summaries(&index, &json!({
+            "paths": ["src/parser.rs", "src/cache.rs"]
+        }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert_eq!(content["count"], 2);
+        assert_eq!(content["total_matched"], 2);
+        let summaries = content["summaries"].as_array().unwrap();
+        assert_eq!(summaries.len(), 2);
+    }
+
+    #[test]
+    fn test_tool_batch_file_summaries_glob() {
+        let index = make_test_index();
+        let result = tool_batch_file_summaries(&index, &json!({ "glob": "*.rs" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert_eq!(content["count"], 2);
+    }
+
+    #[test]
+    fn test_tool_batch_file_summaries_no_args() {
+        let index = make_test_index();
+        let result = tool_batch_file_summaries(&index, &json!({}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Provide either"));
+    }
+
+    #[test]
+    fn test_tool_get_callers() {
+        let index = make_test_index();
+        let result = tool_get_callers(&index, &json!({ "symbol": "parse_file" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        // cache.rs imports parse_file
+        assert!(content["count"].as_u64().unwrap() >= 1);
+        let refs = content["references"].as_array().unwrap();
+        let has_import = refs.iter().any(|r| {
+            r["match_type"] == "import" && r["file"].as_str().unwrap().contains("cache.rs")
+        });
+        assert!(has_import, "Expected import reference from cache.rs");
+    }
+
+    #[test]
+    fn test_tool_get_callers_no_false_positive() {
+        let index = make_test_index();
+        // "get" should not match "budget" or "widget" — word-boundary matching
+        let result = tool_get_callers(&index, &json!({ "symbol": "nonexistent_sym" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert_eq!(content["count"], 0);
+    }
+
+    #[test]
+    fn test_tool_get_public_api() {
+        let index = make_test_index();
+        let result = tool_get_public_api(&index, &json!({}));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        // Public declarations: parse_file, Cache, Cache::get
+        let decls = content["declarations"].as_array().unwrap();
+        let names: Vec<&str> = decls.iter().map(|d| d["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"parse_file"));
+        assert!(names.contains(&"Cache"));
+        assert!(names.contains(&"get"));
+        // internal_helper and test_parse_file are NOT public
+        assert!(!names.contains(&"internal_helper"));
+        assert!(!names.contains(&"test_parse_file"));
+    }
+
+    #[test]
+    fn test_tool_get_public_api_scoped() {
+        let index = make_test_index();
+        let result = tool_get_public_api(&index, &json!({ "path": "src/cache.rs" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        let decls = content["declarations"].as_array().unwrap();
+        // Only cache.rs public decls
+        let files: Vec<&str> = decls.iter().map(|d| d["file"].as_str().unwrap()).collect();
+        assert!(files.iter().all(|f| f.contains("cache.rs")));
+    }
+
+    #[test]
+    fn test_tool_explain_symbol() {
+        let index = make_test_index();
+        let result = tool_explain_symbol(&index, &json!({ "name": "parse_file" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert_eq!(content["count"], 1);
+        let sym = &content["symbols"][0];
+        assert_eq!(sym["name"], "parse_file");
+        assert_eq!(sym["kind"], "fn");
+        assert_eq!(sym["visibility"], "pub");
+        assert!(sym["doc_comment"].as_str().unwrap().contains("Parse a single"));
+        assert!(sym["signature"].as_str().unwrap().contains("Result<FileIndex>"));
+        // Has relationship
+        let rels = sym["relationships"].as_array().unwrap();
+        assert!(!rels.is_empty());
+        assert_eq!(rels[0]["target"], "Parser");
+    }
+
+    #[test]
+    fn test_tool_explain_symbol_case_insensitive() {
+        let index = make_test_index();
+        let result = tool_explain_symbol(&index, &json!({ "name": "CACHE" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert_eq!(content["count"], 1);
+        assert_eq!(content["symbols"][0]["name"], "Cache");
+    }
+
+    #[test]
+    fn test_tool_explain_symbol_not_found() {
+        let index = make_test_index();
+        let result = tool_explain_symbol(&index, &json!({ "name": "nonexistent" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert_eq!(content["count"], 0);
+    }
+
+    #[test]
+    fn test_tool_get_related_tests() {
+        let index = make_test_index();
+        let result = tool_get_related_tests(&index, &json!({ "symbol": "parse_file" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert!(content["count"].as_u64().unwrap() >= 1);
+        let tests = content["tests"].as_array().unwrap();
+        let names: Vec<&str> = tests.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"test_parse_file"));
+    }
+
+    #[test]
+    fn test_tool_get_related_tests_scoped() {
+        let index = make_test_index();
+        let result = tool_get_related_tests(&index, &json!({
+            "symbol": "parse_file",
+            "path": "src/parser.rs"
+        }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert!(content["count"].as_u64().unwrap() >= 1);
+    }
+
+    #[test]
+    fn test_tool_get_related_tests_no_match() {
+        let index = make_test_index();
+        let result = tool_get_related_tests(&index, &json!({ "symbol": "nonexistent" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert_eq!(content["count"], 0);
+    }
+
+    #[test]
+    fn test_tool_get_token_estimate_directory() {
+        let index = make_test_index();
+        let result = tool_get_token_estimate(&index, &json!({ "directory": "src" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert_eq!(content["file_count"], 2);
+        assert!(content["total_tokens"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn test_tool_get_token_estimate_glob() {
+        let index = make_test_index();
+        let result = tool_get_token_estimate(&index, &json!({ "glob": "*.rs" }));
+        let content: Value = serde_json::from_str(
+            result["content"][0]["text"].as_str().unwrap()
+        ).unwrap();
+        assert_eq!(content["file_count"], 2);
+    }
+
+    #[test]
+    fn test_tool_get_token_estimate_no_args() {
+        let index = make_test_index();
+        let result = tool_get_token_estimate(&index, &json!({}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Provide"));
     }
 }
