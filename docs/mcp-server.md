@@ -22,7 +22,21 @@ Options:
   --max-depth <N>            Maximum directory depth
   -e, --exclude <PATTERNS>   Glob patterns to exclude
   --no-gitignore             Don't respect .gitignore
+  --watch                    Watch for file changes and auto-reindex
+  --debounce-ms <MS>         Debounce timeout in milliseconds [default: 300]
 ```
+
+### Auto-Reindexing with `--watch`
+
+When `--watch` is enabled, the MCP server monitors the project directory for source file changes and automatically rebuilds the in-memory index and INDEX.md:
+
+```bash
+indxr serve ./my-project --watch
+```
+
+This means agents always query up-to-date data without needing to call `regenerate_index` manually. Changes are debounced (default 300ms) to avoid redundant reindexing during rapid saves. Non-source files, hidden directories, cache directories, and the INDEX.md output file are filtered out.
+
+For a standalone watcher that only keeps INDEX.md updated (without running the MCP server), use `indxr watch`.
 
 ## Protocol
 

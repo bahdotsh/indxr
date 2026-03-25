@@ -15,6 +15,7 @@ indxr                                        # index cwd → stdout
 indxr ./my-project -o INDEX.md               # index project → file
 indxr -f json -l rust,python -o index.json   # JSON, filter by language
 indxr serve ./my-project                     # start MCP server
+indxr watch ./my-project                     # watch & keep INDEX.md updated
 indxr init                                   # set up all agent configs
 ```
 
@@ -125,12 +126,28 @@ Truncation order: doc comments → private declarations → children → least-i
 
 File importance scoring: entry points (`main.rs`, `lib.rs`, `index.ts`) > root proximity > public declaration count.
 
+## File Watching
+
+Keep INDEX.md continuously up to date as you edit code:
+
+```bash
+indxr watch                       # watch cwd, write INDEX.md
+indxr watch ./my-project          # watch a specific project
+indxr watch -o custom-index.md    # custom output path
+indxr watch --debounce-ms 500     # slower debounce (default: 300ms)
+```
+
+Performs an initial index, then re-indexes on each debounced file change. Filters out non-source files, hidden directories (`.git`), cache directories, and the output file itself to prevent loops.
+
+The MCP server also supports watching via `indxr serve --watch`, which auto-reindexes the in-memory index and INDEX.md on file changes.
+
 ## MCP Server
 
 JSON-RPC 2.0 over stdin/stdout, MCP spec `2024-11-05`:
 
 ```bash
 indxr serve ./my-project
+indxr serve ./my-project --watch  # auto-reindex on file changes
 ```
 
 | Tool | Description |

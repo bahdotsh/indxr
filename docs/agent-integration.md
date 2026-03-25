@@ -10,7 +10,7 @@ AI agents exploring a codebase typically read files one at a time, spending toke
 
 indxr gives agents a structural map of the entire codebase in a fraction of the tokens. An agent can see every function, struct, class, interface, and import across hundreds of files in a single context load.
 
-## Two Integration Modes
+## Three Integration Modes
 
 ### 1. Static Index (dump to file)
 
@@ -26,12 +26,26 @@ indxr -o INDEX.md
 - CI/CD pipelines that produce codebase summaries
 - Including in prompts or system instructions
 
-### 2. MCP Server (live queries)
+### 2. Live Watch (auto-updating file)
+
+Keep INDEX.md continuously updated as code changes:
+
+```bash
+indxr watch ./my-project
+```
+
+**Best for:**
+- Keeping a static index fresh without manual regeneration
+- Agents that don't support MCP but benefit from an always-current index
+- Development workflows where INDEX.md is committed or referenced by tools
+
+### 3. MCP Server (live queries)
 
 Run the MCP server and let agents query the index on-demand:
 
 ```bash
 indxr serve ./my-project
+indxr serve ./my-project --watch   # auto-reindex on file changes
 ```
 
 **Best for:**
@@ -446,6 +460,6 @@ These are starting points — adjust based on how much context you need for the 
 1. **Use MCP when available** — it's more efficient than loading the full index, since agents only fetch what they need
 2. **Scope your index** — use `--filter-path`, `--languages`, and `--public-only` to reduce noise
 3. **Set a token budget** — always use `--max-tokens` when piping to agents with limited context
-4. **Keep the index fresh** — regenerate after significant changes, or use the MCP server which always reads current state
+4. **Keep the index fresh** — use `indxr watch` to auto-update INDEX.md, `indxr serve --watch` for live MCP sessions, or regenerate manually after significant changes
 5. **Combine with source reading** — the index shows structure; agents should still read specific files when they need implementation details
 6. **Use structural diffs for reviews** — `--since main` is more useful than raw git diffs for understanding what changed architecturally

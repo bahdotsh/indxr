@@ -105,6 +105,13 @@ indxr --cache-dir /tmp/cache                 # custom cache location
 
 # MCP server
 indxr serve ./project                        # start MCP server (stdin/stdout JSON-RPC 2.0)
+indxr serve ./project --watch                # MCP server with auto-reindex on file changes
+indxr serve --watch --debounce-ms 500        # custom debounce timeout
+
+# File watching
+indxr watch                                  # watch cwd, keep INDEX.md updated
+indxr watch ./project                        # watch a specific project
+indxr watch -o custom.md --debounce-ms 500   # custom output and debounce
 
 # Agent setup
 indxr init                                   # set up all agent configs (.mcp.json, CLAUDE.md, etc.)
@@ -150,4 +157,5 @@ Key source files:
 - `src/output/` — markdown/json/yaml formatters
 - `src/walker/` — directory traversal
 - `src/init.rs` — `indxr init` command (agent config scaffolding)
+- `src/watch.rs` — file watching, debounced re-indexing (`indxr watch` + `serve --watch`)
 - `src/cache/` — incremental binary caching

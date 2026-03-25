@@ -33,6 +33,29 @@ indxr init [PATH] [OPTIONS]
 - Existing files are skipped with a warning unless `--force` is used
 - `.gitignore` is appended with `.indxr-cache/` if not already present (never overwritten)
 
+### `watch`
+
+Watch for file changes and keep INDEX.md continuously up to date. Performs an initial index, then re-indexes on each debounced source file change.
+
+```bash
+indxr watch [PATH] [OPTIONS]
+```
+
+**Options:**
+- `-o, --output <FILE>` — Output file path (default: `INDEX.md` in root directory)
+- `--cache-dir <DIR>` — Cache directory (default: `.indxr-cache`)
+- `--max-file-size <KB>` — Skip files larger than N KB (default: 512)
+- `--max-depth <N>` — Maximum directory depth
+- `-e, --exclude <PATTERNS>` — Glob patterns to exclude
+- `--no-gitignore` — Don't respect .gitignore
+- `--debounce-ms <MS>` — Debounce timeout in milliseconds (default: 300)
+- `-q, --quiet` — Suppress progress output
+
+**Behavior:**
+- Filters out non-source files, hidden directories (`.git`), cache directories, and the output file itself
+- Only triggers re-index for files with recognized language extensions
+- Blocks indefinitely until Ctrl+C
+
 ### `serve`
 
 Start an MCP server for AI agent integration. See [MCP Server](mcp-server.md) for full details.
@@ -47,6 +70,8 @@ indxr serve [PATH] [OPTIONS]
 - `--max-depth <N>` — Maximum directory depth
 - `-e, --exclude <PATTERNS>` — Glob patterns to exclude
 - `--no-gitignore` — Don't respect .gitignore
+- `--watch` — Watch for file changes and auto-reindex the in-memory index
+- `--debounce-ms <MS>` — Debounce timeout in milliseconds, requires `--watch` (default: 300)
 
 ## Arguments
 
@@ -202,6 +227,29 @@ indxr --no-gitignore
 
 # Skip large files
 indxr --max-file-size 256
+```
+
+### File Watching
+
+```bash
+# Watch current directory, keep INDEX.md updated
+indxr watch
+
+# Watch a specific project
+indxr watch ./my-project
+
+# Custom output path
+indxr watch -o custom-index.md
+
+# Slower debounce for high-frequency saves
+indxr watch --debounce-ms 500
+
+# Quiet mode (no progress output)
+indxr watch --quiet
+
+# MCP server with auto-reindex
+indxr serve --watch
+indxr serve --watch --debounce-ms 500
 ```
 
 ### Agent Setup
