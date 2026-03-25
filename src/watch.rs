@@ -43,6 +43,9 @@ pub fn run_watch(opts: WatchOptions) -> Result<()> {
     let rx = spawn_watcher(&root, &cache_dir, &output_path, opts.debounce_ms)?;
 
     while let Ok(()) = rx.recv() {
+        // Coalesce: drain any additional queued events so we re-index only once per burst
+        while rx.try_recv().is_ok() {}
+
         if !opts.quiet {
             eprintln!("Change detected, re-indexing...");
         }
@@ -65,6 +68,8 @@ pub fn run_watch(opts: WatchOptions) -> Result<()> {
 }
 
 /// Build the index and write it to the given output path.
+/// Similar to `indexer::regenerate_index_file`, but accepts an explicit output path
+/// (rather than always writing to `<root>/INDEX.md`) to support `--output`.
 fn write_index(config: &IndexConfig, output_path: &Path) -> Result<crate::model::CodebaseIndex> {
     let index = indexer::build_index(config)?;
     let markdown = indexer::generate_index_markdown(&index)?;
@@ -90,10 +95,10 @@ pub fn spawn_watcher(
         Duration::from_millis(debounce_ms),
         move |res: Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>| match res {
             Ok(events) => {
-                let dominated = events.iter().any(|e| {
+                let has_relevant_change = events.iter().any(|e| {
                     should_trigger_reindex(&e.path, &watch_root, &output_path, &cache_dir)
                 });
-                if dominated {
+                if has_relevant_change {
                     let _ = tx.send(());
                 }
             }
@@ -105,10 +110,11 @@ pub fn spawn_watcher(
 
     debouncer.watcher().watch(&root, RecursiveMode::Recursive)?;
 
-    // Keep the debouncer alive on a background thread
+    // The debouncer must be kept alive for its internal watcher thread to continue
+    // running. We move it into a parked background thread solely to hold ownership;
+    // the debouncer's own thread does the actual filesystem watching.
     thread::spawn(move || {
         let _debouncer = debouncer;
-        // Park forever — the debouncer's internal thread does the actual watching
         loop {
             thread::park();
         }

@@ -201,6 +201,10 @@ pub fn run_mcp_server(
         match event {
             ServerEvent::StdinClosed => break,
             ServerEvent::FileChanged => {
+                // Coalesce: drain any additional queued FileChanged events so we
+                // re-index only once per burst and don't block stdin processing.
+                while let Ok(ServerEvent::FileChanged) = rx.try_recv() {}
+
                 eprintln!("File change detected, auto-reindexing...");
                 match indexer::regenerate_index_file(&config) {
                     Ok(new_index) => {
