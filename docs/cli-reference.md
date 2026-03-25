@@ -122,6 +122,14 @@ indxr /home/user/repos/backend
 | `--no-cache` | Disable incremental caching | off |
 | `--cache-dir <DIR>` | Custom cache directory | `.indxr-cache` |
 
+### Dependency Graph
+
+| Flag | Description |
+|------|-------------|
+| `--graph <FORMAT>` | Output dependency graph instead of index: `dot`, `mermaid`, or `json` |
+| `--graph-level <LEVEL>` | Graph granularity: `file` (default) or `symbol`. Requires `--graph` |
+| `--graph-depth <N>` | Max edge hops from scoped files. Requires `--graph` |
+
 ### Advanced
 
 | Flag | Description |
@@ -275,6 +283,31 @@ indxr init --force
 
 # Re-run after initial setup (skips existing files)
 indxr init
+```
+
+### Dependency Graph
+
+```bash
+# File-level DOT graph (for Graphviz)
+indxr --graph dot
+
+# File-level Mermaid diagram
+indxr --graph mermaid
+
+# JSON graph for programmatic use
+indxr --graph json -o deps.json
+
+# Symbol-level graph (trait impls, method relationships)
+indxr --graph dot --graph-level symbol
+
+# Scoped to a directory
+indxr --graph mermaid --filter-path src/parser
+
+# Limit to 2 hops from scoped files
+indxr --graph dot --filter-path src/mcp --graph-depth 2
+
+# Write to file
+indxr --graph dot -o deps.dot
 ```
 
 ### Combining Options

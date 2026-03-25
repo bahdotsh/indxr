@@ -1,6 +1,6 @@
 # Supported Languages
 
-indxr supports 16 languages across two parsing strategies: tree-sitter for full AST parsing and regex for structural extraction.
+indxr supports 27 languages across two parsing strategies: tree-sitter for full AST parsing and regex for structural extraction.
 
 ## Tree-Sitter Languages (Full AST Parsing)
 
@@ -123,7 +123,7 @@ These languages are parsed using [tree-sitter](https://tree-sitter.github.io/tre
 
 ## Regex Languages (Structural Extraction)
 
-These languages use pattern matching for lightweight structural extraction. Less precise than tree-sitter but effective for config, schema, and markup languages.
+These languages use pattern matching for lightweight structural extraction. Less precise than tree-sitter but effective for config, schema, markup, and additional programming languages.
 
 ### Shell
 
@@ -199,6 +199,116 @@ These languages use pattern matching for lightweight structural extraction. Less
 - Queries
 - Mutations
 - Subscriptions
+
+### Ruby
+
+**Extensions:** `.rb`, `.rake`, `.gemspec`, `.podspec`
+**Recognized filenames:** `Gemfile`, `Rakefile`
+
+**Extracts:**
+- Classes and modules
+- Methods (`def`)
+- Constants
+- `require` / `require_relative` imports
+
+### Kotlin
+
+**Extensions:** `.kt`, `.kts`
+
+**Extracts:**
+- Classes, objects, interfaces
+- Functions (`fun`)
+- Properties (`val`, `var`)
+- Enums
+- Type aliases
+
+### Swift
+
+**Extensions:** `.swift`
+
+**Extracts:**
+- Classes, structs, enums, protocols
+- Functions (`func`)
+- Properties (`let`, `var`)
+- Extensions
+- Type aliases
+
+### C#
+
+**Extensions:** `.cs`
+
+**Extracts:**
+- Classes, structs, interfaces, enums
+- Methods
+- Properties
+- Namespaces
+- `using` directives
+
+### Objective-C
+
+**Extensions:** `.m`, `.mm`
+
+**Extracts:**
+- Interfaces (`@interface`)
+- Implementations (`@implementation`)
+- Protocols (`@protocol`)
+- Methods (`-` and `+`)
+- Properties (`@property`)
+- `#import` directives
+
+### XML
+
+**Extensions:** `.xml`, `.plist`, `.svg`, `.xib`, `.storyboard`
+
+**Extracts:**
+- Root element
+- Top-level elements with attributes
+
+### HTML
+
+**Extensions:** `.html`, `.htm`
+
+**Extracts:**
+- Document structure elements
+- Script and style blocks
+
+### CSS
+
+**Extensions:** `.css`
+
+**Extracts:**
+- Selectors (class, ID, element)
+- Media queries
+- Keyframe animations
+- CSS variables (`--custom-property`)
+
+### Gradle
+
+**Extensions:** `.gradle`
+**Recognized filenames:** `build.gradle`, `settings.gradle`
+
+**Extracts:**
+- Plugin applications
+- Dependency declarations
+- Task definitions
+
+### CMake
+
+**Extensions:** `.cmake`
+**Recognized filenames:** `CMakeLists.txt`
+
+**Extracts:**
+- Function/macro definitions
+- Project declarations
+- Target definitions (`add_executable`, `add_library`)
+
+### Properties
+
+**Extensions:** `.properties`
+
+**Extracts:**
+- Key-value pairs
+- Section comments
 
 ## Language Detection
 

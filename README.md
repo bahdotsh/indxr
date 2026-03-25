@@ -141,6 +141,28 @@ Performs an initial index, then re-indexes on each debounced file change. Filter
 
 The MCP server also supports watching via `indxr serve --watch`, which auto-reindexes the in-memory index and INDEX.md on file changes.
 
+## Dependency Graph
+
+Visualize file or symbol dependencies as DOT, Mermaid, or JSON:
+
+```bash
+indxr --graph dot                            # file-level DOT graph
+indxr --graph mermaid                        # file-level Mermaid diagram
+indxr --graph json                           # file-level JSON graph
+indxr --graph dot --graph-level symbol       # symbol-level DOT graph
+indxr --graph mermaid --filter-path src/mcp  # scoped to a directory
+indxr --graph dot --graph-depth 2            # limit to 2 hops from scope
+```
+
+Two granularity levels (`--graph-level`):
+
+| Level | Description |
+|-------|-------------|
+| `file` (default) | File-to-file import relationships |
+| `symbol` | Symbol-to-symbol relationships (trait impls, method calls) |
+
+Use `--filter-path` to scope the graph root and `--graph-depth` to limit edge hops.
+
 ## MCP Server
 
 JSON-RPC 2.0 over stdin/stdout, MCP spec `2024-11-05`:
@@ -241,6 +263,7 @@ Parallel parsing via rayon. Incremental caching via mtime + xxh3.
 | [Languages](docs/languages.md) | Per-language extraction details |
 | [Output Formats](docs/output-formats.md) | Format and detail level reference |
 | [Filtering](docs/filtering.md) | Path, kind, symbol, visibility filters |
+| [Dependency Graph](docs/dep-graph.md) | File and symbol dependency visualization |
 | [Git Diffing](docs/git-diffing.md) | Structural diff since any git ref |
 | [Token Budget](docs/token-budget.md) | Truncation strategy and scoring |
 | [Caching](docs/caching.md) | Cache format and invalidation |

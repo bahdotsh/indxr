@@ -120,6 +120,14 @@ indxr init --cursor --windsurf               # Cursor + Windsurf only
 indxr init --no-index --no-hooks             # config files only, no INDEX.md or hooks
 indxr init --force                           # overwrite existing files
 
+# Dependency graph
+indxr --graph dot                            # file-level DOT graph
+indxr --graph mermaid                        # file-level Mermaid diagram
+indxr --graph json                           # JSON graph
+indxr --graph dot --graph-level symbol       # symbol-level graph
+indxr --graph mermaid --filter-path src/mcp  # scoped to directory
+indxr --graph dot --graph-depth 2            # limit edge hops
+
 # Other
 indxr --max-depth 3                          # limit directory depth
 indxr --max-file-size 256                    # skip files > N KB
@@ -152,10 +160,12 @@ Key source files:
 - `src/budget.rs` — token estimation and progressive truncation
 - `src/filter.rs` — path/kind/visibility/symbol filtering
 - `src/diff.rs` — git structural diffing
+- `src/dep_graph.rs` — dependency graph generation (DOT, Mermaid, JSON) at file and symbol level
 - `src/model/` — data model (CodebaseIndex, FileIndex, Declaration)
 - `src/parser/` — tree-sitter + regex parsers per language
 - `src/output/` — markdown/json/yaml formatters
 - `src/walker/` — directory traversal
 - `src/init.rs` — `indxr init` command (agent config scaffolding)
 - `src/watch.rs` — file watching, debounced re-indexing (`indxr watch` + `serve --watch`)
+- `src/utils.rs` — shared utility functions (word boundary matching, etc.)
 - `src/cache/` — incremental binary caching

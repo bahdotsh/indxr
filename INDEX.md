@@ -1,7 +1,7 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-25 13:21:35 UTC | Files: 50 | Lines: 20595
-> Languages: Markdown (13), Python (1), Rust (34), Shell (1), TOML (1)
+> Generated: 2026-03-25 18:03:37 UTC | Files: 53 | Lines: 23170
+> Languages: Markdown (14), Python (1), Rust (36), Shell (1), TOML (1)
 
 ## Directory Structure
 
@@ -16,19 +16,21 @@ indxr/
     agent-integration.md
     caching.md
     cli-reference.md
+    dep-graph.md
     filtering.md
     git-diffing.md
     languages.md
     mcp-server.md
     output-formats.md
     token-budget.md
-  plan.md
+  roadmap.md
   src/
     budget.rs
     cache/
       fingerprint.rs
       mod.rs
     cli.rs
+    dep_graph.rs
     diff.rs
     error.rs
     filter.rs
@@ -62,6 +64,7 @@ indxr/
         typescript.rs
       regex_parser.rs
       tree_sitter_parser.rs
+    utils.rs
     walker/
       mod.rs
     watch.rs
@@ -84,6 +87,7 @@ indxr/
 - `# MCP server`
 - `# File watching`
 - `# Agent setup`
+- `# Dependency graph`
 - `# Other`
 
 **Cargo.toml**
@@ -173,9 +177,23 @@ indxr/
 - `# Skip PreToolUse hooks`
 - `# Overwrite existing files`
 - `# Re-run after initial setup (skips existing files)`
+- `# File-level DOT graph (for Graphviz)`
+- `# File-level Mermaid diagram`
+- `# JSON graph for programmatic use`
+- `# Symbol-level graph (trait impls, method relationships)`
+- `# Scoped to a directory`
+- `# Limit to 2 hops from scoped files`
+- `# Write to file`
 - `# Compact public API index for an agent`
 - `# Quick structural diff of backend changes`
 - `# Full JSON index without cache`
+
+**docs/dep-graph.md**
+- `# Dependency Graph`
+- `# Graph centered on the parser module`
+- `# Graph centered on the MCP module`
+- `# Only direct dependencies (1 hop)`
+- `# Up to 2 hops`
 
 **docs/filtering.md**
 - `# Filtering & Scoped Output`
@@ -234,8 +252,8 @@ indxr/
 - `# Scoped to a directory within budget`
 - `# Specific language within budget`
 
-**plan.md**
-- `# indxr Feature Plan`
+**roadmap.md**
+- `# indxr Roadmap`
 
 **src/budget.rs**
 - `pub fn estimate_tokens(text: &str) -> usize`
@@ -251,8 +269,23 @@ indxr/
 
 **src/cli.rs**
 - `pub struct Cli`
+- `pub struct IndexOpts`
 - `pub enum Command`
 - `pub enum OutputFormat`
+- `pub enum GraphFormat`
+- `pub enum GraphLevel`
+
+**src/dep_graph.rs**
+- `pub struct DepGraph`
+- `pub struct GraphNode`
+- `pub enum NodeKind`
+- `pub struct GraphEdge`
+- `pub enum EdgeKind`
+- `pub fn build_file_graph( index: &CodebaseIndex, scope: Option<&str>, depth: Option<usize>, ) -> DepGraph`
+- `pub fn build_symbol_graph( index: &CodebaseIndex, scope: Option<&str>, depth: Option<usize>, ) -> DepGraph`
+- `pub fn format_dot(graph: &DepGraph) -> String`
+- `pub fn format_mermaid(graph: &DepGraph) -> String`
+- `pub fn format_json(graph: &DepGraph) -> Value`
 
 **src/diff.rs**
 - `pub struct StructuralDiff`
@@ -315,7 +348,6 @@ indxr/
 - `pub(super) fn is_compact(args: &Value) -> bool`
 - `pub(super) fn serialize_compact<T: Serialize>(items: &[T], columns: &[&str]) -> Value`
 - `pub(super) fn to_compact_rows(columns: &[&str], items: &[Value]) -> Value`
-- `pub(super) fn contains_word_boundary(text: &str, word: &str) -> bool`
 - `pub(super) fn collect_public_decls(decls: &[Declaration], file_path: &str, out: &mut Vec<Value>)`
 - `pub(super) fn find_tests_for_symbol( decls: &[Declaration], symbol_lower: &str, file_path: &str, results: &mut Vec<Value>, reason: &str, )`
 - `pub(super) fn explain_decl(decl: &Declaration, file_path: &str) -> Value`
@@ -345,6 +377,7 @@ indxr/
 - `pub(super) fn tool_get_public_api(index: &CodebaseIndex, args: &Value) -> Value`
 - `pub(super) fn tool_explain_symbol(index: &CodebaseIndex, args: &Value) -> Value`
 - `pub(super) fn tool_get_related_tests(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_dependency_graph(index: &CodebaseIndex, args: &Value) -> Value`
 
 **src/model/declarations.rs**
 - `pub struct Declaration`
@@ -423,15 +456,19 @@ indxr/
 **src/parser/tree_sitter_parser.rs**
 - `pub struct TreeSitterParser`
 
+**src/utils.rs**
+- `pub fn contains_word_boundary(text: &str, word: &str) -> bool`
+
 **src/walker/mod.rs**
 - `pub struct WalkResult`
 - `pub struct FileEntry`
 - `pub fn walk_directory( root: &Path, respect_gitignore: bool, max_file_size: u64, max_depth: Option<usize>, exclude_patterns: &[String], ) -> Result<WalkResult>`
 
 **src/watch.rs**
+- `pub struct WatchGuard`
 - `pub struct WatchOptions`
 - `pub fn run_watch(opts: WatchOptions) -> Result<()>`
-- `pub fn spawn_watcher( root: &Path, cache_dir: &Path, output_path: &Path, debounce_ms: u64, ) -> Result<mpsc::Receiver<()>>`
+- `pub fn spawn_watcher( root: &Path, cache_dir: &Path, output_path: &Path, debounce_ms: u64, ) -> Result<(mpsc::Receiver<()>, WatchGuard)>`
 
 **token_count.py**
 - `def count_openai(text: str) -> int | None`
@@ -442,7 +479,7 @@ indxr/
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 9.5 KB | **Lines:** 161
+**Language:** Markdown | **Size:** 10.1 KB | **Lines:** 171
 
 **Declarations:**
 
@@ -471,7 +508,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 45.1 KB | **Lines:** 1751
+**Language:** Markdown | **Size:** 48.0 KB | **Lines:** 1872
 
 **Declarations:**
 
@@ -479,7 +516,7 @@ indxr/
 
 ## README.md
 
-**Language:** Markdown | **Size:** 9.2 KB | **Lines:** 252
+**Language:** Markdown | **Size:** 10.1 KB | **Lines:** 275
 
 **Declarations:**
 
@@ -511,7 +548,15 @@ indxr/
 
 ## docs/cli-reference.md
 
-**Language:** Markdown | **Size:** 7.4 KB | **Lines:** 291
+**Language:** Markdown | **Size:** 8.2 KB | **Lines:** 324
+
+**Declarations:**
+
+---
+
+## docs/dep-graph.md
+
+**Language:** Markdown | **Size:** 2.5 KB | **Lines:** 125
 
 **Declarations:**
 
@@ -535,7 +580,7 @@ indxr/
 
 ## docs/languages.md
 
-**Language:** Markdown | **Size:** 5.0 KB | **Lines:** 222
+**Language:** Markdown | **Size:** 6.8 KB | **Lines:** 332
 
 **Declarations:**
 
@@ -565,9 +610,9 @@ indxr/
 
 ---
 
-## plan.md
+## roadmap.md
 
-**Language:** Markdown | **Size:** 4.8 KB | **Lines:** 151
+**Language:** Markdown | **Size:** 2.0 KB | **Lines:** 50
 
 **Declarations:**
 
@@ -661,14 +706,65 @@ indxr/
 
 ## src/cli.rs
 
-**Language:** Rust | **Size:** 5.7 KB | **Lines:** 223
+**Language:** Rust | **Size:** 6.0 KB | **Lines:** 235
 
 **Imports:**
 - `std::path::PathBuf`
-- `clap::{Parser, Subcommand}`
+- `clap::{Args, Parser, Subcommand}`
 - `crate::model::DetailLevel`
 
 **Declarations:**
+
+---
+
+## src/dep_graph.rs
+
+**Language:** Rust | **Size:** 58.0 KB | **Lines:** 1791
+
+**Imports:**
+- `std::collections::{HashMap, HashSet}`
+- `std::path::Path`
+- `serde::Serialize`
+- `serde_json::{Value, json}`
+- `crate::model::CodebaseIndex`
+- `crate::model::declarations::{Declaration, RelKind}`
+- `crate::utils::contains_word_boundary`
+
+**Declarations:**
+
+`struct PathInfo<'a>`
+> Fields: `path: &'a Path`, `lower: String`, `no_ext_lower: String`
+
+`fn resolve_import<'a>( import_text: &str, from_file: &Path, path_infos: &'a [PathInfo<'a>], ) -> Option<&'a Path>`
+
+`fn normalize_import_separators(text: &str) -> String`
+
+`fn is_known_extension(ext: &str) -> bool`
+
+`fn resolve_relative_import<'a>( text: &str, from_file: &Path, path_infos: &'a [PathInfo<'a>], ) -> Option<&'a Path>`
+
+`fn find_from_keyword(text: &str) -> Option<usize>`
+
+`fn extract_path_from_import(text: &str) -> Option<&str>`
+
+`fn extract_quoted_path(text: &str) -> Option<&str>`
+
+`fn strip_import_prefixes(normalized: &str) -> &str`
+
+`fn match_path_candidate<'a>( candidate_lower: &str, path_infos: &'a [PathInfo<'a>], ) -> Option<&'a Path>`
+
+`fn limit_depth_file( adjacency: &HashMap<String, HashSet<String>>, seeds: &HashSet<&str>, max_depth: usize, ) -> HashMap<String, HashSet<String>>`
+
+`struct SymInfo`
+> Fields: `id: String`, `name: String`, `signature: String`, `signature_lower: String`, `relationships: Vec<(String, RelKind)>`
+
+`fn symbol_id(file_path: &str, name: &str, name_counts: &mut HashMap<String, usize>) -> String`
+
+`fn collect_symbols_ext( decls: &[Declaration], file_path: &str, name_counts: &mut HashMap<String, usize>, out: &mut Vec<SymInfo>, )`
+
+`fn limit_depth_symbol( edges: Vec<GraphEdge>, seeds: &HashSet<&str>, max_depth: usize, ) -> Vec<GraphEdge>`
+
+`mod tests`
 
 ---
 
@@ -828,7 +924,7 @@ indxr/
 
 ## src/main.rs
 
-**Language:** Rust | **Size:** 9.2 KB | **Lines:** 343
+**Language:** Rust | **Size:** 10.1 KB | **Lines:** 362
 
 **Imports:**
 - `std::collections::HashMap`
@@ -837,7 +933,7 @@ indxr/
 - `anyhow::Result`
 - `clap::Parser`
 - `crate::cache::Cache`
-- `crate::cli::{Cli, Command, OutputFormat}`
+- `crate::cli::{Cli, Command, GraphFormat, GraphLevel, OutputFormat}`
 - `crate::filter::FilterOptions`
 - `crate::languages::Language`
 - `crate::model::declarations::DeclKind`
@@ -850,6 +946,8 @@ indxr/
 `mod cache`
 
 `mod cli`
+
+`mod dep_graph`
 
 `mod diff`
 
@@ -871,11 +969,15 @@ indxr/
 
 `mod parser`
 
+`mod utils`
+
 `mod walker`
 
 `mod watch`
 
 `fn main() -> Result<()>`
+
+`fn index_config_from(opts: &cli::IndexOpts) -> indexer::IndexConfig`
 
 `fn handle_git_diff( root: &std::path::Path, since_ref: &str, current_files: &[model::FileIndex], registry: &ParserRegistry, cli: &Cli, ) -> Result<()>`
 
@@ -883,7 +985,7 @@ indxr/
 
 ## src/mcp/helpers.rs
 
-**Language:** Rust | **Size:** 26.7 KB | **Lines:** 842
+**Language:** Rust | **Size:** 25.6 KB | **Lines:** 811
 
 **Imports:**
 - `std::collections::{HashMap, HashSet}`
@@ -893,6 +995,7 @@ indxr/
 - `serde_json::{Value, json}`
 - `crate::model::declarations::{DeclKind, Declaration, Visibility}`
 - `crate::model::{CodebaseIndex, FileIndex}`
+- `pub(super) use crate::utils::contains_word_boundary`
 
 **Declarations:**
 
@@ -900,7 +1003,7 @@ indxr/
 
 ## src/mcp/mod.rs
 
-**Language:** Rust | **Size:** 8.1 KB | **Lines:** 266
+**Language:** Rust | **Size:** 13.0 KB | **Lines:** 406
 
 **Imports:**
 - `std::io::{self, BufRead, Write}`
@@ -946,11 +1049,15 @@ indxr/
 `enum ServerEvent`
 > Variants: `StdinLine`, `StdinClosed`, `FileChanged`
 
+`fn handle_stdin_line( line: &str, index: &mut CodebaseIndex, config: &IndexConfig, registry: &ParserRegistry, writer: &mut impl Write, ) -> anyhow::Result<()>`
+
+`mod coalesce_tests`
+
 ---
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 40.9 KB | **Lines:** 1183
+**Language:** Rust | **Size:** 45.7 KB | **Lines:** 1313
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1104,11 +1211,25 @@ indxr/
 
 `fn test_tool_get_callers_common_word()`
 
+`fn test_tool_dependency_graph_file_level_mermaid()`
+
+`fn test_tool_dependency_graph_file_level_dot()`
+
+`fn test_tool_dependency_graph_file_level_json()`
+
+`fn test_tool_dependency_graph_symbol_level()`
+
+`fn test_tool_dependency_graph_scoped()`
+
+`fn test_tool_dependency_graph_depth_limit()`
+
+`fn test_tool_dependency_graph_defaults_to_mermaid()`
+
 ---
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 52.5 KB | **Lines:** 1454
+**Language:** Rust | **Size:** 55.5 KB | **Lines:** 1529
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1116,12 +1237,12 @@ indxr/
 - `serde::Serialize`
 - `serde_json::{Value, json}`
 - `crate::budget::estimate_tokens`
+- `crate::dep_graph`
 - `crate::diff`
 - `crate::indexer::{self, IndexConfig}`
 - `crate::languages::Language`
 - `crate::model::declarations::{DeclKind, Declaration}`
-- `crate::model::{CodebaseIndex, FileIndex}`
-- *... and 2 more imports*
+- *... and 3 more imports*
 
 **Declarations:**
 
@@ -1818,6 +1939,14 @@ indxr/
 
 ---
 
+## src/utils.rs
+
+**Language:** Rust | **Size:** 1.1 KB | **Lines:** 32
+
+**Declarations:**
+
+---
+
 ## src/walker/mod.rs
 
 **Language:** Rust | **Size:** 3.3 KB | **Lines:** 125
@@ -1836,13 +1965,13 @@ indxr/
 
 ## src/watch.rs
 
-**Language:** Rust | **Size:** 7.1 KB | **Lines:** 250
+**Language:** Rust | **Size:** 10.2 KB | **Lines:** 336
 
 **Imports:**
+- `std::fs`
 - `std::path::{Path, PathBuf}`
 - `std::sync::mpsc`
 - `std::time::Duration`
-- `std::{fs, thread}`
 - `anyhow::Result`
 - `notify::RecursiveMode`
 - `notify_debouncer_mini::new_debouncer`

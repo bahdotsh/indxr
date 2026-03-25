@@ -222,7 +222,7 @@ Estimate how many tokens a file or symbol would consume if read in full. Helps a
 {
   "params": {
     "name": "get_token_estimate",
-    "arguments": { "path": "src/mcp.rs" }
+    "arguments": { "path": "src/mcp/tools.rs" }
   }
 }
 ```
@@ -232,7 +232,7 @@ Estimate how many tokens a file or symbol would consume if read in full. Helps a
 {
   "content": [{
     "type": "text",
-    "text": "{\"file\":\"src/mcp.rs\",\"full_file_tokens\":8500,\"full_file_lines\":1400,\"summary_tokens\":300,\"declaration_count\":42,\"recommendation\":\"Use get_file_summary (~300 tokens) instead of Read (~8500 tokens). Use read_source for specific symbols.\"}"
+    "text": "{\"file\":\"src/mcp/tools.rs\",\"full_file_tokens\":8500,\"full_file_lines\":1400,\"summary_tokens\":300,\"declaration_count\":42,\"recommendation\":\"Use get_file_summary (~300 tokens) instead of Read (~8500 tokens). Use read_source for specific symbols.\"}"
   }]
 }
 ```
@@ -252,7 +252,7 @@ Estimate how many tokens a file or symbol would consume if read in full. Helps a
 {
   "content": [{
     "type": "text",
-    "text": "{\"file\":\"src/mcp.rs\",\"symbol\":\"tool_search_relevant\",\"symbol_tokens\":250,\"symbol_lines\":45,\"full_file_tokens\":8500,\"full_file_lines\":1400,\"savings\":\"read_source saves ~8250 tokens (97% reduction)\"}"
+    "text": "{\"file\":\"src/mcp/tools.rs\",\"symbol\":\"tool_search_relevant\",\"symbol_tokens\":250,\"symbol_lines\":45,\"full_file_tokens\":8500,\"full_file_lines\":1400,\"savings\":\"read_source saves ~8250 tokens (97% reduction)\"}"
   }]
 }
 ```
