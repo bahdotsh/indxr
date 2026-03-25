@@ -65,6 +65,63 @@ claude mcp add indxr -- indxr serve .
 
 Claude Code will automatically discover the MCP tools and can call `lookup_symbol`, `list_declarations`, `regenerate_index`, etc. during conversations.
 
+**Reinforcing MCP usage with a PreToolUse hook:**
+
+Even with MCP tools available, Claude Code may still default to reading full files. A PreToolUse hook intercepts every `Read` call and reminds the agent to use indxr first. Add this to `.claude/settings.json` in your project root:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'IMPORTANT: Before reading full source files, use indxr MCP tools to minimize token usage:\n- get_file_summary: understand a file without reading it (~300 tokens vs ~3000+)\n- lookup_symbol / search_signatures: find specific functions/types\n- read_source: read only the exact function/symbol you need (~100 tokens vs full file)\nOnly use Read when you need to EDIT a file, need exact formatting, or the file is not source code (e.g., CLAUDE.md, Cargo.toml).'"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The hook is non-blocking — it prints a reminder before each file read, nudging the agent toward cheaper MCP calls without preventing reads when they're actually needed (e.g., before editing).
+
+**Teaching the agent via CLAUDE.md:**
+
+`CLAUDE.md` is loaded into Claude Code's system prompt at the start of every conversation. Add instructions that tell the agent to prefer indxr tools over reading files. Key things to include:
+
+1. **Mandate MCP-first exploration** — tell the agent to always use indxr tools before the `Read` tool
+2. **Token savings table** — show concrete cost comparisons so the agent can make informed decisions
+3. **Ordered workflow** — list the tools in the order agents should reach for them (`search_relevant` → `get_tree` → `get_file_summary` → `read_source` → `Read`)
+4. **When Read is OK** — be explicit about when full reads are justified (editing, exact formatting, non-source files)
+
+Example CLAUDE.md section:
+
+```markdown
+## Codebase Navigation — MUST USE indxr MCP tools
+
+An MCP server called `indxr` is available. **Always use indxr tools before the Read tool.**
+Do NOT read full source files as a first step — use the MCP tools to explore, then read only what you need.
+
+### Exploration workflow (follow this order)
+1. `search_relevant` — find files/symbols by concept or partial name
+2. `get_tree` — see directory/file layout
+3. `get_file_summary` — understand a file without reading it
+4. `get_token_estimate` — check cost before deciding to Read
+5. `read_source` — read just one function/struct
+6. `Read` (full file) — ONLY when editing or need exact formatting
+
+### When to use Read instead
+- You need to **edit** a file (Read is required before Edit)
+- You need exact formatting/whitespace
+- The file is not source code (e.g., CLAUDE.md, Cargo.toml, config files)
+```
+
+See this project's own [CLAUDE.md](../CLAUDE.md) for a complete working example.
+
 **Tips for Claude Code:**
 - Use the MCP server for interactive sessions where you're exploring or debugging
 - For one-shot tasks, pipe the index directly: `indxr --max-tokens 8000 | claude -p "review this codebase"`
@@ -192,6 +249,50 @@ cat index.json | your-agent-pipeline
 
 Or integrate the MCP server via JSON-RPC 2.0 over stdin/stdout. See [MCP Server docs](mcp-server.md) for the protocol details.
 
+## Token-Aware Exploration
+
+indxr includes tools specifically designed to help agents minimize token consumption:
+
+### `get_token_estimate`
+
+Before reading a file, agents can check how many tokens it will cost and get a recommendation:
+
+```
+Agent: "I need to understand src/mcp.rs"
+→ calls get_token_estimate("src/mcp.rs")
+→ response: "full file is ~8500 tokens, use get_file_summary (~300 tokens) instead"
+→ agent uses get_file_summary, saving ~8200 tokens
+```
+
+For specific symbols, the savings are even larger:
+
+```
+Agent: "I need to read the parse_declaration function"
+→ calls get_token_estimate("src/parser/rust.rs", symbol="parse_declaration")
+→ response: "symbol is ~150 tokens, full file is ~5000 tokens — 97% reduction with read_source"
+```
+
+### `search_relevant`
+
+Instead of the multi-step `get_tree` → `get_file_summary` → `lookup_symbol` dance, agents can search by concept in a single call:
+
+```
+Agent: "Where is authentication handled?"
+→ calls search_relevant("authentication")
+→ ranked results across paths, names, signatures, and doc comments
+```
+
+The search uses weighted scoring: symbol names match strongest (3x), then signatures (2x), then doc comments (1x), with a boost for public symbols.
+
+### Reinforcing with Hooks and CLAUDE.md
+
+Agents don't always use MCP tools voluntarily. Two mechanisms help:
+
+- **`.claude/settings.json` PreToolUse hook** — intercepts every `Read` call and reminds the agent to try indxr first. Non-blocking, works automatically.
+- **`CLAUDE.md` instructions** — loaded into every conversation's system prompt. Tell the agent the exploration order, token costs, and when `Read` is justified.
+
+See the [Claude Code setup section](#claude-code) above for full details, examples, and a ready-to-copy CLAUDE.md template.
+
 ## Effective Usage Patterns
 
 ### Pattern 1: Orientation First
@@ -238,7 +339,19 @@ Agent: "Let me check what methods are available on the Cache struct"
 → gets: struct Cache, impl Cache { fn load(), fn save(), fn get(), fn insert(), ... }
 ```
 
-### Pattern 5: Architecture Documentation
+### Pattern 5: Token-Budget-Aware Exploration (MCP)
+
+With `get_token_estimate` and `search_relevant`, agents can explore efficiently without wasting tokens:
+
+```
+1. search_relevant("caching logic")     → find relevant files/symbols (~200 tokens)
+2. get_token_estimate("src/cache.rs")    → check cost before reading (~100 tokens)
+3. get_file_summary("src/cache.rs")      → understand structure (~300 tokens)
+4. read_source("src/cache.rs", "load")   → read just the function (~150 tokens)
+                                         Total: ~750 tokens vs ~5000+ for reading the full file
+```
+
+### Pattern 6: Architecture Documentation
 
 Generate a codebase overview for onboarding or documentation:
 
@@ -250,7 +363,7 @@ indxr -d summary -o docs/ARCHITECTURE_OVERVIEW.md
 indxr -d signatures --public-only -o docs/API_REFERENCE.md
 ```
 
-### Pattern 6: CI/CD Integration
+### Pattern 7: CI/CD Integration
 
 Auto-generate an index on every commit for agents to consume:
 
@@ -266,7 +379,7 @@ Auto-generate an index on every commit for agents to consume:
     git diff --cached --quiet || git commit -m "chore: update codebase index"
 ```
 
-### Pattern 7: Multi-Language Projects
+### Pattern 8: Multi-Language Projects
 
 For polyglot codebases, scope by language:
 

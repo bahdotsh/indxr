@@ -147,6 +147,8 @@ indxr serve ./my-project
 | `search_relevant` | Multi-signal relevance search across paths, names, signatures, and docs |
 | `regenerate_index` | Re-index codebase and write updated INDEX.md |
 
+**Token-aware exploration:** `get_token_estimate` tells agents exactly how expensive a file or symbol is before reading it, and `search_relevant` lets agents find code by concept (e.g. "authentication", "caching") in a single call across paths, names, signatures, and doc comments — no multi-step lookup dance required.
+
 MCP config:
 
 ```json
@@ -159,6 +161,13 @@ MCP config:
   }
 }
 ```
+
+**Getting agents to actually use it:** Agents don't always pick MCP tools over file reads on their own. indxr ships with two reinforcement mechanisms for Claude Code:
+
+- **`.claude/settings.json` hook** — a PreToolUse hook that fires before every `Read` call, reminding the agent to try indxr MCP tools first
+- **`CLAUDE.md` instructions** — a template that teaches the agent the exploration workflow, token costs, and when full reads are justified
+
+See [Agent Integration](docs/agent-integration.md#claude-code) for setup details, ready-to-copy configs, and a CLAUDE.md example.
 
 Setup guides: [docs/mcp-server.md](docs/mcp-server.md)
 

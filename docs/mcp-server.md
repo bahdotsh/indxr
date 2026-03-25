@@ -185,6 +185,88 @@ Get a file's summary plus its dependency context: which files import it (reverse
 |------|------|----------|-------------|
 | `path` | string | yes | Relative file path |
 
+### `get_token_estimate`
+
+Estimate how many tokens a file or symbol would consume if read in full. Helps agents decide whether to use `read_source` (targeted, cheap) or `Read` (full file, expensive).
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `path` | string | yes | Relative file path |
+| `symbol` | string | no | Symbol name — if provided, estimates tokens for just that symbol's source |
+
+**Example (file-level):**
+```json
+{
+  "params": {
+    "name": "get_token_estimate",
+    "arguments": { "path": "src/mcp.rs" }
+  }
+}
+```
+
+**Example response:**
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "{\"file\":\"src/mcp.rs\",\"full_file_tokens\":8500,\"full_file_lines\":1400,\"summary_tokens\":300,\"declaration_count\":42,\"recommendation\":\"Use get_file_summary (~300 tokens) instead of Read (~8500 tokens). Use read_source for specific symbols.\"}"
+  }]
+}
+```
+
+**Example (symbol-level):**
+```json
+{
+  "params": {
+    "name": "get_token_estimate",
+    "arguments": { "path": "src/mcp.rs", "symbol": "tool_search_relevant" }
+  }
+}
+```
+
+**Example response:**
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "{\"file\":\"src/mcp.rs\",\"symbol\":\"tool_search_relevant\",\"symbol_tokens\":250,\"symbol_lines\":45,\"full_file_tokens\":8500,\"full_file_lines\":1400,\"savings\":\"read_source saves ~8250 tokens (97% reduction)\"}"
+  }]
+}
+```
+
+### `search_relevant`
+
+Multi-signal relevance search across file paths, symbol names, signatures, and doc comments. Returns ranked results scored by weighted matching (3x name, 2x signature, 1x doc comment, public symbol boost). Use as a starting point to find where to look without reading any files.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `query` | string | yes | Search query — a concept (e.g. `authentication`), partial name (e.g. `parse`), or type pattern (e.g. `Result<Cache>`) |
+| `limit` | number | no | Max results (default: 20, max: 50) |
+
+**Example:**
+```json
+{
+  "params": {
+    "name": "search_relevant",
+    "arguments": { "query": "token budget", "limit": 10 }
+  }
+}
+```
+
+**Example response:**
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "Found 5 relevant matches:\n\nsrc/budget.rs (path, score: 4)\n  pub fn apply_token_budget(...) -> CodebaseIndex (name+signature, score: 12)\n  pub fn estimate_tokens(text: &str) -> usize (name, score: 9)\n\nsrc/mcp.rs:\n  fn tool_get_token_estimate(...) -> Value (name, score: 6)"
+  }]
+}
+```
+
 ### `regenerate_index`
 
 Re-scan the codebase, rebuild the index, and write an updated INDEX.md to the project root. Also refreshes the in-memory index used by all other tools. No parameters required.
