@@ -26,7 +26,8 @@ enum WriteResult {
 }
 
 pub fn run_init(opts: InitOptions) -> Result<()> {
-    let root = fs::canonicalize(&opts.path)?;
+    let root = fs::canonicalize(&opts.path)
+        .map_err(|e| anyhow::anyhow!("cannot resolve path '{}': {}", opts.path.display(), e))?;
 
     // Determine which agents to set up
     let agents: Vec<&str> = [
@@ -192,8 +193,6 @@ fn generate_index(root: &Path, max_file_size: u64) -> Result<WriteResult> {
     };
 
     let index = indexer::build_index(&config)?;
-    let file_count = index.stats.total_files;
-    let line_count = index.stats.total_lines;
 
     let formatter = MarkdownFormatter::with_options(MarkdownOptions {
         omit_imports: false,
@@ -204,16 +203,6 @@ fn generate_index(root: &Path, max_file_size: u64) -> Result<WriteResult> {
     let index_path = root.join("INDEX.md");
     fs::write(&index_path, output)?;
 
-    eprintln!(
-        "  Created  INDEX.md ({} files, {} lines)",
-        file_count, line_count
-    );
-
-    // Return Skipped so we don't double-print in the summary loop
-    // (we already printed the detailed line above)
-    // Actually, let's handle this differently — don't print here, return Created
-    // and include stats in the summary. But WriteResult doesn't carry stats.
-    // Simplest: just return Created and accept the simpler output.
     Ok(WriteResult::Created(index_path))
 }
 
