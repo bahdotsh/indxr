@@ -202,7 +202,7 @@ fn main() -> Result<()> {
         },
     };
 
-    // Handle --graph mode (runs on unfiltered index to preserve all edges)
+    // Handle --graph mode (uses full index; --filter-path scopes the graph root)
     if let Some(ref graph_format) = cli.graph {
         let graph = match cli.graph_level {
             Some(GraphLevel::Symbol) => {

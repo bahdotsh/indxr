@@ -252,12 +252,36 @@ fn resolve_relative_import<'a>(
     None
 }
 
+/// Find the position of "from" as a keyword (not inside another word).
+fn find_from_keyword(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while start + 4 <= text.len() {
+        match text[start..].find("from") {
+            Some(pos) => {
+                let abs = start + pos;
+                let before_ok = abs == 0 || !bytes[abs - 1].is_ascii_alphanumeric();
+                let after = abs + 4;
+                let after_ok =
+                    after >= text.len() || !bytes[after].is_ascii_alphanumeric();
+                if before_ok && after_ok {
+                    return Some(abs);
+                }
+                start = abs + 1;
+            }
+            None => break,
+        }
+    }
+    None
+}
+
 /// Extract a path string from an import statement.
 /// e.g., `{ foo } from './utils/helper'` → `./utils/helper`
 ///       `'./models/user'` → `./models/user`
 fn extract_path_from_import(text: &str) -> Option<&str> {
-    // Look for quoted path after "from"
-    if let Some(from_idx) = text.find("from") {
+    // Look for quoted path after "from" keyword (word-boundary match to avoid
+    // false hits inside words like "platform", "transform")
+    if let Some(from_idx) = find_from_keyword(text) {
         let after_from = &text[from_idx + 4..].trim_start();
         return extract_quoted_path(after_from);
     }
@@ -522,13 +546,23 @@ pub fn build_symbol_graph(
         map
     };
 
-    // Build ALL edges from relationships — use a fresh counter so IDs are
-    // generated in the same order as collect_symbols_ext above.
-    let mut edge_name_counts: HashMap<String, usize> = HashMap::new();
+    // Build edges from relationships (single-pass — IDs come from all_symbols directly,
+    // no second traversal needed)
     let mut edge_set: HashSet<(String, String, EdgeKind)> = HashSet::new();
-    for file in &index.files {
-        let file_path = file.path.to_string_lossy().to_string();
-        collect_relationship_edges(&file.declarations, &file_path, &mut edge_name_counts, &name_to_ids, &mut edge_set);
+    for sym in &all_symbols {
+        for (target_name, rel_kind) in &sym.relationships {
+            let edge_kind = match rel_kind {
+                RelKind::Extends => EdgeKind::Extends,
+                RelKind::Implements => EdgeKind::Implements,
+            };
+            if let Some(target_ids) = name_to_ids.get(target_name.as_str()) {
+                for &tid in target_ids {
+                    if tid != sym.id {
+                        edge_set.insert((sym.id.clone(), tid.to_string(), edge_kind));
+                    }
+                }
+            }
+        }
     }
 
     // Build edges from signature references (word-boundary matching).
@@ -539,10 +573,7 @@ pub fn build_symbol_graph(
     let type_keywords: &[&str] = &["struct ", "class ", "trait ", "interface ", "type ", "enum "];
     let type_names: Vec<(&str, &str)> = all_symbols
         .iter()
-        .filter(|s| {
-            let sig_lower = s.signature.to_lowercase();
-            type_keywords.iter().any(|kw| sig_lower.contains(kw))
-        })
+        .filter(|s| type_keywords.iter().any(|kw| s.signature_lower.contains(kw)))
         .map(|s| (s.name.as_str(), s.id.as_str()))
         .collect();
 
@@ -616,6 +647,8 @@ struct SymInfo {
     id: String,
     name: String,
     signature: String,
+    signature_lower: String,
+    relationships: Vec<(String, RelKind)>,
 }
 
 /// Build a unique symbol ID. Appends a counter suffix when the same name appears
@@ -641,41 +674,19 @@ fn collect_symbols_ext(
         if decl.name.is_empty() {
             continue;
         }
+        let sig = decl.signature.clone();
         out.push(SymInfo {
             id: symbol_id(file_path, &decl.name, name_counts),
             name: decl.name.clone(),
-            signature: decl.signature.clone(),
+            signature_lower: sig.to_lowercase(),
+            signature: sig,
+            relationships: decl
+                .relationships
+                .iter()
+                .map(|r| (r.target.clone(), r.kind.clone()))
+                .collect(),
         });
         collect_symbols_ext(&decl.children, file_path, name_counts, out);
-    }
-}
-
-fn collect_relationship_edges(
-    decls: &[Declaration],
-    file_path: &str,
-    name_counts: &mut HashMap<String, usize>,
-    name_to_ids: &HashMap<&str, Vec<&str>>,
-    edge_set: &mut HashSet<(String, String, EdgeKind)>,
-) {
-    for decl in decls {
-        if decl.name.is_empty() {
-            continue;
-        }
-        let from_id = symbol_id(file_path, &decl.name, name_counts);
-        for rel in &decl.relationships {
-            let edge_kind = match rel.kind {
-                RelKind::Extends => EdgeKind::Extends,
-                RelKind::Implements => EdgeKind::Implements,
-            };
-            if let Some(target_ids) = name_to_ids.get(rel.target.as_str()) {
-                for &tid in target_ids {
-                    if tid != from_id {
-                        edge_set.insert((from_id.clone(), tid.to_string(), edge_kind));
-                    }
-                }
-            }
-        }
-        collect_relationship_edges(&decl.children, file_path, name_counts, name_to_ids, edge_set);
     }
 }
 
@@ -767,7 +778,17 @@ pub fn format_mermaid(graph: &DepGraph) -> String {
     }
 
     // Emit node declarations once (escape chars that break Mermaid label syntax)
-    let escape_mermaid = |s: &str| s.replace('\\', "\\\\").replace('"', "#quot;").replace('[', "#91;").replace(']', "#93;");
+    let escape_mermaid = |s: &str| {
+        s.replace('\\', "\\\\")
+            .replace('"', "#quot;")
+            .replace('[', "#91;")
+            .replace(']', "#93;")
+            .replace('|', "#124;")
+            .replace('(', "#40;")
+            .replace(')', "#41;")
+            .replace('{', "#123;")
+            .replace('}', "#125;")
+    };
     for node in &graph.nodes {
         let nid = &id_map[node.id.as_str()];
         out.push_str(&format!("  {}[\"{}\"]\n", nid, escape_mermaid(&node.id)));
@@ -1597,5 +1618,142 @@ mod tests {
             !mermaid.contains("foo\"bar"),
             "Raw double quotes should not appear in node labels"
         );
+    }
+
+    #[test]
+    fn test_format_mermaid_escapes_pipes_and_parens() {
+        let graph = DepGraph {
+            nodes: vec![
+                GraphNode {
+                    id: "fn foo(x: i32)".to_string(),
+                    label: "foo(x: i32)".to_string(),
+                    kind: NodeKind::Symbol,
+                },
+                GraphNode {
+                    id: "trait A|B".to_string(),
+                    label: "A|B".to_string(),
+                    kind: NodeKind::Symbol,
+                },
+            ],
+            edges: vec![GraphEdge {
+                from: "fn foo(x: i32)".to_string(),
+                to: "trait A|B".to_string(),
+                kind: EdgeKind::References,
+            }],
+        };
+
+        let mermaid = format_mermaid(&graph);
+        assert!(mermaid.contains("#40;"), "Opening parens should be escaped");
+        assert!(mermaid.contains("#41;"), "Closing parens should be escaped");
+        assert!(mermaid.contains("#124;"), "Pipes should be escaped");
+    }
+
+    #[test]
+    fn test_format_mermaid_extends_edge() {
+        let graph = DepGraph {
+            nodes: vec![
+                GraphNode {
+                    id: "Child".to_string(),
+                    label: "Child".to_string(),
+                    kind: NodeKind::Symbol,
+                },
+                GraphNode {
+                    id: "Parent".to_string(),
+                    label: "Parent".to_string(),
+                    kind: NodeKind::Symbol,
+                },
+            ],
+            edges: vec![GraphEdge {
+                from: "Child".to_string(),
+                to: "Parent".to_string(),
+                kind: EdgeKind::Extends,
+            }],
+        };
+
+        let mermaid = format_mermaid(&graph);
+        assert!(
+            mermaid.contains("-->|extends|"),
+            "Extends edges should have label"
+        );
+    }
+
+    #[test]
+    fn test_format_mermaid_implements_edge() {
+        let graph = DepGraph {
+            nodes: vec![
+                GraphNode {
+                    id: "Impl".to_string(),
+                    label: "Impl".to_string(),
+                    kind: NodeKind::Symbol,
+                },
+                GraphNode {
+                    id: "Iface".to_string(),
+                    label: "Iface".to_string(),
+                    kind: NodeKind::Symbol,
+                },
+            ],
+            edges: vec![GraphEdge {
+                from: "Impl".to_string(),
+                to: "Iface".to_string(),
+                kind: EdgeKind::Implements,
+            }],
+        };
+
+        let mermaid = format_mermaid(&graph);
+        assert!(
+            mermaid.contains("-->|implements|"),
+            "Implements edges should have label"
+        );
+    }
+
+    // --- normalize_import_separators mixed input ---
+
+    #[test]
+    fn test_normalize_mixed_colons_and_dots() {
+        // Rust-style with a dotted extension at the end
+        assert_eq!(
+            normalize_import_separators("crate::parser.queries"),
+            "crate/parser/queries"
+        );
+        // Mixed: colons then dots for module path
+        assert_eq!(
+            normalize_import_separators("crate::utils.helpers.string"),
+            "crate/utils/helpers/string"
+        );
+    }
+
+    // --- require() import resolution ---
+
+    #[test]
+    fn test_resolve_require_import() {
+        let paths: Vec<&Path> = vec![
+            Path::new("src/utils.js"),
+            Path::new("src/app.js"),
+        ];
+        let infos = make_path_infos(&paths);
+        let from = Path::new("src/app.js");
+
+        let result = resolve_import("require('./utils')", from, &infos);
+        assert_eq!(
+            result.map(|p| p.to_string_lossy().to_string()),
+            Some("src/utils.js".to_string())
+        );
+    }
+
+    // --- "from" as substring should not false-match ---
+
+    #[test]
+    fn test_extract_path_from_import_no_false_from() {
+        // "from" inside "platform" should not match
+        assert!(extract_path_from_import("import platform").is_none());
+        assert!(extract_path_from_import("transform").is_none());
+    }
+
+    #[test]
+    fn test_find_from_keyword() {
+        assert_eq!(find_from_keyword("{ x } from './y'"), Some(6));
+        assert_eq!(find_from_keyword("import platform"), None);
+        assert_eq!(find_from_keyword("transform('./x')"), None);
+        assert_eq!(find_from_keyword("from './x'"), Some(0));
     }
 }
