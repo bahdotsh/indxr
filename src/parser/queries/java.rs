@@ -61,12 +61,22 @@ fn extract_modifiers_text(node: Node<'_>, source: &str) -> Option<String> {
 }
 
 fn extract_visibility(node: Node<'_>, source: &str) -> Visibility {
-    if let Some(mods) = extract_modifiers_text(node, source) {
-        if mods.contains("public") {
-            return Visibility::Public;
-        }
-        if mods.contains("private") || mods.contains("protected") {
-            return Visibility::Private;
+    // Check modifier child nodes directly instead of substring matching on text,
+    // which could false-match on annotation names containing "public"/"private".
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i)
+            && child.kind() == "modifiers"
+        {
+            for j in 0..child.child_count() {
+                if let Some(modifier) = child.child(j) {
+                    let text = node_text(modifier, source);
+                    match text {
+                        "public" => return Visibility::Public,
+                        "private" | "protected" => return Visibility::Private,
+                        _ => {}
+                    }
+                }
+            }
         }
     }
     Visibility::Private
@@ -102,11 +112,9 @@ fn extract_doc_comment(node: Node<'_>, source: &str) -> Option<String> {
                 return None;
             }
             "line_comment" => {
-                let text = node_text(sibling, source);
-                if text.starts_with("//") {
-                    // Regular line comment, not Javadoc — skip
-                }
-                return None;
+                // Regular line comment — skip past it, there may be a Javadoc above
+                prev = sibling.prev_sibling();
+                continue;
             }
             "marker_annotation" | "annotation" => {
                 // Skip annotations like @Override, @Deprecated

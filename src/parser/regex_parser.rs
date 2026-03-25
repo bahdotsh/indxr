@@ -621,9 +621,10 @@ fn parse_markdown(content: &str) -> (Vec<Import>, Vec<Declaration>) {
 
     let re_heading = Regex::new(r"^(#{1,6})\s+(.+)$").unwrap();
 
-    // Stack of (heading_level, index_in_declarations) for building hierarchy.
-    // We only parent H2+ under the nearest higher-level heading.
-    let mut heading_stack: Vec<(usize, usize)> = Vec::new();
+    // Stack tracks (heading_level, path) where path is the index path to
+    // navigate from declarations root to this heading's Declaration node.
+    // e.g., path [0, 2] means declarations[0].children[2]
+    let mut heading_stack: Vec<(usize, Vec<usize>)> = Vec::new();
 
     for (line_num, line) in content.lines().enumerate() {
         if let Some(caps) = re_heading.captures(line) {
@@ -647,38 +648,38 @@ fn parse_markdown(content: &str) -> (Vec<Import>, Vec<Declaration>) {
                 heading_stack.pop();
             }
 
-            if let Some((_, parent_idx)) = heading_stack.last() {
-                // This heading is a child of the last heading at a shallower level.
-                declarations[*parent_idx].children.push(decl);
-                // We need the index of the child we just pushed, within the parent's children.
-                // For deeper nesting, we track the top-level decl index only for direct children.
-                // To keep it simple: only top-level (H1) or "no parent" headings go into
-                // declarations directly; the rest are children. We don't add to the heading_stack
-                // for children since we can't easily index into nested children.
-                // Instead, let's use a flat approach: put all headings into declarations
-                // and use the stack only for one level of nesting.
-                //
-                // Actually, let's restructure: only H1 at top level, H2+ as children of
-                // the immediately preceding higher-level heading already in declarations.
-                // For simplicity, we only handle one level of parent-child.
+            if let Some((_, parent_path)) = heading_stack.last() {
+                // Navigate to the parent declaration using the path
+                let parent = get_decl_by_path_mut(&mut declarations, parent_path);
+                let child_idx = parent.children.len();
+                parent.children.push(decl);
+                // Build path for this child
+                let mut path = parent_path.clone();
+                path.push(child_idx);
+                heading_stack.push((level, path));
             } else {
                 // No parent — this is a top-level heading.
                 let idx = declarations.len();
                 declarations.push(decl);
-                heading_stack.push((level, idx));
-                continue;
+                heading_stack.push((level, vec![idx]));
             }
-
-            // For child headings added above, we still want to track them so that
-            // even deeper headings can be children. But since children are nested in
-            // a Vec<Declaration> and we only have the parent index, we take a simpler approach:
-            // we track the parent, and always add sub-headings as direct children of
-            // the nearest ancestor that lives in the top-level declarations vec.
-            // Don't push child headings onto the stack — they can't be parents in our model.
         }
     }
 
     (imports, declarations)
+}
+
+/// Navigate to a Declaration by path. Path[0] indexes into the top-level
+/// declarations vec, subsequent indices index into children.
+fn get_decl_by_path_mut<'a>(
+    declarations: &'a mut [Declaration],
+    path: &[usize],
+) -> &'a mut Declaration {
+    let mut current = &mut declarations[path[0]];
+    for &idx in &path[1..] {
+        current = &mut current.children[idx];
+    }
+    current
 }
 
 // ---------------------------------------------------------------------------

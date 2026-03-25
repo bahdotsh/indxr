@@ -159,7 +159,7 @@ fn extract_import(node: Node<'_>, source: &str) -> Option<Import> {
 fn body_lines(node: Node<'_>) -> Option<usize> {
     let start = node.start_position().row;
     let end = node.end_position().row;
-    Some(end - start)
+    Some(end.saturating_sub(start))
 }
 
 /// Check if a node has a specific attribute by scanning its previous siblings.

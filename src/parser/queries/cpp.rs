@@ -94,12 +94,15 @@ fn node_text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
 }
 
 fn extract_visibility_from_text(node: Node<'_>, source: &str) -> Visibility {
-    let text = node_text(node, source);
-    if text.contains("static") {
-        Visibility::Private
-    } else {
-        Visibility::Public
+    // Check only storage class specifier children, not the entire node text
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if child.kind() == "storage_class_specifier" && node_text(child, source) == "static" {
+                return Visibility::Private;
+            }
+        }
     }
+    Visibility::Public
 }
 
 fn extract_doc_comment(node: Node<'_>, source: &str) -> Option<String> {

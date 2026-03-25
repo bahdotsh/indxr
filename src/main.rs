@@ -216,7 +216,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-
 fn handle_git_diff(
     root: &std::path::Path,
     since_ref: &str,
