@@ -1,11 +1,43 @@
+<div align="center">
+
 # indxr
 
-Fast codebase indexer for AI agents. Tree-sitter AST parsing + regex extraction across 27 languages. Built in Rust.
+**A fast codebase indexer and MCP server for AI coding agents.**
+
+[![CI](https://github.com/bahdotsh/indxr/actions/workflows/ci.yml/badge.svg)](https://github.com/bahdotsh/indxr/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/indxr.svg)](https://crates.io/crates/indxr)
+[![License](https://img.shields.io/crates/l/indxr.svg)](LICENSE)
+
+</div>
+
+AI coding agents waste thousands of tokens reading entire source files just to understand what's in them. indxr gives agents a structural map of your codebase — declarations, imports, relationships, and dependency graphs — so they can query for exactly what they need at a fraction of the token cost.
+
+---
+
+## Features
+
+- **27 languages** — tree-sitter AST parsing for 8 languages, regex extraction for 19 more
+- **18-tool MCP server** — live codebase queries over JSON-RPC: symbol lookup, file summaries, caller tracing, signature search, and more
+- **Token-aware** — progressive truncation to fit context windows, ~5x reduction vs reading full files
+- **Git structural diffing** — declaration-level diffs (`+` added, `-` removed, `~` changed) against any git ref
+- **Dependency graphs** — file and symbol dependency visualization as DOT, Mermaid, or JSON
+- **File watching** — continuous re-indexing as you edit, via `indxr watch` or `indxr serve --watch`
+- **One-command agent setup** — `indxr init` configures Claude Code, Cursor, and Windsurf with MCP, instruction files, and hooks
+- **Incremental caching** — mtime + xxh3 content hashing, sub-20ms indexing for most projects
+- **Composable filters** — by path, kind, symbol name, visibility, and language
+- **Three output formats** — Markdown (default), JSON, YAML at three detail levels
 
 ## Install
 
 ```bash
 cargo install indxr
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/bahdotsh/indxr.git
+cd indxr && cargo build --release
 ```
 
 ## Usage
@@ -15,9 +47,55 @@ indxr                                        # index cwd → stdout
 indxr ./my-project -o INDEX.md               # index project → file
 indxr -f json -l rust,python -o index.json   # JSON, filter by language
 indxr serve ./my-project                     # start MCP server
+indxr serve ./my-project --watch             # MCP server with auto-reindex
 indxr watch ./my-project                     # watch & keep INDEX.md updated
 indxr init                                   # set up all agent configs
 ```
+
+## Agent Setup
+
+```bash
+indxr init                    # set up for all agents
+indxr init --claude           # Claude Code only
+indxr init --cursor           # Cursor only
+indxr init --windsurf         # Windsurf only
+```
+
+| Agent | Files Created |
+|---|---|
+| Claude Code | `.mcp.json`, `CLAUDE.md`, `.claude/settings.json` (PreToolUse hooks) |
+| Cursor | `.cursor/mcp.json`, `.cursorrules` |
+| Windsurf | `.windsurf/mcp.json`, `.windsurfrules` |
+| All | `.gitignore` entry, `INDEX.md` (static index) |
+
+Agents don't always pick MCP tools over file reads on their own. `indxr init` sets up reinforcement — PreToolUse hooks intercept `Read`/`Bash` calls and instruction files teach the exploration workflow.
+
+## MCP Server
+
+JSON-RPC 2.0 over stdin/stdout, 18 tools:
+
+| Tool | Description |
+|---|---|
+| `search_relevant` | Multi-signal relevance search across paths, names, signatures, and docs |
+| `lookup_symbol` | Find declarations by name (case-insensitive substring) |
+| `explain_symbol` | Signature, doc comment, relationships, metadata — no body |
+| `get_file_summary` | Complete file overview without reading it |
+| `batch_file_summaries` | Summarize multiple files in one call |
+| `get_file_context` | File summary + reverse dependencies + related files |
+| `get_public_api` | Public declarations with signatures for a file or directory |
+| `get_callers` | Find who references a symbol across all files |
+| `get_related_tests` | Find test functions by naming convention |
+| `list_declarations` | List declarations in a file with optional filters |
+| `search_signatures` | Search functions by signature pattern |
+| `read_source` | Read source by symbol name or line range |
+| `get_token_estimate` | Estimate tokens before reading |
+| `get_tree` | Directory/file tree |
+| `get_imports` | Import statements for a file |
+| `get_stats` | File count, line count, language breakdown |
+| `get_diff_summary` | Structural changes since a git ref |
+| `regenerate_index` | Re-index and update INDEX.md |
+
+List tools support `compact` mode for ~30% token savings. See [MCP Server docs](docs/mcp-server.md) for full parameter details.
 
 ## Output
 
@@ -36,66 +114,34 @@ src/
     mod.rs
     rust.rs
 
-## Public API Surface
-
-**src/main.rs**
-- `pub fn main() -> Result<()>`
-- `pub struct App`
-
----
-
 ## src/main.rs
 
 **Language:** Rust | **Size:** 1.2 KB | **Lines:** 45
 
-**Imports:**
-- `use anyhow::Result`
-- `use clap::Parser`
-
 **Declarations:**
-
 `pub fn main() -> Result<()>`
-
 `pub struct App`
-> Fields: `name: String`, `config: Config`
 ```
 
-Three output formats (`-f`): `markdown` (default), `json`, `yaml`.
-
-Three detail levels (`-d`):
-
-| Level | Content |
-|-------|---------|
+| Detail Level | Content |
+|---|---|
 | `summary` | Directory tree + file list |
 | `signatures` (default) | + declarations, imports |
-| `full` | + doc comments, line numbers, body line counts, metadata badges, relationships |
-
-## Languages
-
-8 tree-sitter (full AST) + 19 regex (structural extraction):
-
-| Parser | Languages |
-|--------|-----------|
-| tree-sitter | Rust, Python, TypeScript/TSX, JavaScript/JSX, Go, Java, C, C++ |
-| regex | Shell, TOML, YAML, JSON, SQL, Markdown, Protobuf, GraphQL, Ruby, Kotlin, Swift, C#, Objective-C, XML, HTML, CSS, Gradle, CMake, Properties |
-
-Detection is by file extension. Full extraction details: [docs/languages.md](docs/languages.md)
+| `full` | + doc comments, line numbers, body counts, metadata, relationships |
 
 ## Filtering
 
 ```bash
 indxr --filter-path src/parser              # subtree
 indxr --kind function --public-only         # public functions only
-indxr --symbol "parse"                      # symbol name search (case-insensitive substring)
-indxr --filter-path src/model --kind struct --public-only  # combine
+indxr --symbol "parse"                      # symbol name search
 indxr -l rust,python                        # language filter
+indxr --filter-path src/model --kind struct --public-only  # combine
 ```
 
-All filters compose. `--kind` accepts: `function`, `struct`, `class`, `trait`, `enum`, `interface`, `module`, `method`, `constant`, `impl`, `type`, `namespace`, `macro`, `table`, `service`, `message`, `rpc`, and more.
+All filters compose. `--kind` accepts: `function`, `struct`, `class`, `trait`, `enum`, `interface`, `module`, `method`, `constant`, `impl`, `type`, `namespace`, `macro`, and more.
 
 ## Git Structural Diffing
-
-Declaration-level diffs against any git ref:
 
 ```bash
 indxr --since main
@@ -112,11 +158,25 @@ indxr --since HEAD~5
 ~ `fn process(x: i32)` → `fn process(x: i32, y: i32)`
 ```
 
-Markers: `+` added, `-` removed, `~` signature changed. Supports `--filter-path`, `-l`, `--public-only`, `-f json`.
+Markers: `+` added, `-` removed, `~` signature changed.
+
+## Dependency Graph
+
+```bash
+indxr --graph dot                            # file-level DOT graph
+indxr --graph mermaid                        # file-level Mermaid diagram
+indxr --graph json                           # JSON graph
+indxr --graph dot --graph-level symbol       # symbol-level graph
+indxr --graph mermaid --filter-path src/mcp  # scoped to a directory
+indxr --graph dot --graph-depth 2            # limit to 2 hops
+```
+
+| Level | Description |
+|---|---|
+| `file` (default) | File-to-file import relationships |
+| `symbol` | Symbol-to-symbol relationships (trait impls, method calls) |
 
 ## Token Budget
-
-Progressive truncation to fit context windows:
 
 ```bash
 indxr --max-tokens 4000
@@ -124,141 +184,31 @@ indxr --max-tokens 4000
 
 Truncation order: doc comments → private declarations → children → least-important files. Directory tree and public API surface are preserved first.
 
-File importance scoring: entry points (`main.rs`, `lib.rs`, `index.ts`) > root proximity > public declaration count.
+## Languages
 
-## File Watching
+8 tree-sitter (full AST) + 19 regex (structural extraction):
 
-Keep INDEX.md continuously up to date as you edit code:
+| Parser | Languages |
+|---|---|
+| tree-sitter | Rust, Python, TypeScript/TSX, JavaScript/JSX, Go, Java, C, C++ |
+| regex | Shell, TOML, YAML, JSON, SQL, Markdown, Protobuf, GraphQL, Ruby, Kotlin, Swift, C#, Objective-C, XML, HTML, CSS, Gradle, CMake, Properties |
 
-```bash
-indxr watch                       # watch cwd, write INDEX.md
-indxr watch ./my-project          # watch a specific project
-indxr watch -o custom-index.md    # custom output path
-indxr watch --debounce-ms 500     # slower debounce (default: 300ms)
-```
-
-Performs an initial index, then re-indexes on each debounced file change. Filters out non-source files, hidden directories (`.git`), cache directories, and the output file itself to prevent loops.
-
-The MCP server also supports watching via `indxr serve --watch`, which auto-reindexes the in-memory index and INDEX.md on file changes.
-
-## Dependency Graph
-
-Visualize file or symbol dependencies as DOT, Mermaid, or JSON:
-
-```bash
-indxr --graph dot                            # file-level DOT graph
-indxr --graph mermaid                        # file-level Mermaid diagram
-indxr --graph json                           # file-level JSON graph
-indxr --graph dot --graph-level symbol       # symbol-level DOT graph
-indxr --graph mermaid --filter-path src/mcp  # scoped to a directory
-indxr --graph dot --graph-depth 2            # limit to 2 hops from scope
-```
-
-Two granularity levels (`--graph-level`):
-
-| Level | Description |
-|-------|-------------|
-| `file` (default) | File-to-file import relationships |
-| `symbol` | Symbol-to-symbol relationships (trait impls, method calls) |
-
-Use `--filter-path` to scope the graph root and `--graph-depth` to limit edge hops.
-
-## MCP Server
-
-JSON-RPC 2.0 over stdin/stdout, MCP spec `2024-11-05`:
-
-```bash
-indxr serve ./my-project
-indxr serve ./my-project --watch  # auto-reindex on file changes
-```
-
-| Tool | Description |
-|------|-------------|
-| `search_relevant` | Multi-signal relevance search across paths, names, signatures, and docs. Supports `kind` filter and `compact` mode |
-| `lookup_symbol` | Find declarations by name (case-insensitive substring). Supports `compact` mode |
-| `explain_symbol` | Everything needed to USE a symbol: signature, doc comment, relationships, metadata — no body |
-| `get_file_summary` | Complete file overview: metadata, declarations, kind counts, public symbols |
-| `batch_file_summaries` | Summarize multiple files in one call (by paths array or glob). Cap: 30 files |
-| `get_file_context` | File summary + reverse dependencies + related files |
-| `get_public_api` | Public declarations with signatures for a file, directory, or entire codebase |
-| `get_callers` | Find who references a symbol (searches imports and signatures across all files) |
-| `get_related_tests` | Find test functions for a symbol by naming convention and file association |
-| `list_declarations` | List declarations in a file, optional `kind` filter, `shallow` and `compact` modes |
-| `search_signatures` | Search signatures by substring. Supports `compact` mode |
-| `read_source` | Read source by symbol name or line range. Supports `symbols` array and `collapse` mode |
-| `get_token_estimate` | Estimate tokens for a file, symbol, directory, or glob pattern |
-| `get_tree` | Directory/file tree, optional path prefix filter |
-| `get_imports` | Import statements for a file |
-| `get_stats` | File count, line count, language breakdown, duration |
-| `get_diff_summary` | Structural changes (added/removed/modified declarations) since a git ref |
-| `regenerate_index` | Re-index codebase and write updated INDEX.md |
-
-18 tools total. `compact` mode on list tools saves ~30% tokens. See [MCP Server docs](docs/mcp-server.md) for full parameter details.
-
-### Quick Setup
-
-```bash
-indxr init                    # set up for all agents (Claude Code, Cursor, Windsurf)
-indxr init --claude           # Claude Code only
-indxr init --cursor           # Cursor only
-indxr init --windsurf         # Windsurf only
-```
-
-This creates all configuration files in one command:
-
-| Agent | Files Created |
-|-------|--------------|
-| Claude Code | `.mcp.json`, `CLAUDE.md`, `.claude/settings.json` (PreToolUse hooks) |
-| Cursor | `.cursor/mcp.json`, `.cursorrules` |
-| Windsurf | `.windsurf/mcp.json`, `.windsurfrules` |
-| All | `.gitignore` entry, `INDEX.md` (static index) |
-
-Use `--no-index` to skip INDEX.md generation, `--no-hooks` to skip PreToolUse hooks, `--force` to overwrite existing files.
-
-**Getting agents to actually use it:** Agents don't always pick MCP tools over file reads on their own. `indxr init` sets up reinforcement mechanisms automatically:
-
-- **`.claude/settings.json` hooks** — PreToolUse hooks that intercept `Read` and `Bash` calls, reminding the agent to use indxr MCP tools instead of reading full files or running `git diff`
-- **`CLAUDE.md` / `.cursorrules` / `.windsurfrules`** — agent instruction files that teach the exploration workflow, token costs, and when full reads are justified
-
-See [Agent Integration](docs/agent-integration.md) for manual setup details and advanced configuration.
-
-Setup guides: [docs/mcp-server.md](docs/mcp-server.md)
-
-## Caching
-
-Incremental binary cache in `.indxr-cache/cache.bin`. Two-tier validation: mtime + file size (fast path), xxh3 content hash (fallback). Cache format is versioned — automatically rebuilt on indxr upgrades.
-
-```bash
-indxr --no-cache          # bypass cache
-indxr --cache-dir /tmp/c  # custom location
-```
+Detection is by file extension. Full details: [docs/languages.md](docs/languages.md)
 
 ## Performance
 
 Parallel parsing via rayon. Incremental caching via mtime + xxh3.
 
 | Codebase | Files | Lines | Cold | Cached |
-|----------|-------|-------|------|--------|
+|---|---|---|---|---|
 | Small (indxr) | 47 | 19K | 17ms | 5ms |
 | Medium (atuin) | 132 | 22K | 20ms | 6ms |
 | Large (cloud-hypervisor) | 243 | 124K | 73ms | ~10ms |
 
-## Architecture
-
-1. Walk directory tree (`.gitignore`-aware, via `ignore` crate)
-2. Detect language by file extension
-3. Check cache — skip unchanged files (mtime + xxh3)
-4. Parse with tree-sitter or regex (parallel via rayon)
-5. Extract declarations, metadata, relationships
-6. Apply filters (path, kind, visibility, symbol)
-7. Apply token budget (progressive truncation)
-8. Format as Markdown, JSON, or YAML
-9. Update cache
-
 ## Documentation
 
 | Document | Description |
-|----------|-------------|
+|---|---|
 | [CLI Reference](docs/cli-reference.md) | Complete flag and option reference |
 | [Languages](docs/languages.md) | Per-language extraction details |
 | [Output Formats](docs/output-formats.md) | Format and detail level reference |
@@ -270,6 +220,10 @@ Parallel parsing via rayon. Incremental caching via mtime + xxh3.
 | [MCP Server](docs/mcp-server.md) | MCP tools, protocol, and client setup |
 | [Agent Integration](docs/agent-integration.md) | Usage with Claude, Codex, Cursor, Copilot, etc. |
 
+## Contributing
+
+Contributions welcome — feel free to open an issue or submit a PR.
+
 ## License
 
-MIT
+[MIT](LICENSE)
