@@ -102,6 +102,10 @@ pub struct Cli {
     /// Output dependency graph instead of index (dot, mermaid, or json)
     #[arg(long, value_name = "FORMAT")]
     pub graph: Option<GraphFormat>,
+
+    /// Max edge hops from scoped files in --graph mode (default: unlimited)
+    #[arg(long, requires = "graph")]
+    pub graph_depth: Option<usize>,
 }
 
 /// Options shared between `serve` and `watch` subcommands.

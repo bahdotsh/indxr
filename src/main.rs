@@ -203,7 +203,7 @@ fn main() -> Result<()> {
 
     // Handle --graph mode (runs on unfiltered index to preserve all edges)
     if let Some(ref graph_format) = cli.graph {
-        let graph = dep_graph::build_file_graph(&index, cli.filter_path.as_deref(), None);
+        let graph = dep_graph::build_file_graph(&index, cli.filter_path.as_deref(), cli.graph_depth);
         let formatted = match graph_format {
             GraphFormat::Dot => dep_graph::format_dot(&graph),
             GraphFormat::Mermaid => dep_graph::format_mermaid(&graph),

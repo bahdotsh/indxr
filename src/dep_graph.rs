@@ -175,8 +175,12 @@ fn normalize_import_separators(text: &str) -> String {
             let is_extension = (1..=4).contains(&ext_len)
                 && (after_ext.is_none() || !after_ext.unwrap().is_alphanumeric());
 
-            // If it looks like an extension at the end of text, preserve the dot
-            if is_extension && after_ext.is_none() {
+            // Preserve dot for file extensions: at end of string, or before a
+            // non-identifier char (quote, paren, whitespace) that signals the
+            // path has ended rather than continuing as a module separator.
+            let before_delimiter = after_ext
+                .is_some_and(|ch| !ch.is_alphanumeric() && ch != '_' && ch != '.');
+            if is_extension && (after_ext.is_none() || before_delimiter) {
                 result.push('.');
             } else {
                 // Replace dot with slash (module separator)
@@ -276,9 +280,9 @@ fn strip_import_prefixes(normalized: &str) -> &str {
         "self/",
         "import ",
         "from ",
-        "require(",
         "require('",
         "require(\"",
+        "require(",
     ];
     let mut result = normalized;
     for prefix in &prefixes {
@@ -1320,5 +1324,74 @@ mod tests {
         assert!(mermaid.contains("n0[\"src/a-b.rs\"]"));
         assert!(mermaid.contains("n1[\"src/a_b.rs\"]"));
         assert!(mermaid.contains("n0 --> n1"));
+    }
+
+    // --- Cyclic import test ---
+
+    #[test]
+    fn test_file_graph_cyclic_imports() {
+        let index = make_index(vec![
+            make_file("src/alpha.rs", vec!["crate::beta"], vec![]),
+            make_file("src/beta.rs", vec!["crate::alpha"], vec![]),
+        ]);
+
+        let graph = build_file_graph(&index, None, None);
+        assert_eq!(graph.edges.len(), 2);
+        assert_eq!(graph.nodes.len(), 2);
+        // Both directions present
+        let a_to_b = graph.edges.iter().any(|e| e.from == "src/alpha.rs" && e.to == "src/beta.rs");
+        let b_to_a = graph.edges.iter().any(|e| e.from == "src/beta.rs" && e.to == "src/alpha.rs");
+        assert!(a_to_b, "should have edge alpha → beta");
+        assert!(b_to_a, "should have edge beta → alpha");
+    }
+
+    // --- normalize_import_separators edge cases ---
+
+    #[test]
+    fn test_normalize_preserves_extension_mid_string() {
+        // file.h should preserve the dot (extension before non-alnum quote)
+        assert_eq!(normalize_import_separators("path/file.h"), "path/file.h");
+        assert_eq!(normalize_import_separators("file.rs"), "file.rs");
+    }
+
+    #[test]
+    fn test_normalize_replaces_module_dots() {
+        // Python-style module separators become slashes; final short segment
+        // is ambiguous with a file extension so the last dot is preserved.
+        assert_eq!(normalize_import_separators("app.models.user"), "app/models.user");
+        // Longer final segments are not extension-like, so all dots become slashes
+        assert_eq!(normalize_import_separators("app.models.views"), "app/models/views");
+    }
+
+    #[test]
+    fn test_normalize_double_colon() {
+        assert_eq!(normalize_import_separators("crate::parser::queries"), "crate/parser/queries");
+    }
+
+    // --- strip_import_prefixes with require() ---
+
+    #[test]
+    fn test_strip_require_style() {
+        assert_eq!(strip_import_prefixes("require('./utils')"), "./utils");
+        assert_eq!(strip_import_prefixes("require('lodash')"), "lodash");
+        assert_eq!(strip_import_prefixes("require(\"fs\")"), "fs");
+    }
+
+    // --- Deeply nested relative imports ---
+
+    #[test]
+    fn test_resolve_deeply_nested_relative() {
+        let paths: Vec<&Path> = vec![
+            Path::new("src/lib/core/utils.ts"),
+            Path::new("src/features/admin/settings/page.ts"),
+        ];
+        let infos = make_path_infos(&paths);
+        let from = Path::new("src/features/admin/settings/page.ts");
+
+        let result = resolve_import("{ u } from '../../../lib/core/utils'", from, &infos);
+        assert_eq!(
+            result.map(|p| p.to_string_lossy().to_string()),
+            Some("src/lib/core/utils.ts".to_string())
+        );
     }
 }
