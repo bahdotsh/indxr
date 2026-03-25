@@ -1,6 +1,7 @@
 mod budget;
 mod cache;
 mod cli;
+mod dep_graph;
 mod diff;
 mod error;
 mod filter;
@@ -22,7 +23,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use crate::cache::Cache;
-use crate::cli::{Cli, Command, OutputFormat};
+use crate::cli::{Cli, Command, GraphFormat, OutputFormat};
 use crate::filter::FilterOptions;
 use crate::languages::Language;
 use crate::model::declarations::DeclKind;
@@ -210,6 +211,30 @@ fn main() -> Result<()> {
 
     if filter_opts.is_active() {
         filter::apply_filters(&mut index, &filter_opts);
+    }
+
+    // Handle --graph mode (output dependency graph instead of index)
+    if let Some(ref graph_format) = cli.graph {
+        let graph =
+            dep_graph::build_file_graph(&index, cli.filter_path.as_deref(), None);
+        let formatted = match graph_format {
+            GraphFormat::Dot => dep_graph::format_dot(&graph),
+            GraphFormat::Mermaid => dep_graph::format_mermaid(&graph),
+        };
+        if let Some(output_path) = &cli.output {
+            fs::write(output_path, &formatted)?;
+            if !cli.quiet {
+                eprintln!(
+                    "Dependency graph written to {} ({} nodes, {} edges)",
+                    output_path.display(),
+                    graph.nodes.len(),
+                    graph.edges.len()
+                );
+            }
+        } else {
+            print!("{}", formatted);
+        }
+        return Ok(());
     }
 
     // Apply token budget

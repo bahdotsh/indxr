@@ -32,18 +32,18 @@ Use `notify` crate to watch filesystem and re-index on file changes. Two modes:
 ---
 
 ## PR 2: Dependency graph export
-**Status:** Not started
+**Status:** Complete (ready to merge)
 **Branch:** `feat/dep-graph`
 **Effort:** Medium
 
 File-to-file and symbol-to-symbol dependency graph from existing import/relationship data.
 
 ### Tasks
-- [ ] Build file-level dependency graph from imports
-- [ ] Build symbol-level graph from relationships + signature references
-- [ ] CLI flag `--graph` with DOT and Mermaid output formats
-- [ ] New MCP tool `get_dependency_graph` (scoped by path/symbol, output format param)
-- [ ] Tests
+- [x] Build file-level dependency graph from imports
+- [x] Build symbol-level graph from relationships + signature references
+- [x] CLI flag `--graph` with DOT and Mermaid output formats
+- [x] New MCP tool `get_dependency_graph` (scoped by path/symbol, output format param)
+- [x] Tests (24 new: 18 unit in dep_graph.rs, 6 integration in mcp/tests.rs)
 
 ---
 

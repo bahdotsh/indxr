@@ -5,6 +5,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::budget::estimate_tokens;
+use crate::dep_graph;
 use crate::diff;
 use crate::indexer::{self, IndexConfig};
 use crate::languages::Language;
@@ -356,6 +357,33 @@ pub(super) fn tool_definitions() -> Value {
                     },
                     "required": ["symbol"]
                 }
+            },
+            {
+                "name": "get_dependency_graph",
+                "description": "Get file-level or symbol-level dependency graph. Shows import relationships between files or extends/implements relationships between symbols. Output in DOT (Graphviz), Mermaid, or JSON format.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Scope to a subtree (file or directory prefix). Omit for entire codebase."
+                        },
+                        "level": {
+                            "type": "string",
+                            "enum": ["file", "symbol"],
+                            "description": "Graph granularity: 'file' for file-to-file imports (default), 'symbol' for symbol-to-symbol relationships."
+                        },
+                        "format": {
+                            "type": "string",
+                            "enum": ["dot", "mermaid", "json"],
+                            "description": "Output format (default: mermaid)."
+                        },
+                        "depth": {
+                            "type": "number",
+                            "description": "Max edge hops from scoped files/symbols (default: unlimited). Useful to limit graph size."
+                        }
+                    }
+                }
             }
         ]
     })
@@ -383,6 +411,7 @@ pub(super) fn handle_tool_call(index: &CodebaseIndex, name: &str, args: &Value) 
         "get_public_api" => tool_get_public_api(index, args),
         "explain_symbol" => tool_explain_symbol(index, args),
         "get_related_tests" => tool_get_related_tests(index, args),
+        "get_dependency_graph" => tool_get_dependency_graph(index, args),
         _ => tool_error(&format!("Unknown tool: {}", name)),
     }
 }
@@ -1451,4 +1480,53 @@ pub(super) fn tool_get_related_tests(index: &CodebaseIndex, args: &Value) -> Val
         "count": results.len(),
         "tests": results
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Dependency graph
+// ---------------------------------------------------------------------------
+
+pub(super) fn tool_get_dependency_graph(index: &CodebaseIndex, args: &Value) -> Value {
+    let path = args.get("path").and_then(|v| v.as_str());
+    let level = args
+        .get("level")
+        .and_then(|v| v.as_str())
+        .unwrap_or("file");
+    let format = args
+        .get("format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("mermaid");
+    let depth = args
+        .get("depth")
+        .and_then(|v| v.as_u64())
+        .map(|d| d as usize);
+
+    let graph = match level {
+        "symbol" => dep_graph::build_symbol_graph(index, path, depth),
+        _ => dep_graph::build_file_graph(index, path, depth),
+    };
+
+    let node_count = graph.nodes.len();
+    let edge_count = graph.edges.len();
+
+    match format {
+        "dot" => tool_result(json!({
+            "format": "dot",
+            "nodes": node_count,
+            "edges": edge_count,
+            "graph": dep_graph::format_dot(&graph)
+        })),
+        "json" => tool_result(json!({
+            "format": "json",
+            "nodes": node_count,
+            "edges": edge_count,
+            "graph": dep_graph::format_json(&graph)
+        })),
+        _ => tool_result(json!({
+            "format": "mermaid",
+            "nodes": node_count,
+            "edges": edge_count,
+            "graph": dep_graph::format_mermaid(&graph)
+        })),
+    }
 }

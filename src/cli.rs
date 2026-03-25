@@ -97,6 +97,11 @@ pub struct Cli {
     /// Omit directory tree from output
     #[arg(long)]
     pub omit_tree: bool,
+
+    // === Dependency graph ===
+    /// Output dependency graph instead of index (dot or mermaid)
+    #[arg(long, value_name = "FORMAT")]
+    pub graph: Option<GraphFormat>,
 }
 
 /// Options shared between `serve` and `watch` subcommands.
@@ -206,4 +211,10 @@ pub enum OutputFormat {
     Markdown,
     Json,
     Yaml,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum GraphFormat {
+    Dot,
+    Mermaid,
 }

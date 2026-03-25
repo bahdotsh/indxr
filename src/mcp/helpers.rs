@@ -711,7 +711,7 @@ pub(super) fn to_compact_rows(columns: &[&str], items: &[Value]) -> Value {
 
 /// Check if `text` contains `word` at a word boundary (not part of a larger identifier).
 /// Word boundaries are non-alphanumeric, non-underscore characters or string edges.
-pub(super) fn contains_word_boundary(text: &str, word: &str) -> bool {
+pub(crate) fn contains_word_boundary(text: &str, word: &str) -> bool {
     if word.is_empty() {
         return false;
     }
