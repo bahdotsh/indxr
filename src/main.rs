@@ -12,6 +12,7 @@ mod model;
 mod output;
 mod parser;
 mod walker;
+mod watch;
 
 use std::collections::HashMap;
 use std::fs;
@@ -42,6 +43,8 @@ fn main() -> Result<()> {
         max_depth,
         exclude,
         no_gitignore,
+        watch: enable_watch,
+        debounce_ms,
     }) = &cli.command
     {
         let config = indexer::IndexConfig {
@@ -59,7 +62,39 @@ fn main() -> Result<()> {
             "indxr MCP server starting (indexed {} files)",
             index.files.len()
         );
-        return mcp::run_mcp_server(index, config);
+        return mcp::run_mcp_server(index, config, *enable_watch, *debounce_ms);
+    }
+
+    // Handle watch subcommand
+    if let Some(Command::Watch {
+        path,
+        output,
+        cache_dir,
+        max_file_size,
+        max_depth,
+        exclude,
+        no_gitignore,
+        debounce_ms,
+        quiet,
+    }) = &cli.command
+    {
+        let config = indexer::IndexConfig {
+            root: path.clone(),
+            cache_dir: cache_dir.clone(),
+            max_file_size: *max_file_size,
+            max_depth: *max_depth,
+            exclude: exclude.clone().unwrap_or_default(),
+            no_gitignore: *no_gitignore,
+        };
+
+        let opts = watch::WatchOptions {
+            config,
+            output: output.clone(),
+            debounce_ms: *debounce_ms,
+            quiet: *quiet,
+        };
+
+        return watch::run_watch(opts);
     }
 
     // Handle init subcommand

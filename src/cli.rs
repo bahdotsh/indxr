@@ -126,6 +126,53 @@ pub enum Command {
         /// Do not respect .gitignore
         #[arg(long)]
         no_gitignore: bool,
+
+        /// Watch for file changes and auto-reindex
+        #[arg(long)]
+        watch: bool,
+
+        /// Debounce timeout in milliseconds (requires --watch)
+        #[arg(long, default_value = "300")]
+        debounce_ms: u64,
+    },
+
+    /// Watch for file changes and keep INDEX.md up to date
+    Watch {
+        /// Root directory to watch
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Output file path (default: INDEX.md in the root directory)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Cache directory
+        #[arg(long, default_value = ".indxr-cache")]
+        cache_dir: PathBuf,
+
+        /// Skip files larger than N kilobytes
+        #[arg(long, default_value = "512")]
+        max_file_size: u64,
+
+        /// Maximum directory depth to traverse
+        #[arg(long)]
+        max_depth: Option<usize>,
+
+        /// Additional glob patterns to exclude
+        #[arg(short, long)]
+        exclude: Option<Vec<String>>,
+
+        /// Do not respect .gitignore
+        #[arg(long)]
+        no_gitignore: bool,
+
+        /// Debounce timeout in milliseconds
+        #[arg(long, default_value = "300")]
+        debounce_ms: u64,
+
+        /// Suppress progress output
+        #[arg(short, long)]
+        quiet: bool,
     },
 
     /// Initialize indxr configuration files for AI agent integration
