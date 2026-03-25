@@ -1,6 +1,6 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-23 12:59:07 UTC | Files: 44 | Lines: 15907
+> Generated: 2026-03-25 09:47:32 UTC | Files: 44 | Lines: 17642
 > Languages: Markdown (12), Python (1), Rust (29), Shell (1), TOML (1)
 
 ## Directory Structure
@@ -67,6 +67,15 @@ indxr/
 
 **CLAUDE.md**
 - `# indxr`
+- `# Basic indexing`
+- `# Detail levels: summary | signatures (default) | full`
+- `# Filtering`
+- `# Git structural diffing`
+- `# Token budget`
+- `# Output control`
+- `# Caching`
+- `# MCP server`
+- `# Other`
 
 **Cargo.toml**
 - `[package]`
@@ -345,7 +354,7 @@ indxr/
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 947 B | **Lines:** 19
+**Language:** Markdown | **Size:** 8.2 KB | **Lines:** 141
 
 **Declarations:**
 
@@ -353,7 +362,7 @@ indxr/
 
 ## Cargo.toml
 
-**Language:** TOML | **Size:** 650 B | **Lines:** 28
+**Language:** TOML | **Size:** 905 B | **Lines:** 35
 
 **Imports:**
 - `anyhow`
@@ -374,7 +383,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 38.5 KB | **Lines:** 1534
+**Language:** Markdown | **Size:** 39.5 KB | **Lines:** 1561
 
 **Declarations:**
 
@@ -382,7 +391,7 @@ indxr/
 
 ## README.md
 
-**Language:** Markdown | **Size:** 6.1 KB | **Lines:** 210
+**Language:** Markdown | **Size:** 7.2 KB | **Lines:** 221
 
 **Declarations:**
 
@@ -398,7 +407,7 @@ indxr/
 
 ## docs/agent-integration.md
 
-**Language:** Markdown | **Size:** 7.9 KB | **Lines:** 304
+**Language:** Markdown | **Size:** 13.1 KB | **Lines:** 417
 
 **Declarations:**
 
@@ -446,7 +455,7 @@ indxr/
 
 ## docs/mcp-server.md
 
-**Language:** Markdown | **Size:** 7.2 KB | **Lines:** 323
+**Language:** Markdown | **Size:** 9.7 KB | **Lines:** 405
 
 **Declarations:**
 
@@ -677,7 +686,7 @@ indxr/
 
 ## src/main.rs
 
-**Language:** Rust | **Size:** 7.6 KB | **Lines:** 275
+**Language:** Rust | **Size:** 7.6 KB | **Lines:** 274
 
 **Imports:**
 - `std::collections::HashMap`
@@ -728,17 +737,20 @@ indxr/
 
 ## src/mcp.rs
 
-**Language:** Rust | **Size:** 33.0 KB | **Lines:** 1028
+**Language:** Rust | **Size:** 82.6 KB | **Lines:** 2387
 
 **Imports:**
 - `std::collections::HashMap`
 - `std::io::{self, BufRead, Write}`
-- `std::path::Path`
+- `std::path::{Path, PathBuf}`
 - `serde::{Deserialize, Serialize}`
 - `serde_json::{self, Value, json}`
+- `crate::budget::estimate_tokens`
+- `crate::diff`
 - `crate::indexer::{self, IndexConfig}`
+- `crate::languages::Language`
 - `crate::model::declarations::{DeclKind, Declaration, Visibility}`
-- `crate::model::{CodebaseIndex, FileIndex}`
+- *... and 2 more imports*
 
 **Declarations:**
 
@@ -806,6 +818,47 @@ indxr/
 
 `fn tool_get_file_context(index: &CodebaseIndex, args: &Value) -> Value`
 
+`const APPROX_SUMMARY_TOKENS: usize = 300`
+
+`fn tool_get_token_estimate(index: &CodebaseIndex, args: &Value) -> Value`
+
+`struct RelevanceMatch`
+> Fields: `file: String`, `symbol: Option<String>`, `kind: Option<String>`, `signature: Option<String>`, `line: Option<usize>`, `match_on: String`, `score: u32`
+
+`fn tool_search_relevant(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn score_match(text: &str, query: &str, terms: &[&str]) -> u32`
+
+`fn score_decls_recursive( decls: &[Declaration], file_path: &str, query: &str, terms: &[&str], results: &mut Vec<RelevanceMatch>, kind_filter: Option<&DeclKind>, )`
+
+`fn simple_glob_match(pattern: &str, path: &str) -> bool`
+
+`fn split_identifier(name: &str) -> Vec<String>`
+
+`fn bigram_similarity(a: &str, b: &str) -> f64`
+
+`fn collapse_nested_bodies(source: &str) -> String`
+
+`fn to_compact_rows(columns: &[&str], items: &[Value]) -> Value`
+
+`fn collect_public_decls(decls: &[Declaration], file_path: &str, out: &mut Vec<Value>)`
+
+`fn find_tests_for_symbol( decls: &[Declaration], symbol_lower: &str, file_path: &str, results: &mut Vec<Value>, reason: &str, )`
+
+`fn explain_decl(decl: &Declaration, file_path: &str) -> Value`
+
+`fn tool_get_diff_summary(index: &CodebaseIndex, config: &IndexConfig, args: &Value) -> Value`
+
+`fn tool_batch_file_summaries(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn tool_get_callers(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn tool_get_public_api(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn tool_explain_symbol(index: &CodebaseIndex, args: &Value) -> Value`
+
+`fn tool_get_related_tests(index: &CodebaseIndex, args: &Value) -> Value`
+
 `fn find_file<'a>(index: &'a CodebaseIndex, path: &str) -> Option<&'a FileIndex>`
 
 `fn handle_initialize(id: Value) -> JsonRpcResponse`
@@ -813,6 +866,8 @@ indxr/
 `fn handle_tools_list(id: Value) -> JsonRpcResponse`
 
 `fn handle_tools_call( id: Value, index: &mut CodebaseIndex, config: &IndexConfig, params: &Value, ) -> JsonRpcResponse`
+
+`mod tests`
 
 ---
 
@@ -949,7 +1004,7 @@ indxr/
 
 ## src/parser/queries/c.rs
 
-**Language:** Rust | **Size:** 15.9 KB | **Lines:** 474
+**Language:** Rust | **Size:** 16.1 KB | **Lines:** 477
 
 **Imports:**
 - `tree_sitter::Node`
@@ -1001,7 +1056,7 @@ indxr/
 
 ## src/parser/queries/cpp.rs
 
-**Language:** Rust | **Size:** 31.6 KB | **Lines:** 890
+**Language:** Rust | **Size:** 31.8 KB | **Lines:** 893
 
 **Imports:**
 - `tree_sitter::Node`
@@ -1123,7 +1178,7 @@ indxr/
 
 ## src/parser/queries/java.rs
 
-**Language:** Rust | **Size:** 18.3 KB | **Lines:** 532
+**Language:** Rust | **Size:** 18.7 KB | **Lines:** 540
 
 **Imports:**
 - `tree_sitter::Node`
@@ -1406,7 +1461,7 @@ indxr/
 
 ## src/parser/regex_parser.rs
 
-**Language:** Rust | **Size:** 118.3 KB | **Lines:** 3602
+**Language:** Rust | **Size:** 117.6 KB | **Lines:** 3603
 
 **Imports:**
 - `std::path::Path`
@@ -1440,6 +1495,8 @@ indxr/
 `fn parse_sql(content: &str) -> (Vec<Import>, Vec<Declaration>)`
 
 `fn parse_markdown(content: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+`fn get_decl_by_path_mut<'a>( declarations: &'a mut [Declaration], path: &[usize], ) -> &'a mut Declaration`
 
 `fn parse_protobuf(content: &str) -> (Vec<Import>, Vec<Declaration>)`
 

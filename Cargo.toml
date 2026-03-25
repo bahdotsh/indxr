@@ -16,6 +16,7 @@ anyhow = "1"
 bincode = "1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
+globset = "0.4"
 ignore = "0.4"
 rayon = "1"
 regex = "1"

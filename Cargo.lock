@@ -314,6 +314,7 @@ dependencies = [
  "bincode",
  "chrono",
  "clap",
+ "globset",
  "ignore",
  "rayon",
  "regex",
