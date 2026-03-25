@@ -77,14 +77,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Install musl tools
-        if: contains(matrix.target, 'musl')
+      - name: Install musl tools (x86_64)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
-          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu
-          fi
+
+      - name: Install musl cross-compiler (aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget
+          wget -q https://musl.cc/aarch64-linux-musl-cross.tgz
+          tar xzf aarch64-linux-musl-cross.tgz
+          echo "$PWD/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
 
       - name: Configure linker for aarch64-linux-gnu
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -98,7 +104,11 @@ jobs:
         run: |
           mkdir -p .cargo
           echo '[target.aarch64-unknown-linux-musl]' >> .cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+          echo 'linker = "aarch64-linux-musl-gcc"' >> .cargo/config.toml
+
+      - name: Set musl CC for aarch64
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: echo "CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc" >> $GITHUB_ENV
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
