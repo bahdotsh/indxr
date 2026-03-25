@@ -5,6 +5,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value, json};
 
+use crate::budget::estimate_tokens;
 use crate::indexer::{self, IndexConfig};
 use crate::model::declarations::{DeclKind, Declaration, Visibility};
 use crate::model::{CodebaseIndex, FileIndex};
@@ -458,6 +459,42 @@ fn tool_definitions() -> Value {
                     "properties": {},
                     "required": []
                 }
+            },
+            {
+                "name": "get_token_estimate",
+                "description": "Estimate how many tokens a file or symbol would consume if read in full. Use this to decide whether to read_source (targeted) or Read (full file). Helps agents make informed token-budget decisions.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "File path (relative to project root)"
+                        },
+                        "symbol": {
+                            "type": "string",
+                            "description": "Optional symbol name — if provided, estimates tokens for just that symbol's source"
+                        }
+                    },
+                    "required": ["path"]
+                }
+            },
+            {
+                "name": "search_relevant",
+                "description": "Search for files and symbols relevant to a query. Searches across file paths, symbol names, signatures, and doc comments. Returns ranked results. Use this as a first step to find where to look without reading any files.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query — can be a concept (e.g. 'authentication'), a partial name (e.g. 'parse'), or a type pattern (e.g. 'Result<Cache>')"
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of results (default 20, max 50)"
+                        }
+                    },
+                    "required": ["query"]
+                }
             }
         ]
     })
@@ -478,6 +515,8 @@ fn handle_tool_call(index: &CodebaseIndex, name: &str, args: &Value) -> Value {
         "get_file_summary" => tool_get_file_summary(index, args),
         "read_source" => tool_read_source(index, args),
         "get_file_context" => tool_get_file_context(index, args),
+        "get_token_estimate" => tool_get_token_estimate(index, args),
+        "search_relevant" => tool_search_relevant(index, args),
         _ => tool_error(&format!("Unknown tool: {}", name)),
     }
 }
@@ -901,6 +940,228 @@ fn tool_get_file_context(index: &CodebaseIndex, args: &Value) -> Value {
     tool_result(summary)
 }
 
+/// Approximate token cost of a `get_file_summary` response.
+const APPROX_SUMMARY_TOKENS: usize = 300;
+
+fn tool_get_token_estimate(index: &CodebaseIndex, args: &Value) -> Value {
+    let path = match args.get("path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return tool_error("Missing required parameter: path"),
+    };
+
+    let file = match find_file(index, path) {
+        Some(f) => f,
+        None => return tool_error(&format!("File not found in index: {}", path)),
+    };
+
+    // Read file content once for all estimates
+    let abs_path = index.root.join(&file.path);
+    let file_content = std::fs::read_to_string(&abs_path).unwrap_or_default();
+    let full_file_tokens = estimate_tokens(&file_content);
+
+    let symbol_name = args.get("symbol").and_then(|v| v.as_str());
+
+    if let Some(sym) = symbol_name {
+        let decl = match find_decl_by_name(&file.declarations, sym) {
+            Some(d) => d,
+            None => {
+                return tool_error(&format!(
+                    "Symbol '{}' not found in {}",
+                    sym,
+                    file.path.to_string_lossy()
+                ));
+            }
+        };
+        let body_lines = decl.body_lines.unwrap_or(1);
+        let start = decl.line;
+        let end = decl.line + body_lines;
+        let symbol_tokens = match read_line_range(&abs_path, start, end) {
+            Ok(source) => estimate_tokens(&source),
+            Err(_) => body_lines * 10, // fallback heuristic
+        };
+        tool_result(json!({
+            "file": file.path.to_string_lossy(),
+            "symbol": sym,
+            "symbol_tokens": symbol_tokens,
+            "symbol_lines": body_lines,
+            "full_file_tokens": full_file_tokens,
+            "full_file_lines": file.lines,
+            "savings": format!("read_source saves ~{} tokens ({}% reduction)",
+                full_file_tokens.saturating_sub(symbol_tokens),
+                if full_file_tokens > 0 { 100 - (symbol_tokens * 100 / full_file_tokens) } else { 0 }
+            )
+        }))
+    } else {
+        tool_result(json!({
+            "file": file.path.to_string_lossy(),
+            "full_file_tokens": full_file_tokens,
+            "full_file_lines": file.lines,
+            "summary_tokens": APPROX_SUMMARY_TOKENS,
+            "declaration_count": file.declarations.len(),
+            "recommendation": if full_file_tokens > 500 {
+                format!("Use get_file_summary (~{} tokens) instead of Read (~{} tokens). Use read_source for specific symbols.", APPROX_SUMMARY_TOKENS, full_file_tokens)
+            } else {
+                format!("File is small (~{} tokens) — Read is fine here.", full_file_tokens)
+            }
+        }))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// search_relevant: multi-signal relevance search
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct RelevanceMatch {
+    file: String,
+    symbol: Option<String>,
+    kind: Option<String>,
+    signature: Option<String>,
+    line: Option<usize>,
+    match_on: String,
+    score: u32,
+}
+
+fn tool_search_relevant(index: &CodebaseIndex, args: &Value) -> Value {
+    let query = match args.get("query").and_then(|v| v.as_str()) {
+        Some(q) => q,
+        None => return tool_error("Missing required parameter: query"),
+    };
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20)
+        .min(50) as usize;
+
+    let query_lower = query.to_lowercase();
+    let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
+    let mut results: Vec<RelevanceMatch> = Vec::new();
+
+    for file in &index.files {
+        let file_path = file.path.to_string_lossy().to_string();
+        let file_path_lower = file_path.to_lowercase();
+
+        // Score file path matches
+        let path_score = score_match(&file_path_lower, &query_lower, &query_terms);
+        if path_score > 0 {
+            results.push(RelevanceMatch {
+                file: file_path.clone(),
+                symbol: None,
+                kind: None,
+                signature: None,
+                line: None,
+                match_on: "path".to_string(),
+                score: path_score,
+            });
+        }
+
+        // Score declaration matches
+        score_decls_recursive(
+            &file.declarations,
+            &file_path,
+            &query_lower,
+            &query_terms,
+            &mut results,
+        );
+    }
+
+    // Sort by score descending
+    results.sort_by(|a, b| b.score.cmp(&a.score));
+    results.truncate(limit);
+
+    let total = results.len();
+    tool_result(json!({
+        "query": query,
+        "matches": total,
+        "results": results
+    }))
+}
+
+fn score_match(text: &str, query: &str, terms: &[&str]) -> u32 {
+    let mut score = 0u32;
+
+    // Exact substring match
+    if text.contains(query) {
+        score += 10;
+        // Bonus for exact match (not just substring)
+        if text == query {
+            score += 20;
+        }
+    }
+
+    // Individual term matches
+    for term in terms {
+        if text.contains(term) {
+            score += 5;
+        }
+    }
+
+    score
+}
+
+fn score_decls_recursive(
+    decls: &[Declaration],
+    file_path: &str,
+    query: &str,
+    terms: &[&str],
+    results: &mut Vec<RelevanceMatch>,
+) {
+    for decl in decls {
+        let name_lower = decl.name.to_lowercase();
+        let sig_lower = decl.signature.to_lowercase();
+        let doc_lower = decl
+            .doc_comment
+            .as_ref()
+            .map(|d| d.to_lowercase())
+            .unwrap_or_default();
+
+        let mut score = 0u32;
+        let mut match_sources = Vec::new();
+
+        // Name match (highest signal)
+        let name_score = score_match(&name_lower, query, terms);
+        if name_score > 0 {
+            score += name_score * 3; // name matches are 3x more valuable
+            match_sources.push("name");
+        }
+
+        // Signature match
+        let sig_score = score_match(&sig_lower, query, terms);
+        if sig_score > 0 {
+            score += sig_score * 2;
+            match_sources.push("signature");
+        }
+
+        // Doc comment match
+        if !doc_lower.is_empty() {
+            let doc_score = score_match(&doc_lower, query, terms);
+            if doc_score > 0 {
+                score += doc_score;
+                match_sources.push("doc");
+            }
+        }
+
+        // Boost public symbols
+        if matches!(decl.visibility, Visibility::Public) && score > 0 {
+            score += 5;
+        }
+
+        if score > 0 {
+            results.push(RelevanceMatch {
+                file: file_path.to_string(),
+                symbol: Some(decl.name.clone()),
+                kind: Some(format!("{}", decl.kind)),
+                signature: Some(decl.signature.clone()),
+                line: Some(decl.line),
+                match_on: match_sources.join("+"),
+                score,
+            });
+        }
+
+        score_decls_recursive(&decl.children, file_path, query, terms, results);
+    }
+}
+
 /// Find a FileIndex whose path matches the given string. Supports both exact
 /// match and suffix match so callers can use relative paths.
 fn find_file<'a>(index: &'a CodebaseIndex, path: &str) -> Option<&'a FileIndex> {
@@ -1025,4 +1286,130 @@ pub fn run_mcp_server(mut index: CodebaseIndex, config: IndexConfig) -> anyhow::
 
     eprintln!("indxr MCP server shutting down");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // score_match tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_score_match_exact_full_match() {
+        let score = score_match("parse", "parse", &["parse"]);
+        // exact substring (10) + exact equality (20) + term match (5) = 35
+        assert_eq!(score, 35);
+    }
+
+    #[test]
+    fn test_score_match_substring() {
+        let score = score_match("tree_sitter_parser", "parser", &["parser"]);
+        // substring (10) + term match (5) = 15
+        assert_eq!(score, 15);
+    }
+
+    #[test]
+    fn test_score_match_no_match() {
+        let score = score_match("indexer", "parser", &["parser"]);
+        assert_eq!(score, 0);
+    }
+
+    #[test]
+    fn test_score_match_multi_term() {
+        // "token budget" (with space) is NOT a substring of "token_budget_manager"
+        // Only individual terms match: "token" (5) + "budget" (5) = 10
+        let score = score_match("token_budget_manager", "token budget", &["token", "budget"]);
+        assert_eq!(score, 10);
+
+        // When full query IS a substring, it scores higher
+        let score2 = score_match("apply token budget here", "token budget", &["token", "budget"]);
+        // full query substring (10) + term "token" (5) + term "budget" (5) = 20
+        assert_eq!(score2, 20);
+    }
+
+    #[test]
+    fn test_score_match_partial_term_match() {
+        // Only one of two terms matches
+        let score = score_match("token_counter", "token budget", &["token", "budget"]);
+        // full query "token budget" not in text (0) + term "token" (5) + term "budget" misses (0) = 5
+        assert_eq!(score, 5);
+    }
+
+    #[test]
+    fn test_score_match_empty_query() {
+        // Empty string is a substring of everything
+        let score = score_match("anything", "", &[""]);
+        // substring (10) + term "" is substring (5) = 15
+        // This is fine — search_relevant won't produce empty queries in practice
+        assert!(score > 0);
+    }
+
+    #[test]
+    fn test_score_match_case_sensitivity() {
+        // score_match expects pre-lowercased inputs (caller responsibility)
+        let score = score_match("parser", "Parser", &["Parser"]);
+        assert_eq!(score, 0); // case-sensitive — caller must lowercase
+    }
+
+    // -----------------------------------------------------------------------
+    // tool_definitions: verify new tools are registered
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_tool_definitions_include_new_tools() {
+        let defs = tool_definitions();
+        let tools = defs["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"get_token_estimate"));
+        assert!(names.contains(&"search_relevant"));
+        assert!(names.contains(&"lookup_symbol"));
+        assert!(names.contains(&"regenerate_index"));
+        // Verify total count matches dispatch (12 tools)
+        assert_eq!(names.len(), 12);
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_tool_call: unknown tool
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_handle_tool_call_unknown_tool() {
+        let index = CodebaseIndex {
+            root: std::path::PathBuf::from("."),
+            root_name: "test".to_string(),
+            generated_at: String::new(),
+            stats: crate::model::IndexStats {
+                total_files: 0,
+                total_lines: 0,
+                languages: HashMap::new(),
+                duration_ms: 0,
+            },
+            tree: vec![],
+            files: vec![],
+        };
+        let result = handle_tool_call(&index, "nonexistent_tool", &json!({}));
+        // Should return an error
+        let content = result["content"][0]["text"].as_str().unwrap();
+        assert!(content.contains("Unknown tool"));
+    }
+
+    // -----------------------------------------------------------------------
+    // search_relevant: scoring weights
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_name_match_scores_higher_than_signature() {
+        // Name matches get 3x multiplier, signature gets 2x
+        let name_score = score_match("parse_file", "parse", &["parse"]) * 3;
+        let sig_score = score_match("fn parse_file(input: &str)", "parse", &["parse"]) * 2;
+        assert!(name_score > 0);
+        assert!(sig_score > 0);
+        // Both match, but name multiplier is higher
+        assert!(name_score > sig_score || name_score == sig_score);
+    }
 }

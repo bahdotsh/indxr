@@ -143,6 +143,8 @@ indxr serve ./my-project
 | `get_file_summary` | Complete file overview: metadata, declarations, kind counts, public symbols |
 | `read_source` | Read source code by symbol name or line range |
 | `get_file_context` | File summary + reverse dependencies + related files |
+| `get_token_estimate` | Estimate tokens for a file or symbol, with read_source vs Read comparison |
+| `search_relevant` | Multi-signal relevance search across paths, names, signatures, and docs |
 | `regenerate_index` | Re-index codebase and write updated INDEX.md |
 
 MCP config:
