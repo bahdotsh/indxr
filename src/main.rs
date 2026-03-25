@@ -208,15 +208,14 @@ fn main() -> Result<()> {
             Some(GraphLevel::Symbol) => {
                 dep_graph::build_symbol_graph(&index, cli.filter_path.as_deref(), cli.graph_depth)
             }
-            _ => {
-                dep_graph::build_file_graph(&index, cli.filter_path.as_deref(), cli.graph_depth)
-            }
+            _ => dep_graph::build_file_graph(&index, cli.filter_path.as_deref(), cli.graph_depth),
         };
         let formatted = match graph_format {
             GraphFormat::Dot => dep_graph::format_dot(&graph),
             GraphFormat::Mermaid => dep_graph::format_mermaid(&graph),
-            GraphFormat::Json => serde_json::to_string_pretty(&dep_graph::format_json(&graph))
-                .unwrap_or_default(),
+            GraphFormat::Json => {
+                serde_json::to_string_pretty(&dep_graph::format_json(&graph)).unwrap_or_default()
+            }
         };
         if let Some(output_path) = &cli.output {
             fs::write(output_path, &formatted)?;

@@ -4,9 +4,9 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::utils::contains_word_boundary;
 use crate::model::CodebaseIndex;
 use crate::model::declarations::{Declaration, RelKind};
+use crate::utils::contains_word_boundary;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -178,8 +178,8 @@ fn normalize_import_separators(text: &str) -> String {
 
             // Before a delimiter (quote, paren, whitespace): the path has ended,
             // so the dot is definitely a file extension — accept up to 5 chars.
-            let before_delimiter = after_ext
-                .is_some_and(|ch| !ch.is_alphanumeric() && ch != '_' && ch != '.');
+            let before_delimiter =
+                after_ext.is_some_and(|ch| !ch.is_alphanumeric() && ch != '_' && ch != '.');
             // At end of string: ambiguous — could be extension or module name.
             // Use a known-extension set for 4-5 char suffixes to avoid
             // misclassifying module names like `user`, `views`, `admin`.
@@ -188,8 +188,7 @@ fn normalize_import_separators(text: &str) -> String {
             let is_extension = if before_delimiter {
                 (1..=5).contains(&ext_char_len)
             } else if at_end {
-                (1..=3).contains(&ext_char_len)
-                    || is_known_extension(&rest[..ext_byte_len])
+                (1..=3).contains(&ext_char_len) || is_known_extension(&rest[..ext_byte_len])
             } else {
                 false
             };
@@ -262,8 +261,7 @@ fn find_from_keyword(text: &str) -> Option<usize> {
                 let abs = start + pos;
                 let before_ok = abs == 0 || !bytes[abs - 1].is_ascii_alphanumeric();
                 let after = abs + 4;
-                let after_ok =
-                    after >= text.len() || !bytes[after].is_ascii_alphanumeric();
+                let after_ok = after >= text.len() || !bytes[after].is_ascii_alphanumeric();
                 if before_ok && after_ok {
                     return Some(abs);
                 }
@@ -345,7 +343,10 @@ fn strip_import_prefixes(normalized: &str) -> &str {
 }
 
 /// Try to match a candidate path fragment against indexed file paths.
-fn match_path_candidate<'a>(candidate_lower: &str, path_infos: &'a [PathInfo<'a>]) -> Option<&'a Path> {
+fn match_path_candidate<'a>(
+    candidate_lower: &str,
+    path_infos: &'a [PathInfo<'a>],
+) -> Option<&'a Path> {
     let mut best: Option<&'a Path> = None;
     let mut best_len = usize::MAX;
 
@@ -403,10 +404,7 @@ pub fn build_file_graph(
             .map(|info| info.path.to_str().unwrap_or(""))
             .collect()
     } else {
-        all_paths
-            .iter()
-            .map(|p| p.to_str().unwrap_or(""))
-            .collect()
+        all_paths.iter().map(|p| p.to_str().unwrap_or("")).collect()
     };
 
     // Build full adjacency for all files (needed so depth limiting can
@@ -532,7 +530,12 @@ pub fn build_symbol_graph(
     let mut all_symbols: Vec<SymInfo> = Vec::new();
     for file in &index.files {
         let file_path = file.path.to_string_lossy().to_string();
-        collect_symbols_ext(&file.declarations, &file_path, &mut name_counts, &mut all_symbols);
+        collect_symbols_ext(
+            &file.declarations,
+            &file_path,
+            &mut name_counts,
+            &mut all_symbols,
+        );
     }
 
     // Build name → id index for relationship targets
@@ -570,10 +573,21 @@ pub fn build_symbol_graph(
     // Note: this is O(N*M) where N = all symbols and M = type-like symbols.
     // For very large codebases (10K+ symbols) this could become a bottleneck;
     // an inverted index of type names per signature would reduce it to O(N).
-    let type_keywords: &[&str] = &["struct ", "class ", "trait ", "interface ", "type ", "enum "];
+    let type_keywords: &[&str] = &[
+        "struct ",
+        "class ",
+        "trait ",
+        "interface ",
+        "type ",
+        "enum ",
+    ];
     let type_names: Vec<(&str, &str)> = all_symbols
         .iter()
-        .filter(|s| type_keywords.iter().any(|kw| s.signature_lower.contains(kw)))
+        .filter(|s| {
+            type_keywords
+                .iter()
+                .any(|kw| s.signature_lower.contains(kw))
+        })
         .map(|s| (s.name.as_str(), s.id.as_str()))
         .collect();
 
@@ -617,8 +631,7 @@ pub fn build_symbol_graph(
         node_set.insert(e.to.clone());
     }
 
-    let sym_map: HashMap<&str, &SymInfo> =
-        all_symbols.iter().map(|s| (s.id.as_str(), s)).collect();
+    let sym_map: HashMap<&str, &SymInfo> = all_symbols.iter().map(|s| (s.id.as_str(), s)).collect();
 
     let mut nodes: Vec<GraphNode> = node_set
         .into_iter()
@@ -1422,8 +1435,14 @@ mod tests {
         assert_eq!(graph.edges.len(), 2);
         assert_eq!(graph.nodes.len(), 2);
         // Both directions present
-        let a_to_b = graph.edges.iter().any(|e| e.from == "src/alpha.rs" && e.to == "src/beta.rs");
-        let b_to_a = graph.edges.iter().any(|e| e.from == "src/beta.rs" && e.to == "src/alpha.rs");
+        let a_to_b = graph
+            .edges
+            .iter()
+            .any(|e| e.from == "src/alpha.rs" && e.to == "src/beta.rs");
+        let b_to_a = graph
+            .edges
+            .iter()
+            .any(|e| e.from == "src/beta.rs" && e.to == "src/alpha.rs");
         assert!(a_to_b, "should have edge alpha → beta");
         assert!(b_to_a, "should have edge beta → alpha");
     }
@@ -1440,10 +1459,19 @@ mod tests {
     #[test]
     fn test_normalize_replaces_module_dots() {
         // Python-style module separators become slashes
-        assert_eq!(normalize_import_separators("app.models.user"), "app/models/user");
-        assert_eq!(normalize_import_separators("app.models.views"), "app/models/views");
+        assert_eq!(
+            normalize_import_separators("app.models.user"),
+            "app/models/user"
+        );
+        assert_eq!(
+            normalize_import_separators("app.models.views"),
+            "app/models/views"
+        );
         // 1-3 char final segments still preserved as extensions
-        assert_eq!(normalize_import_separators("app.models.py"), "app/models.py");
+        assert_eq!(
+            normalize_import_separators("app.models.py"),
+            "app/models.py"
+        );
     }
 
     #[test]
@@ -1459,19 +1487,16 @@ mod tests {
     #[test]
     fn test_normalize_long_ext_before_delimiter() {
         // Before a delimiter (quote), any 1-5 char suffix is treated as extension
-        assert_eq!(
-            normalize_import_separators("config.json'"),
-            "config.json'"
-        );
-        assert_eq!(
-            normalize_import_separators("data.yaml)"),
-            "data.yaml)"
-        );
+        assert_eq!(normalize_import_separators("config.json'"), "config.json'");
+        assert_eq!(normalize_import_separators("data.yaml)"), "data.yaml)");
     }
 
     #[test]
     fn test_normalize_double_colon() {
-        assert_eq!(normalize_import_separators("crate::parser::queries"), "crate/parser/queries");
+        assert_eq!(
+            normalize_import_separators("crate::parser::queries"),
+            "crate/parser/queries"
+        );
     }
 
     // --- strip_import_prefixes with require() ---
@@ -1517,10 +1542,7 @@ mod tests {
 
     #[test]
     fn test_resolve_relative_with_extension() {
-        let paths: Vec<&Path> = vec![
-            Path::new("src/config.json"),
-            Path::new("src/app.ts"),
-        ];
+        let paths: Vec<&Path> = vec![Path::new("src/config.json"), Path::new("src/app.ts")];
         let infos = make_path_infos(&paths);
         let from = Path::new("src/app.ts");
 
@@ -1577,11 +1599,7 @@ mod tests {
 
         let graph = build_symbol_graph(&index, None, None);
         // Both "new" symbols should appear as distinct nodes (via signature references)
-        let new_nodes: Vec<_> = graph
-            .nodes
-            .iter()
-            .filter(|n| n.label == "new")
-            .collect();
+        let new_nodes: Vec<_> = graph.nodes.iter().filter(|n| n.label == "new").collect();
         assert_eq!(
             new_nodes.len(),
             2,
@@ -1623,8 +1641,14 @@ mod tests {
             mermaid.contains("#quot;"),
             "Double quotes should be escaped"
         );
-        assert!(mermaid.contains("#91;"), "Opening brackets should be escaped");
-        assert!(mermaid.contains("#93;"), "Closing brackets should be escaped");
+        assert!(
+            mermaid.contains("#91;"),
+            "Opening brackets should be escaped"
+        );
+        assert!(
+            mermaid.contains("#93;"),
+            "Closing brackets should be escaped"
+        );
         assert!(
             !mermaid.contains("foo\"bar"),
             "Raw double quotes should not appear in node labels"
@@ -1737,10 +1761,7 @@ mod tests {
 
     #[test]
     fn test_resolve_require_import() {
-        let paths: Vec<&Path> = vec![
-            Path::new("src/utils.js"),
-            Path::new("src/app.js"),
-        ];
+        let paths: Vec<&Path> = vec![Path::new("src/utils.js"), Path::new("src/app.js")];
         let infos = make_path_infos(&paths);
         let from = Path::new("src/app.js");
 
