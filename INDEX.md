@@ -1,6 +1,6 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-25 11:52:23 UTC | Files: 47 | Lines: 18975
+> Generated: 2026-03-25 12:01:08 UTC | Files: 47 | Lines: 19316
 > Languages: Markdown (12), Python (1), Rust (32), Shell (1), TOML (1)
 
 ## Directory Structure
@@ -411,7 +411,7 @@ indxr/
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 8.4 KB | **Lines:** 144
+**Language:** Markdown | **Size:** 8.6 KB | **Lines:** 145
 
 **Declarations:**
 
@@ -440,7 +440,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 40.6 KB | **Lines:** 1591
+**Language:** Markdown | **Size:** 45.1 KB | **Lines:** 1751
 
 **Declarations:**
 
@@ -448,7 +448,7 @@ indxr/
 
 ## README.md
 
-**Language:** Markdown | **Size:** 7.2 KB | **Lines:** 221
+**Language:** Markdown | **Size:** 8.9 KB | **Lines:** 256
 
 **Declarations:**
 
@@ -464,7 +464,7 @@ indxr/
 
 ## docs/agent-integration.md
 
-**Language:** Markdown | **Size:** 13.1 KB | **Lines:** 417
+**Language:** Markdown | **Size:** 14.2 KB | **Lines:** 430
 
 **Declarations:**
 
@@ -512,7 +512,7 @@ indxr/
 
 ## docs/mcp-server.md
 
-**Language:** Markdown | **Size:** 9.7 KB | **Lines:** 405
+**Language:** Markdown | **Size:** 13.6 KB | **Lines:** 537
 
 **Declarations:**
 

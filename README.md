@@ -5,7 +5,7 @@ Fast codebase indexer for AI agents. Tree-sitter AST parsing + regex extraction 
 ## Install
 
 ```bash
-cargo install --path .
+cargo install indxr
 ```
 
 ## Usage
@@ -134,20 +134,26 @@ indxr serve ./my-project
 
 | Tool | Description |
 |------|-------------|
-| `lookup_symbol` | Find declarations by name (case-insensitive substring, default limit 50, max 200) |
-| `list_declarations` | List declarations in a file, optional `kind` filter and `shallow` mode |
-| `search_signatures` | Search signatures by substring (default limit 20, max 100) |
+| `search_relevant` | Multi-signal relevance search across paths, names, signatures, and docs. Supports `kind` filter and `compact` mode |
+| `lookup_symbol` | Find declarations by name (case-insensitive substring). Supports `compact` mode |
+| `explain_symbol` | Everything needed to USE a symbol: signature, doc comment, relationships, metadata — no body |
+| `get_file_summary` | Complete file overview: metadata, declarations, kind counts, public symbols |
+| `batch_file_summaries` | Summarize multiple files in one call (by paths array or glob). Cap: 30 files |
+| `get_file_context` | File summary + reverse dependencies + related files |
+| `get_public_api` | Public declarations with signatures for a file, directory, or entire codebase |
+| `get_callers` | Find who references a symbol (searches imports and signatures across all files) |
+| `get_related_tests` | Find test functions for a symbol by naming convention and file association |
+| `list_declarations` | List declarations in a file, optional `kind` filter, `shallow` and `compact` modes |
+| `search_signatures` | Search signatures by substring. Supports `compact` mode |
+| `read_source` | Read source by symbol name or line range. Supports `symbols` array and `collapse` mode |
+| `get_token_estimate` | Estimate tokens for a file, symbol, directory, or glob pattern |
 | `get_tree` | Directory/file tree, optional path prefix filter |
 | `get_imports` | Import statements for a file |
 | `get_stats` | File count, line count, language breakdown, duration |
-| `get_file_summary` | Complete file overview: metadata, declarations, kind counts, public symbols |
-| `read_source` | Read source code by symbol name or line range |
-| `get_file_context` | File summary + reverse dependencies + related files |
-| `get_token_estimate` | Estimate tokens for a file or symbol, with read_source vs Read comparison |
-| `search_relevant` | Multi-signal relevance search across paths, names, signatures, and docs |
+| `get_diff_summary` | Structural changes (added/removed/modified declarations) since a git ref |
 | `regenerate_index` | Re-index codebase and write updated INDEX.md |
 
-**Token-aware exploration:** `get_token_estimate` tells agents exactly how expensive a file or symbol is before reading it, and `search_relevant` lets agents find code by concept (e.g. "authentication", "caching") in a single call across paths, names, signatures, and doc comments — no multi-step lookup dance required.
+18 tools total. `compact` mode on list tools saves ~30% tokens. See [MCP Server docs](docs/mcp-server.md) for full parameter details.
 
 MCP config:
 
@@ -162,12 +168,41 @@ MCP config:
 }
 ```
 
-**Getting agents to actually use it:** Agents don't always pick MCP tools over file reads on their own. indxr ships with two reinforcement mechanisms for Claude Code:
+**Getting agents to actually use it:** Agents don't always pick MCP tools over file reads on their own. indxr ships with reinforcement mechanisms for Claude Code:
 
-- **`.claude/settings.json` hook** — a PreToolUse hook that fires before every `Read` call, reminding the agent to try indxr MCP tools first
+- **`.claude/settings.json` hooks** — PreToolUse hooks that intercept `Read` and `Bash` calls, reminding the agent to use indxr MCP tools (`get_file_summary`, `read_source`, `get_diff_summary`) instead of reading full files or running `git diff`
 - **`CLAUDE.md` instructions** — a template that teaches the agent the exploration workflow, token costs, and when full reads are justified
 
-See [Agent Integration](docs/agent-integration.md#claude-code) for setup details, ready-to-copy configs, and a CLAUDE.md example.
+Ready-to-copy `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'IMPORTANT: Before reading full source files, use indxr MCP tools to minimize token usage:\n- get_file_summary: understand a file without reading it (~300 tokens vs ~3000+)\n- lookup_symbol / search_signatures: find specific functions/types\n- read_source: read only the exact function/symbol you need (~100 tokens vs full file)\nOnly use Read when you need to EDIT a file, need exact formatting, or the file is not source code (e.g., CLAUDE.md, Cargo.toml).'"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$TOOL_INPUT\" | grep -qE 'git\\s+diff'; then echo 'IMPORTANT: Use indxr get_diff_summary MCP tool instead of git diff. It shows structural changes (added/removed/modified declarations) at ~200-500 tokens vs thousands for raw diffs. Example: get_diff_summary(since_ref: \"main\")'; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+See [Agent Integration](docs/agent-integration.md#claude-code) for full setup details and a CLAUDE.md example.
 
 Setup guides: [docs/mcp-server.md](docs/mcp-server.md)
 
@@ -186,7 +221,7 @@ Parallel parsing via rayon. Incremental caching via mtime + xxh3.
 
 | Codebase | Files | Lines | Cold | Cached |
 |----------|-------|-------|------|--------|
-| Small (indxr) | 23 | 4.6K | 17ms | 5ms |
+| Small (indxr) | 47 | 19K | 17ms | 5ms |
 | Medium (atuin) | 132 | 22K | 20ms | 6ms |
 | Large (cloud-hypervisor) | 243 | 124K | 73ms | ~10ms |
 

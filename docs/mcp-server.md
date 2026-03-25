@@ -48,6 +48,7 @@ Find declarations matching a name across the entire codebase. Uses case-insensit
 |------|------|----------|-------------|
 | `name` | string | yes | Symbol name to search for |
 | `limit` | number | no | Max results (default: 50, max: 200) |
+| `compact` | boolean | no | Return columnar format (saves ~30% tokens) |
 
 **Example request:**
 ```json
@@ -82,7 +83,8 @@ List all declarations in a specific file.
 |------|------|----------|-------------|
 | `path` | string | yes | Relative file path |
 | `kind` | string | no | Filter by kind (function, struct, class, etc.) |
-| `shallow` | boolean | no | Compact output without children |
+| `shallow` | boolean | no | Omit children and doc comments to reduce output |
+| `compact` | boolean | no | Columnar format (implies shallow, saves ~30% tokens) |
 
 **Example:**
 ```json
@@ -104,6 +106,7 @@ Search function/method signatures by substring.
 |------|------|----------|-------------|
 | `query` | string | yes | Substring to search for in signatures |
 | `limit` | number | no | Max results (default: 20, max: 100) |
+| `compact` | boolean | no | Return columnar format (saves ~30% tokens) |
 
 **Example:**
 ```json
@@ -163,7 +166,7 @@ Get a complete overview of a file in one call: metadata, imports, declarations (
 
 ### `read_source`
 
-Read source code from a file, either by symbol name (uses indexed line info) or by explicit line range.
+Read source code from a file, either by symbol name (uses indexed line info) or by explicit line range. Cap: 200 lines per symbol, 500 lines total for multi-symbol reads.
 
 **Parameters:**
 
@@ -171,9 +174,11 @@ Read source code from a file, either by symbol name (uses indexed line info) or 
 |------|------|----------|-------------|
 | `path` | string | yes | Relative file path |
 | `symbol` | string | no | Symbol name to look up and extract |
+| `symbols` | string[] | no | Multiple symbol names to read in one call (alternative to `symbol`) |
 | `start_line` | number | no | Start line (1-based) for explicit range |
 | `end_line` | number | no | End line (1-based, inclusive) for explicit range |
 | `expand` | number | no | Extra context lines above/below (default: 0) |
+| `collapse` | boolean | no | If true, collapse nested block bodies to `{ ... }` — shows structure without inner implementation |
 
 ### `get_file_context`
 
@@ -187,14 +192,16 @@ Get a file's summary plus its dependency context: which files import it (reverse
 
 ### `get_token_estimate`
 
-Estimate how many tokens a file or symbol would consume if read in full. Helps agents decide whether to use `read_source` (targeted, cheap) or `Read` (full file, expensive).
+Estimate how many tokens a file or symbol would consume if read in full. Helps agents decide whether to use `read_source` (targeted, cheap) or `Read` (full file, expensive). Supports bulk estimation via `directory` or `glob`.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `path` | string | yes | Relative file path |
+| `path` | string | no | Relative file path |
 | `symbol` | string | no | Symbol name — if provided, estimates tokens for just that symbol's source |
+| `directory` | string | no | Directory path — estimates all files within (alternative to `path`) |
+| `glob` | string | no | Glob pattern — estimates all matching files (alternative to `path`) |
 
 **Example (file-level):**
 ```json
@@ -246,6 +253,8 @@ Multi-signal relevance search across file paths, symbol names, signatures, and d
 |------|------|----------|-------------|
 | `query` | string | yes | Search query — a concept (e.g. `authentication`), partial name (e.g. `parse`), or type pattern (e.g. `Result<Cache>`) |
 | `limit` | number | no | Max results (default: 20, max: 50) |
+| `kind` | string | no | Filter by declaration kind (e.g. `fn`, `struct`, `class`, `trait`) |
+| `compact` | boolean | no | Return columnar format (saves ~30% tokens) |
 
 **Example:**
 ```json
@@ -291,6 +300,129 @@ Re-scan the codebase, rebuild the index, and write an updated INDEX.md to the pr
     "type": "text",
     "text": "{\"status\":\"ok\",\"message\":\"INDEX.md regenerated (44 files, 16132 lines)\",\"path\":\"/path/to/project/INDEX.md\",\"files_indexed\":44,\"total_lines\":16132}"
   }]
+}
+```
+
+### `explain_symbol`
+
+Get everything needed to USE a symbol without reading its body: signature, doc comment, relationships (children, parent), and metadata. Ideal for understanding an API without the implementation cost.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `name` | string | yes | Symbol name (exact match, case-insensitive) |
+
+**Example:**
+```json
+{
+  "params": {
+    "name": "explain_symbol",
+    "arguments": { "name": "apply_token_budget" }
+  }
+}
+```
+
+### `batch_file_summaries`
+
+Get summaries for multiple files in one call. Provide an array of paths or a glob pattern. Cap: 30 files.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `paths` | string[] | no | Array of file paths (relative to project root) |
+| `glob` | string | no | Glob pattern to match files (e.g. `*.rs`, `src/parser/*`) |
+
+**Example:**
+```json
+{
+  "params": {
+    "name": "batch_file_summaries",
+    "arguments": { "glob": "src/mcp/*.rs" }
+  }
+}
+```
+
+### `get_public_api`
+
+Get only public declarations with signatures for a file, directory, or the entire codebase. Minimal output for "how do I use this module?" questions.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `path` | string | no | File path or directory prefix. Omit for entire codebase |
+
+**Example:**
+```json
+{
+  "params": {
+    "name": "get_public_api",
+    "arguments": { "path": "src/cache" }
+  }
+}
+```
+
+### `get_callers`
+
+Find declarations that reference a symbol. Searches signatures and import statements across all files. Approximate — based on name matching, not full call graph.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `symbol` | string | yes | Symbol name to search for references to |
+| `limit` | number | no | Max results (default: 20, max: 50) |
+
+**Example:**
+```json
+{
+  "params": {
+    "name": "get_callers",
+    "arguments": { "symbol": "estimate_tokens" }
+  }
+}
+```
+
+### `get_related_tests`
+
+Find test functions for a symbol by naming convention and file association.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `symbol` | string | yes | Symbol name to find tests for |
+| `path` | string | no | Optional file path to scope search |
+
+**Example:**
+```json
+{
+  "params": {
+    "name": "get_related_tests",
+    "arguments": { "symbol": "apply_token_budget" }
+  }
+}
+```
+
+### `get_diff_summary`
+
+Get structural changes (added/removed/modified declarations) since a git ref. Much cheaper than reading raw diffs.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `since_ref` | string | yes | Git ref to diff against (branch name, tag, or commit like `HEAD~3`) |
+
+**Example:**
+```json
+{
+  "params": {
+    "name": "get_diff_summary",
+    "arguments": { "since_ref": "main" }
+  }
 }
 ```
 

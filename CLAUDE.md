@@ -61,6 +61,7 @@ Tools that return lists (`lookup_symbol`, `list_declarations`, `search_signature
 - Read full source files to review code — use `get_file_summary` to triage, then `read_source` on specific symbols
 - Dump all files into context — use MCP tools to be surgical
 - Read a file without first checking `get_token_estimate` if you're unsure about its size
+- Use `git diff` to understand changes — use `get_diff_summary` instead (~200-500 tokens vs thousands for raw diffs). It shows structural changes (added/removed/modified declarations) since any git ref
 
 ### After making code changes
 Run `regenerate_index` to keep INDEX.md current.

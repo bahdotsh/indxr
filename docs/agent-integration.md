@@ -63,11 +63,11 @@ Or use the CLI to add it:
 claude mcp add indxr -- indxr serve .
 ```
 
-Claude Code will automatically discover the MCP tools and can call `lookup_symbol`, `list_declarations`, `regenerate_index`, etc. during conversations.
+Claude Code will automatically discover all 18 MCP tools — `search_relevant`, `explain_symbol`, `get_callers`, `batch_file_summaries`, `get_public_api`, `get_diff_summary`, and more — during conversations.
 
-**Reinforcing MCP usage with a PreToolUse hook:**
+**Reinforcing MCP usage with PreToolUse hooks:**
 
-Even with MCP tools available, Claude Code may still default to reading full files. A PreToolUse hook intercepts every `Read` call and reminds the agent to use indxr first. Add this to `.claude/settings.json` in your project root:
+Even with MCP tools available, Claude Code may still default to reading full files or running `git diff`. Two PreToolUse hooks intercept these calls and remind the agent to use indxr instead. Add this to `.claude/settings.json` in your project root:
 
 ```json
 {
@@ -81,13 +81,22 @@ Even with MCP tools available, Claude Code may still default to reading full fil
             "command": "echo 'IMPORTANT: Before reading full source files, use indxr MCP tools to minimize token usage:\n- get_file_summary: understand a file without reading it (~300 tokens vs ~3000+)\n- lookup_symbol / search_signatures: find specific functions/types\n- read_source: read only the exact function/symbol you need (~100 tokens vs full file)\nOnly use Read when you need to EDIT a file, need exact formatting, or the file is not source code (e.g., CLAUDE.md, Cargo.toml).'"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$TOOL_INPUT\" | grep -qE 'git\\s+diff'; then echo 'IMPORTANT: Use indxr get_diff_summary MCP tool instead of git diff. It shows structural changes (added/removed/modified declarations) at ~200-500 tokens vs thousands for raw diffs. Example: get_diff_summary(since_ref: \"main\")'; fi"
+          }
+        ]
       }
     ]
   }
 }
 ```
 
-The hook is non-blocking — it prints a reminder before each file read, nudging the agent toward cheaper MCP calls without preventing reads when they're actually needed (e.g., before editing).
+The hooks are non-blocking — they print reminders nudging the agent toward cheaper MCP calls without preventing the original action when it's actually needed (e.g., `Read` before editing, or `git diff` for exact line-level changes).
 
 **Teaching the agent via CLAUDE.md:**
 
@@ -95,8 +104,9 @@ The hook is non-blocking — it prints a reminder before each file read, nudging
 
 1. **Mandate MCP-first exploration** — tell the agent to always use indxr tools before the `Read` tool
 2. **Token savings table** — show concrete cost comparisons so the agent can make informed decisions
-3. **Ordered workflow** — list the tools in the order agents should reach for them (`search_relevant` → `get_tree` → `get_file_summary` → `read_source` → `Read`)
+3. **Ordered workflow** — list the tools in the order agents should reach for them (`search_relevant` → `get_tree` → `get_file_summary` → `explain_symbol` → `read_source` → `Read`)
 4. **When Read is OK** — be explicit about when full reads are justified (editing, exact formatting, non-source files)
+5. **Batch and scope tools** — mention `batch_file_summaries`, `get_public_api`, `get_callers`, and `get_diff_summary` for efficient multi-file exploration
 
 Example CLAUDE.md section:
 
@@ -107,12 +117,15 @@ An MCP server called `indxr` is available. **Always use indxr tools before the R
 Do NOT read full source files as a first step — use the MCP tools to explore, then read only what you need.
 
 ### Exploration workflow (follow this order)
-1. `search_relevant` — find files/symbols by concept or partial name
+1. `search_relevant` — find files/symbols by concept or partial name (supports `kind` filter)
 2. `get_tree` — see directory/file layout
-3. `get_file_summary` — understand a file without reading it
-4. `get_token_estimate` — check cost before deciding to Read
-5. `read_source` — read just one function/struct
-6. `Read` (full file) — ONLY when editing or need exact formatting
+3. `get_file_summary` / `batch_file_summaries` — understand files without reading them
+4. `explain_symbol` — get signature, docs, and relationships for a symbol
+5. `get_public_api` — public API surface of a file or module
+6. `get_callers` / `get_related_tests` — find references and tests
+7. `get_token_estimate` — check cost before deciding to Read
+8. `read_source` — read just one function/struct (supports `symbols` array and `collapse`)
+9. `Read` (full file) — ONLY when editing or need exact formatting
 
 ### When to use Read instead
 - You need to **edit** a file (Read is required before Edit)
@@ -288,8 +301,8 @@ The search uses weighted scoring: symbol names match strongest (3x), then signat
 
 Agents don't always use MCP tools voluntarily. Two mechanisms help:
 
-- **`.claude/settings.json` PreToolUse hook** — intercepts every `Read` call and reminds the agent to try indxr first. Non-blocking, works automatically.
-- **`CLAUDE.md` instructions** — loaded into every conversation's system prompt. Tell the agent the exploration order, token costs, and when `Read` is justified.
+- **`.claude/settings.json` PreToolUse hooks** — intercepts `Read` calls (reminding agents to use `get_file_summary`/`read_source`) and `Bash` calls containing `git diff` (reminding agents to use `get_diff_summary`). Non-blocking, works automatically.
+- **`CLAUDE.md` instructions** — loaded into every conversation's system prompt. Tell the agent the exploration order, token costs, and when `Read`/`git diff` are justified vs MCP alternatives.
 
 See the [Claude Code setup section](#claude-code) above for full details, examples, and a ready-to-copy CLAUDE.md template.
 
