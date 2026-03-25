@@ -180,8 +180,9 @@ fn test_tool_definitions_include_new_tools() {
     assert!(names.contains(&"get_public_api"));
     assert!(names.contains(&"explain_symbol"));
     assert!(names.contains(&"get_related_tests"));
-    // Total: 12 original + 6 new = 18
-    assert_eq!(names.len(), 18);
+    assert!(names.contains(&"get_dependency_graph"));
+    // Total: 12 original + 7 new = 19
+    assert_eq!(names.len(), 19);
 }
 
 // -----------------------------------------------------------------------
@@ -1180,4 +1181,133 @@ fn test_tool_get_callers_common_word() {
             }
         }
     }
+}
+
+// -----------------------------------------------------------------------
+// Dependency graph tool tests
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_tool_dependency_graph_file_level_mermaid() {
+    let index = make_test_index();
+    let result = tool_get_dependency_graph(&index, &json!({ "format": "mermaid" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(content["format"], "mermaid");
+    // cache.rs imports crate::parser::parse_file → should resolve to src/parser.rs
+    let node_count = content["nodes"].as_u64().unwrap();
+    let edge_count = content["edges"].as_u64().unwrap();
+    assert!(
+        node_count >= 1,
+        "Expected at least 1 node, got {}",
+        node_count
+    );
+    assert!(
+        edge_count >= 1,
+        "Expected at least 1 edge, got {}",
+        edge_count
+    );
+    let graph = content["graph"].as_str().unwrap();
+    assert!(graph.contains("graph LR"));
+    assert!(
+        graph.contains("parser"),
+        "Graph should reference parser file"
+    );
+    assert!(graph.contains("cache"), "Graph should reference cache file");
+}
+
+#[test]
+fn test_tool_dependency_graph_file_level_dot() {
+    let index = make_test_index();
+    let result = tool_get_dependency_graph(&index, &json!({ "format": "dot" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(content["format"], "dot");
+    let graph = content["graph"].as_str().unwrap();
+    assert!(graph.contains("digraph dependencies"));
+}
+
+#[test]
+fn test_tool_dependency_graph_file_level_json() {
+    let index = make_test_index();
+    let result = tool_get_dependency_graph(&index, &json!({ "format": "json" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(content["format"], "json");
+    let graph = &content["graph"];
+    assert!(graph.get("nodes").unwrap().is_array());
+    assert!(graph.get("edges").unwrap().is_array());
+}
+
+#[test]
+fn test_tool_dependency_graph_symbol_level() {
+    let index = make_test_index();
+    let result = tool_get_dependency_graph(&index, &json!({ "level": "symbol", "format": "json" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(content["format"], "json");
+    let graph = &content["graph"];
+    assert!(graph.get("nodes").unwrap().is_array());
+    assert!(graph.get("edges").unwrap().is_array());
+    // Cache is a struct, and parse_file returns Result<FileIndex> — signature references
+    // may produce edges. At minimum the structure is valid.
+    assert!(
+        content["nodes"].as_u64().is_some(),
+        "nodes should be a number"
+    );
+    assert!(
+        content["edges"].as_u64().is_some(),
+        "edges should be a number"
+    );
+}
+
+#[test]
+fn test_tool_dependency_graph_scoped() {
+    let index = make_test_index();
+    let result =
+        tool_get_dependency_graph(&index, &json!({ "path": "src/cache", "format": "json" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    let graph = &content["graph"];
+    let edges = graph["edges"].as_array().unwrap();
+    // cache.rs imports from parser — should show that edge
+    for edge in edges {
+        assert!(
+            edge["from"].as_str().unwrap().contains("cache"),
+            "Scoped graph should only have edges from cache files"
+        );
+    }
+}
+
+#[test]
+fn test_tool_dependency_graph_depth_limit() {
+    let index = make_test_index();
+    // Full graph: cache.rs → parser.rs (at least 1 edge)
+    let full = tool_get_dependency_graph(&index, &json!({ "format": "json" }));
+    let full_content: Value =
+        serde_json::from_str(full["content"][0]["text"].as_str().unwrap()).unwrap();
+    let full_edges = full_content["edges"].as_u64().unwrap();
+    assert!(full_edges >= 1, "Full graph should have at least 1 edge");
+
+    // depth=0 scoped to cache: no hops allowed, so no edges
+    let d0 = tool_get_dependency_graph(
+        &index,
+        &json!({ "path": "src/cache", "depth": 0, "format": "json" }),
+    );
+    let d0_content: Value =
+        serde_json::from_str(d0["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        d0_content["edges"].as_u64().unwrap(),
+        0,
+        "depth=0 should produce no edges"
+    );
+}
+
+#[test]
+fn test_tool_dependency_graph_defaults_to_mermaid() {
+    let index = make_test_index();
+    let result = tool_get_dependency_graph(&index, &json!({}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(content["format"], "mermaid");
 }

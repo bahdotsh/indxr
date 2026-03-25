@@ -1,6 +1,7 @@
 mod budget;
 mod cache;
 mod cli;
+mod dep_graph;
 mod diff;
 mod error;
 mod filter;
@@ -11,6 +12,7 @@ mod mcp;
 mod model;
 mod output;
 mod parser;
+mod utils;
 mod walker;
 mod watch;
 
@@ -22,7 +24,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use crate::cache::Cache;
-use crate::cli::{Cli, Command, OutputFormat};
+use crate::cli::{Cli, Command, GraphFormat, GraphLevel, OutputFormat};
 use crate::filter::FilterOptions;
 use crate::languages::Language;
 use crate::model::declarations::DeclKind;
@@ -199,6 +201,37 @@ fn main() -> Result<()> {
             duration_ms: duration.as_millis() as u64,
         },
     };
+
+    // Handle --graph mode (uses full index; --filter-path scopes the graph root)
+    if let Some(ref graph_format) = cli.graph {
+        let graph = match cli.graph_level {
+            Some(GraphLevel::Symbol) => {
+                dep_graph::build_symbol_graph(&index, cli.filter_path.as_deref(), cli.graph_depth)
+            }
+            _ => dep_graph::build_file_graph(&index, cli.filter_path.as_deref(), cli.graph_depth),
+        };
+        let formatted = match graph_format {
+            GraphFormat::Dot => dep_graph::format_dot(&graph),
+            GraphFormat::Mermaid => dep_graph::format_mermaid(&graph),
+            GraphFormat::Json => {
+                serde_json::to_string_pretty(&dep_graph::format_json(&graph)).unwrap_or_default()
+            }
+        };
+        if let Some(output_path) = &cli.output {
+            fs::write(output_path, &formatted)?;
+            if !cli.quiet {
+                eprintln!(
+                    "Dependency graph written to {} ({} nodes, {} edges)",
+                    output_path.display(),
+                    graph.nodes.len(),
+                    graph.edges.len()
+                );
+            }
+        } else {
+            print!("{}", formatted);
+        }
+        return Ok(());
+    }
 
     // Apply filters
     let filter_opts = FilterOptions {
