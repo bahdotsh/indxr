@@ -34,6 +34,9 @@ pub fn run_watch(opts: WatchOptions) -> Result<()> {
     }
 
     let index = write_index(&opts.config, &output_path)?;
+    // Canonicalize after write_index so the file exists — prevents self-triggering
+    // loops when the user passes a relative `-o` path.
+    let output_path = fs::canonicalize(&output_path).unwrap_or(output_path);
 
     if !opts.quiet {
         eprintln!(
@@ -126,17 +129,18 @@ pub fn spawn_watcher(
 /// Determines if a path change should trigger re-indexing.
 /// Filters out: the output file itself, the cache directory, non-source files, and hidden files.
 fn should_trigger_reindex(path: &Path, root: &Path, output_path: &Path, cache_dir: &Path) -> bool {
-    // Ignore the output file (INDEX.md) to prevent self-triggering loops.
-    // Canonicalize the event path so symlinks / /private/var vs /var differences
-    // on macOS don't bypass this check.
+    // Canonicalize the event path once so symlinks / /private/var vs /var
+    // differences on macOS don't bypass any of the checks below.
     let canonical = fs::canonicalize(path);
     let check_path = canonical.as_deref().unwrap_or(path);
+
+    // Ignore the output file (INDEX.md) to prevent self-triggering loops.
     if check_path == output_path {
         return false;
     }
 
     // Ignore cache directory
-    if path.starts_with(cache_dir) {
+    if check_path.starts_with(cache_dir) {
         return false;
     }
 

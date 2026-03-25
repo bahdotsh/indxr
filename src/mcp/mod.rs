@@ -220,7 +220,6 @@ pub fn run_mcp_server(
                 }
                 Err(e) => {
                     eprintln!("Error reading stdin: {}", e);
-                    let _ = stdin_tx.send(ServerEvent::StdinClosed);
                     break;
                 }
             }
