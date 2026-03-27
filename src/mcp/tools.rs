@@ -1733,7 +1733,7 @@ pub(super) fn tool_get_health(index: &CodebaseIndex, args: &Value) -> Value {
 
 pub(super) fn tool_get_type_flow(index: &CodebaseIndex, args: &Value) -> Value {
     let type_name = match args.get("type_name").and_then(|v| v.as_str()) {
-        Some(s) if !s.is_empty() => s,
+        Some(s) if !s.trim().is_empty() => s.trim(),
         _ => return tool_error("Missing required parameter: type_name"),
     };
     let path_filter = args.get("path").and_then(|v| v.as_str());

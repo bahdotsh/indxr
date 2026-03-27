@@ -1837,6 +1837,13 @@ fn test_tool_get_type_flow_missing_param() {
 }
 
 #[test]
+fn test_tool_get_type_flow_whitespace_only_param() {
+    let index = make_test_index();
+    let result = tool_get_type_flow(&index, &json!({ "type_name": "   " }));
+    assert!(result["isError"].as_bool().unwrap_or(false));
+}
+
+#[test]
 fn test_tool_get_type_flow_with_limit() {
     let index = make_test_index();
     let result = tool_get_type_flow(&index, &json!({ "type_name": "FileIndex", "limit": 1 }));

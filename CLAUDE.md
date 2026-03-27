@@ -24,6 +24,7 @@ An MCP server called `indxr` is available. **Always use indxr tools before the R
 | `get_diff_summary` | ~200-500 | Structural changes since a git ref or GitHub PR (vs reading raw diffs) |
 | `get_hotspots` | ~200-500 | Most complex functions ranked by composite score |
 | `get_health` | ~200-400 | Codebase health summary with aggregate complexity metrics |
+| `get_type_flow` | ~200-500 | Track which functions produce/consume a type across the codebase |
 | `read_source` (symbol) | ~50-300 | Read one function/struct. Supports `symbols` array and `collapse`. |
 | `get_token_estimate` | ~100 | Check cost before reading. Supports `directory`/`glob`. |
 | `Read` (full file) | **500-10000+** | ONLY when editing or need exact formatting |
@@ -50,10 +51,11 @@ An MCP server called `indxr` is available. **Always use indxr tools before the R
 16. `get_diff_summary` — get structural changes since a git ref or GitHub PR number. Shows added/removed/modified declarations without reading full diffs. Supports `pr` param as alternative to `since_ref`.
 17. `get_hotspots` — get the most complex functions/methods ranked by composite score. Supports `path`, `min_complexity`, `sort_by`, and `compact` params.
 18. `get_health` — get codebase health summary: aggregate complexity, documentation coverage, test ratio, hottest files. Supports `path` filter.
-19. `regenerate_index` — re-index after code changes. Updates INDEX.md, refreshes in-memory index, and reports what changed (delta).
+19. `get_type_flow` — track where a type flows across function boundaries. Shows which functions produce (return) and consume (accept) a given type. Supports `path` filter, `include_fields`, `limit`, and `compact` params.
+20. `regenerate_index` — re-index after code changes. Updates INDEX.md, refreshes in-memory index, and reports what changed (delta).
 
 ### Compact output mode
-Tools that return lists (`lookup_symbol`, `list_declarations`, `search_signatures`, `search_relevant`, `get_hotspots`) support a `compact: true` param that returns columnar `{columns, rows}` format instead of objects, saving ~30% tokens.
+Tools that return lists (`lookup_symbol`, `list_declarations`, `search_signatures`, `search_relevant`, `get_hotspots`, `get_type_flow`) support a `compact: true` param that returns columnar `{columns, rows}` format instead of objects, saving ~30% tokens.
 
 ### When to use the Read tool instead
 - You need to **edit** a file (Read is required before Edit)

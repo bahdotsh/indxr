@@ -382,7 +382,7 @@ fn extract_types_python(sig: &str) -> TypeInfo {
     }
 }
 
-/// Java/Kotlin/C#: `ReturnType name(Type param, Type param)`
+/// Java/C#: `ReturnType name(Type param, Type param)`
 fn extract_types_java_like(sig: &str) -> TypeInfo {
     let mut param_types = Vec::new();
     let mut return_types = Vec::new();
