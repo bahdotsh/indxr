@@ -14,13 +14,13 @@ File-level and symbol-level dependency graph from existing import/relationship d
 - CLI: `indxr --graph dot|mermaid|json`
 - MCP: `get_dependency_graph` tool (scoped by path, file or symbol level, DOT/Mermaid/JSON output)
 
-## Planned
-
 ### Complexity metrics / hotspots
 Per-function complexity metrics using tree-sitter AST analysis.
 - Cyclomatic complexity, max nesting depth, parameter count
 - MCP tools: `get_hotspots` (top N most complex functions), `get_health` (codebase-level summary)
 - CLI: `--hotspots` flag
+
+## Planned
 
 ### PR-aware structural diffs
 Structural diff for GitHub PRs — shows added/removed/modified declarations without reading raw diffs.
