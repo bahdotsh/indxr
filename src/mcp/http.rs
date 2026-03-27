@@ -75,9 +75,9 @@ pub async fn run_http_server(
         spawn_file_watcher(Arc::clone(&state), debounce_ms)?;
     }
 
-    // Resolve address — allow `:8080` shorthand for `0.0.0.0:8080`
+    // Resolve address — allow `:8080` shorthand for `127.0.0.1:8080`
     let bind_addr = if addr.starts_with(':') {
-        format!("0.0.0.0{addr}")
+        format!("127.0.0.1{addr}")
     } else {
         addr.to_string()
     };
@@ -334,7 +334,7 @@ fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<
 // ---------------------------------------------------------------------------
 
 /// Validate that the request includes a valid, non-expired Mcp-Session-Id header.
-/// Expired sessions are removed on access to prevent slow memory accumulation.
+/// Uses a read lock in the happy path; only upgrades to a write lock to evict expired sessions.
 fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Box<Response>> {
     let sid = headers
         .get("mcp-session-id")
@@ -349,28 +349,32 @@ fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Box
             )
         })?;
 
-    let mut sessions = state.sessions.write().unwrap_or_else(|e| e.into_inner());
-    match sessions.get(sid) {
-        Some(info) if info.created_at.elapsed() < SESSION_TTL => Ok(sid.to_string()),
-        Some(_) => {
-            // Expired — remove it eagerly.
-            sessions.remove(sid);
-            Err(Box::new(
-                (
-                    StatusCode::UNAUTHORIZED,
-                    "Invalid or expired Mcp-Session-Id.",
-                )
-                    .into_response(),
-            ))
+    // Fast path: read lock for valid sessions
+    {
+        let sessions = state.sessions.read().unwrap_or_else(|e| e.into_inner());
+        match sessions.get(sid) {
+            Some(info) if info.created_at.elapsed() < SESSION_TTL => {
+                return Ok(sid.to_string());
+            }
+            _ => {}
         }
-        None => Err(Box::new(
-            (
-                StatusCode::UNAUTHORIZED,
-                "Invalid or expired Mcp-Session-Id.",
-            )
-                .into_response(),
-        )),
     }
+
+    // Slow path: write lock to evict expired session (if it exists)
+    {
+        let mut sessions = state.sessions.write().unwrap_or_else(|e| e.into_inner());
+        if matches!(sessions.get(sid), Some(info) if info.created_at.elapsed() >= SESSION_TTL) {
+            sessions.remove(sid);
+        }
+    }
+
+    Err(Box::new(
+        (
+            StatusCode::UNAUTHORIZED,
+            "Invalid or expired Mcp-Session-Id.",
+        )
+            .into_response(),
+    ))
 }
 
 /// Remove sessions that have exceeded the TTL.
