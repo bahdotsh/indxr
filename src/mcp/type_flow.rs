@@ -520,7 +520,7 @@ fn split_respecting_nesting(s: &str, delim: char) -> Vec<&str> {
     for (i, ch) in s.char_indices() {
         match ch {
             '(' | '<' | '[' => depth += 1,
-            ')' | '>' | ']' => depth -= 1,
+            ')' | '>' | ']' => depth = (depth - 1).max(0),
             c if c == delim && depth == 0 => {
                 parts.push(&s[start..i]);
                 start = i + 1;
