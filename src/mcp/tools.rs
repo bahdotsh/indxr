@@ -1231,11 +1231,22 @@ pub(super) fn tool_get_diff_summary(
     registry: &ParserRegistry,
     args: &Value,
 ) -> Value {
+    let has_pr = args.get("pr").is_some();
+    let has_since = args.get("since_ref").is_some();
+
+    if has_pr && has_since {
+        return tool_error("Provide either 'pr' or 'since_ref', not both");
+    }
+
     // Resolve the git ref — either from a PR number or a direct since_ref
-    let (resolved_ref, pr_info) = if let Some(pr_num) = args.get("pr").and_then(|v| v.as_u64()) {
-        match github::resolve_pr_base(&config.root, pr_num) {
-            Ok((local_ref, info)) => (Some(local_ref), Some(info)),
-            Err(e) => return tool_error(&format!("Failed to resolve PR #{}: {}", pr_num, e)),
+    let (resolved_ref, pr_info) = if let Some(pr_val) = args.get("pr") {
+        if let Some(pr_num) = pr_val.as_u64().filter(|&n| n > 0) {
+            match github::resolve_pr_base(&config.root, pr_num) {
+                Ok((local_ref, info)) => (Some(local_ref), Some(info)),
+                Err(e) => return tool_error(&format!("Failed to resolve PR #{}: {}", pr_num, e)),
+            }
+        } else {
+            return tool_error("'pr' must be a positive integer");
         }
     } else {
         (None, None)

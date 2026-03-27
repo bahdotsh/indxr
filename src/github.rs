@@ -44,11 +44,13 @@ pub fn resolve_pr_base(root: &Path, pr_number: u64) -> Result<(String, PrInfo)> 
 /// Get a GitHub token from environment or `gh` CLI.
 fn get_github_token() -> Result<String> {
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        let token = token.trim().to_string();
         if !token.is_empty() {
             return Ok(token);
         }
     }
     if let Ok(token) = std::env::var("GH_TOKEN") {
+        let token = token.trim().to_string();
         if !token.is_empty() {
             return Ok(token);
         }
