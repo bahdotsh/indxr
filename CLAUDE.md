@@ -114,10 +114,14 @@ indxr --omit-tree                            # skip directory tree
 indxr --no-cache                             # bypass cache
 indxr --cache-dir /tmp/cache                 # custom cache location
 
-# MCP server
+# MCP server (stdio transport — default)
 indxr serve ./project                        # start MCP server (stdin/stdout JSON-RPC 2.0)
 indxr serve ./project --watch                # MCP server with auto-reindex on file changes
 indxr serve --watch --debounce-ms 500        # custom debounce timeout
+
+# MCP server (Streamable HTTP transport — requires --features http)
+indxr serve --http :8080                     # HTTP server on port 8080
+indxr serve --http 127.0.0.1:8080 --watch    # HTTP + auto-reindex on file changes
 
 # File watching
 indxr watch                                  # watch cwd, keep INDEX.md updated
@@ -171,6 +175,7 @@ Key source files:
 - `src/indexer.rs` — core indexing orchestration
 - `src/mcp/mod.rs` — MCP server loop, JSON-RPC protocol handling
 - `src/mcp/tools.rs` — tool definitions, dispatch, and 20 tool implementations
+- `src/mcp/http.rs` — Streamable HTTP transport (axum, feature-gated behind `http`)
 - `src/mcp/helpers.rs` — shared structs, search/scoring/glob/string helpers
 - `src/mcp/tests.rs` — MCP module tests
 - `src/budget.rs` — token estimation and progressive truncation

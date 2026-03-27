@@ -1,12 +1,37 @@
 # MCP Server
 
-indxr includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that lets AI agents query the codebase index on-demand over stdin/stdout.
+indxr includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that lets AI agents query the codebase index on-demand.
+
+Two transports are available:
+- **stdio** (default) — JSON-RPC 2.0 over stdin/stdout, for single-client use
+- **Streamable HTTP** — HTTP server with SSE support, for multi-client scenarios (requires `--features http`)
 
 ## Starting the Server
+
+### stdio transport (default)
 
 ```bash
 indxr serve ./my-project
 ```
+
+### Streamable HTTP transport
+
+```bash
+# Build with HTTP support
+cargo install indxr --features http
+
+# Start on a specific address
+indxr serve --http 127.0.0.1:8080
+indxr serve --http :8080              # shorthand for 0.0.0.0:8080
+indxr serve --http :8080 --watch      # with auto-reindex on file changes
+```
+
+The HTTP transport implements the MCP Streamable HTTP specification (2025-03-26) with a single `/mcp` endpoint:
+- **POST /mcp** — send JSON-RPC requests, receive JSON responses
+- **GET /mcp** — open an SSE stream for server-initiated notifications (file change events)
+- **DELETE /mcp** — terminate a session
+
+Sessions are enforced: the first request must be `initialize`, which returns an `Mcp-Session-Id` header. All subsequent requests must include this header.
 
 ### Server Options
 
@@ -24,6 +49,7 @@ Options:
   --no-gitignore             Don't respect .gitignore
   --watch                    Watch for file changes and auto-reindex
   --debounce-ms <MS>         Debounce timeout in milliseconds [default: 300]
+  --http <ADDR>              Start Streamable HTTP server (requires 'http' feature)
 ```
 
 ### Auto-Reindexing with `--watch`
@@ -655,6 +681,8 @@ Add to Windsurf's MCP configuration (or run `indxr init --windsurf`):
 
 ### Custom Integration
 
+#### stdio
+
 The MCP server communicates via JSON-RPC 2.0 over stdin/stdout. Any client that speaks MCP can connect. Spawn the process and send/receive newline-delimited JSON messages.
 
 ```python
@@ -692,4 +720,33 @@ proc.stdin.write(json.dumps(request) + "\n")
 proc.stdin.flush()
 result = json.loads(proc.stdout.readline())
 print(result)
+```
+
+#### Streamable HTTP
+
+With the HTTP transport, send JSON-RPC requests as HTTP POST to `/mcp`:
+
+```bash
+# Initialize (creates a session)
+curl -X POST http://localhost:8080/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+# Response includes Mcp-Session-Id header
+
+# Call a tool (include session ID)
+curl -X POST http://localhost:8080/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json' \
+  -H 'Mcp-Session-Id: <session-id>' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_stats","arguments":{}}}'
+
+# Listen for server notifications (SSE)
+curl -N http://localhost:8080/mcp \
+  -H 'Accept: text/event-stream' \
+  -H 'Mcp-Session-Id: <session-id>'
+
+# End session
+curl -X DELETE http://localhost:8080/mcp \
+  -H 'Mcp-Session-Id: <session-id>'
 ```

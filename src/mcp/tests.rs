@@ -12,6 +12,9 @@ use crate::model::{CodebaseIndex, FileIndex, Import, IndexStats};
 use super::helpers::*;
 use super::tools::*;
 use super::type_flow::*;
+use super::{Transport, process_jsonrpc_message};
+use crate::indexer::IndexConfig;
+use crate::parser::ParserRegistry;
 
 // -----------------------------------------------------------------------
 // score_match tests
@@ -2007,4 +2010,88 @@ fn test_tool_get_type_flow_producer_and_consumer() {
         content["producers_count"].as_u64().unwrap() >= 1,
         "Expected at least 1 producer of Value"
     );
+}
+
+// -----------------------------------------------------------------------
+// process_jsonrpc_message tests
+// -----------------------------------------------------------------------
+
+fn make_test_config() -> IndexConfig {
+    IndexConfig {
+        root: PathBuf::from("."),
+        cache_dir: PathBuf::from(".indxr-cache"),
+        max_file_size: 512,
+        max_depth: None,
+        exclude: vec![],
+        no_gitignore: false,
+    }
+}
+
+#[test]
+fn test_process_jsonrpc_empty_line() {
+    let config = make_test_config();
+    let registry = ParserRegistry::new();
+    let mut index = make_test_index();
+    let result = process_jsonrpc_message("", &mut index, &config, &registry, Transport::Stdio);
+    assert!(result.unwrap().is_none());
+}
+
+#[test]
+fn test_process_jsonrpc_notification_returns_none() {
+    let config = make_test_config();
+    let registry = ParserRegistry::new();
+    let mut index = make_test_index();
+    let msg = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+    let result = process_jsonrpc_message(msg, &mut index, &config, &registry, Transport::Stdio);
+    assert!(result.unwrap().is_none());
+}
+
+#[test]
+fn test_process_jsonrpc_parse_error() {
+    let config = make_test_config();
+    let registry = ParserRegistry::new();
+    let mut index = make_test_index();
+    let result =
+        process_jsonrpc_message("not json", &mut index, &config, &registry, Transport::Stdio);
+    let err_resp = result.unwrap_err();
+    let json = serde_json::to_value(&err_resp).unwrap();
+    assert_eq!(json["error"]["code"], -32700);
+}
+
+#[test]
+fn test_process_jsonrpc_initialize() {
+    let config = make_test_config();
+    let registry = ParserRegistry::new();
+    let mut index = make_test_index();
+    let msg = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+    let result = process_jsonrpc_message(msg, &mut index, &config, &registry, Transport::Stdio);
+    let resp = result.unwrap().unwrap();
+    let json = serde_json::to_value(&resp).unwrap();
+    assert_eq!(json["result"]["protocolVersion"], "2024-11-05");
+    assert_eq!(json["result"]["serverInfo"]["name"], "indxr");
+}
+
+#[test]
+fn test_process_jsonrpc_tools_list() {
+    let config = make_test_config();
+    let registry = ParserRegistry::new();
+    let mut index = make_test_index();
+    let msg = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#;
+    let result = process_jsonrpc_message(msg, &mut index, &config, &registry, Transport::Stdio);
+    let resp = result.unwrap().unwrap();
+    let json = serde_json::to_value(&resp).unwrap();
+    let tools = json["result"]["tools"].as_array().unwrap();
+    assert!(!tools.is_empty(), "tools/list should return tool definitions");
+}
+
+#[test]
+fn test_process_jsonrpc_unknown_method() {
+    let config = make_test_config();
+    let registry = ParserRegistry::new();
+    let mut index = make_test_index();
+    let msg = r#"{"jsonrpc":"2.0","id":3,"method":"bogus/method","params":{}}"#;
+    let result = process_jsonrpc_message(msg, &mut index, &config, &registry, Transport::Stdio);
+    let resp = result.unwrap().unwrap();
+    let json = serde_json::to_value(&resp).unwrap();
+    assert_eq!(json["error"]["code"], -32601);
 }

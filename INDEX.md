@@ -1,7 +1,7 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-27 16:59:43 UTC | Files: 56 | Lines: 26978
-> Languages: Markdown (14), Python (1), Rust (39), Shell (1), TOML (1)
+> Generated: 2026-03-27 17:28:36 UTC | Files: 57 | Lines: 28068
+> Languages: Markdown (14), Python (1), Rust (40), Shell (1), TOML (1)
 
 ## Directory Structure
 
@@ -41,6 +41,7 @@ indxr/
     main.rs
     mcp/
       helpers.rs
+      http.rs
       mod.rs
       tests.rs
       tools.rs
@@ -88,7 +89,8 @@ indxr/
 - `# Token budget`
 - `# Output control`
 - `# Caching`
-- `# MCP server`
+- `# MCP server (stdio transport — default)`
+- `# MCP server (Streamable HTTP transport — requires --features http)`
 - `# File watching`
 - `# Agent setup`
 - `# Complexity hotspots`
@@ -97,6 +99,7 @@ indxr/
 
 **Cargo.toml**
 - `[package]`
+- `[features]`
 - `[dependencies]`
 - `[dev-dependencies]`
 
@@ -256,9 +259,16 @@ indxr/
 
 **docs/mcp-server.md**
 - `# MCP Server`
+- `# Build with HTTP support`
+- `# Start on a specific address`
 - `# Send initialize`
 - `# Send initialized notification`
 - `# Call a tool`
+- `# Initialize (creates a session)`
+- `# Response includes Mcp-Session-Id header`
+- `# Call a tool (include session ID)`
+- `# Listen for server notifications (SSE)`
+- `# End session`
 
 **docs/output-formats.md**
 - `# Output Formats`
@@ -378,7 +388,11 @@ indxr/
 - `pub(super) fn explain_decl(decl: &Declaration, file_path: &str) -> Value`
 - `pub(super) const APPROX_SUMMARY_TOKENS: usize = 300`
 
+**src/mcp/http.rs**
+- `pub async fn run_http_server( index: CodebaseIndex, config: IndexConfig, watch: bool, debounce_ms: u64, addr: &str, ) -> anyhow::Result<()>`
+
 **src/mcp/mod.rs**
+- `pub mod http`
 - `pub fn run_mcp_server( mut index: CodebaseIndex, config: IndexConfig, watch: bool, debounce_ms: u64, ) -> anyhow::Result<()>`
 
 **src/mcp/tools.rs**
@@ -526,7 +540,7 @@ indxr/
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 11.6 KB | **Lines:** 189
+**Language:** Markdown | **Size:** 11.9 KB | **Lines:** 194
 
 **Declarations:**
 
@@ -534,7 +548,7 @@ indxr/
 
 ## Cargo.toml
 
-**Language:** TOML | **Size:** 1.0 KB | **Lines:** 42
+**Language:** TOML | **Size:** 1.5 KB | **Lines:** 53
 
 **Imports:**
 - `anyhow`
@@ -547,7 +561,7 @@ indxr/
 - `regex`
 - `serde`
 - `serde_json`
-- *... and 16 more imports*
+- *... and 23 more imports*
 
 **Declarations:**
 
@@ -555,7 +569,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 52.7 KB | **Lines:** 2008
+**Language:** Markdown | **Size:** 61.7 KB | **Lines:** 2298
 
 **Declarations:**
 
@@ -635,7 +649,7 @@ indxr/
 
 ## docs/mcp-server.md
 
-**Language:** Markdown | **Size:** 20.1 KB | **Lines:** 695
+**Language:** Markdown | **Size:** 22.1 KB | **Lines:** 752
 
 **Declarations:**
 
@@ -659,7 +673,7 @@ indxr/
 
 ## roadmap.md
 
-**Language:** Markdown | **Size:** 2.2 KB | **Lines:** 49
+**Language:** Markdown | **Size:** 2.6 KB | **Lines:** 54
 
 **Declarations:**
 
@@ -753,7 +767,7 @@ indxr/
 
 ## src/cli.rs
 
-**Language:** Rust | **Size:** 9.0 KB | **Lines:** 335
+**Language:** Rust | **Size:** 9.2 KB | **Lines:** 340
 
 **Imports:**
 - `std::path::PathBuf`
@@ -1016,7 +1030,7 @@ indxr/
 
 ## src/main.rs
 
-**Language:** Rust | **Size:** 12.1 KB | **Lines:** 433
+**Language:** Rust | **Size:** 13.0 KB | **Lines:** 461
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1097,9 +1111,55 @@ indxr/
 
 ---
 
+## src/mcp/http.rs
+
+**Language:** Rust | **Size:** 17.7 KB | **Lines:** 553
+
+**Imports:**
+- `std::collections::HashMap`
+- `std::convert::Infallible`
+- `std::sync::{Arc, RwLock}`
+- `std::time::Instant`
+- `axum::extract::State`
+- `axum::http::{HeaderMap, StatusCode}`
+- `axum::response::sse::{Event, KeepAlive, Sse}`
+- `axum::response::{IntoResponse, Response}`
+- `axum::routing::{get, post}`
+- `axum::Router`
+- *... and 6 more imports*
+
+**Declarations:**
+
+`struct AppState`
+> Fields: `index: RwLock<CodebaseIndex>`, `config: IndexConfig`, `registry: ParserRegistry`, `notify_tx: broadcast::Sender<SseEvent>`, `sessions: RwLock<HashMap<String, SessionInfo>>`
+
+`struct SessionInfo`
+> Fields: `created_at: Instant`
+
+`struct SseEvent`
+> Fields: `id: Option<String>`, `event: Option<String>`, `data: String`
+
+`async fn handle_post( State(state): State<Arc<AppState>>, headers: HeaderMap, body: String, ) -> Response`
+
+`async fn handle_get( State(state): State<Arc<AppState>>, headers: HeaderMap, ) -> Response`
+
+`async fn handle_delete( State(state): State<Arc<AppState>>, headers: HeaderMap, ) -> StatusCode`
+
+`fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<()>`
+
+`fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Response>`
+
+`fn is_mutating_tool_call(req: &JsonRpcRequest) -> bool`
+
+`fn json_response(status: StatusCode, body: &JsonRpcResponse, session_id: Option<&str>) -> Response`
+
+`mod tests`
+
+---
+
 ## src/mcp/mod.rs
 
-**Language:** Rust | **Size:** 13.0 KB | **Lines:** 407
+**Language:** Rust | **Size:** 14.6 KB | **Lines:** 456
 
 **Imports:**
 - `std::io::{self, BufRead, Write}`
@@ -1125,27 +1185,32 @@ indxr/
 
 `mod tests`
 
-`struct JsonRpcRequest`
+`pub(crate) struct JsonRpcRequest`
 > Fields: `jsonrpc: String`, `id: Option<Value>`, `method: String`, `params: Option<Value>`
 
-`struct JsonRpcResponse`
+`pub(crate) struct JsonRpcResponse`
 > Fields: `jsonrpc: String`, `id: Value`, `result: Option<Value>`, `error: Option<JsonRpcError>`
 
-`struct JsonRpcError`
+`pub(crate) struct JsonRpcError`
 > Fields: `code: i32`, `message: String`
 
-`fn ok_response(id: Value, result: Value) -> JsonRpcResponse`
+`pub(crate) enum Transport`
+> Variants: `Stdio`, `Http`
 
-`fn err_response(id: Value, code: i32, message: String) -> JsonRpcResponse`
+`pub(crate) fn ok_response(id: Value, result: Value) -> JsonRpcResponse`
 
-`fn handle_initialize(id: Value) -> JsonRpcResponse`
+`pub(crate) fn err_response(id: Value, code: i32, message: String) -> JsonRpcResponse`
 
-`fn handle_tools_list(id: Value) -> JsonRpcResponse`
+`pub(crate) fn handle_initialize(id: Value, transport: Transport) -> JsonRpcResponse`
 
-`fn handle_tools_call( id: Value, index: &mut CodebaseIndex, config: &IndexConfig, registry: &ParserRegistry, params: &Value, ) -> JsonRpcResponse`
+`pub(crate) fn handle_tools_list(id: Value) -> JsonRpcResponse`
+
+`pub(crate) fn handle_tools_call( id: Value, index: &mut CodebaseIndex, config: &IndexConfig, registry: &ParserRegistry, params: &Value, ) -> JsonRpcResponse`
 
 `enum ServerEvent`
 > Variants: `StdinLine`, `StdinClosed`, `FileChanged`
+
+`pub(crate) fn process_jsonrpc_message( line: &str, index: &mut CodebaseIndex, config: &IndexConfig, registry: &ParserRegistry, transport: Transport, ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse>`
 
 `fn handle_stdin_line( line: &str, index: &mut CodebaseIndex, config: &IndexConfig, registry: &ParserRegistry, writer: &mut impl Write, ) -> anyhow::Result<()>`
 
@@ -1155,7 +1220,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 70.0 KB | **Lines:** 2010
+**Language:** Rust | **Size:** 73.2 KB | **Lines:** 2097
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1169,6 +1234,8 @@ indxr/
 - `super::helpers::*`
 - `super::tools::*`
 - `super::type_flow::*`
+- `super::{Transport, process_jsonrpc_message}`
+- *... and 2 more imports*
 
 **Declarations:**
 
@@ -1421,6 +1488,20 @@ indxr/
 `fn test_extract_types_rust_nested_generics()`
 
 `fn test_tool_get_type_flow_producer_and_consumer()`
+
+`fn make_test_config() -> IndexConfig`
+
+`fn test_process_jsonrpc_empty_line()`
+
+`fn test_process_jsonrpc_notification_returns_none()`
+
+`fn test_process_jsonrpc_parse_error()`
+
+`fn test_process_jsonrpc_initialize()`
+
+`fn test_process_jsonrpc_tools_list()`
+
+`fn test_process_jsonrpc_unknown_method()`
 
 ---
 

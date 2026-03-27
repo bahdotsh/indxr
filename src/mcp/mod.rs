@@ -1,4 +1,6 @@
 mod helpers;
+#[cfg(feature = "http")]
+pub mod http;
 mod tools;
 mod type_flow;
 
@@ -26,16 +28,16 @@ use self::tools::{
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
-struct JsonRpcRequest {
+pub(crate) struct JsonRpcRequest {
     #[allow(dead_code)]
     jsonrpc: String,
-    id: Option<Value>,
-    method: String,
-    params: Option<Value>,
+    pub(crate) id: Option<Value>,
+    pub(crate) method: String,
+    pub(crate) params: Option<Value>,
 }
 
-#[derive(Serialize)]
-struct JsonRpcResponse {
+#[derive(Debug, Serialize)]
+pub(crate) struct JsonRpcResponse {
     jsonrpc: String,
     id: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,17 +46,28 @@ struct JsonRpcResponse {
     error: Option<JsonRpcError>,
 }
 
-#[derive(Serialize)]
-struct JsonRpcError {
+#[derive(Debug, Serialize)]
+pub(crate) struct JsonRpcError {
     code: i32,
     message: String,
+}
+
+// ---------------------------------------------------------------------------
+// Transport type (used to vary protocol version in initialize)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+pub(crate) enum Transport {
+    Stdio,
+    #[cfg(feature = "http")]
+    Http,
 }
 
 // ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
 
-fn ok_response(id: Value, result: Value) -> JsonRpcResponse {
+pub(crate) fn ok_response(id: Value, result: Value) -> JsonRpcResponse {
     JsonRpcResponse {
         jsonrpc: "2.0".into(),
         id,
@@ -63,7 +76,7 @@ fn ok_response(id: Value, result: Value) -> JsonRpcResponse {
     }
 }
 
-fn err_response(id: Value, code: i32, message: String) -> JsonRpcResponse {
+pub(crate) fn err_response(id: Value, code: i32, message: String) -> JsonRpcResponse {
     JsonRpcResponse {
         jsonrpc: "2.0".into(),
         id,
@@ -76,11 +89,16 @@ fn err_response(id: Value, code: i32, message: String) -> JsonRpcResponse {
 // MCP protocol handlers
 // ---------------------------------------------------------------------------
 
-fn handle_initialize(id: Value) -> JsonRpcResponse {
+pub(crate) fn handle_initialize(id: Value, transport: Transport) -> JsonRpcResponse {
+    let protocol_version = match transport {
+        Transport::Stdio => "2024-11-05",
+        #[cfg(feature = "http")]
+        Transport::Http => "2025-03-26",
+    };
     ok_response(
         id,
         json!({
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": protocol_version,
             "capabilities": {
                 "tools": {
                     "listChanged": false
@@ -94,11 +112,11 @@ fn handle_initialize(id: Value) -> JsonRpcResponse {
     )
 }
 
-fn handle_tools_list(id: Value) -> JsonRpcResponse {
+pub(crate) fn handle_tools_list(id: Value) -> JsonRpcResponse {
     ok_response(id, tool_definitions())
 }
 
-fn handle_tools_call(
+pub(crate) fn handle_tools_call(
     id: Value,
     index: &mut CodebaseIndex,
     config: &IndexConfig,
@@ -139,7 +157,58 @@ enum ServerEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Stdin line handler (extracted so it can be called from deferred-event replay)
+// Transport-agnostic JSON-RPC handler
+// ---------------------------------------------------------------------------
+
+/// Process a single JSON-RPC message string, returning the response.
+///
+/// Returns:
+/// - `Ok(Some(response))` for requests that need a response
+/// - `Ok(None)` for notifications (no id)
+/// - `Err(response)` for parse errors (caller should still send the error response)
+pub(crate) fn process_jsonrpc_message(
+    line: &str,
+    index: &mut CodebaseIndex,
+    config: &IndexConfig,
+    registry: &ParserRegistry,
+    transport: Transport,
+) -> Result<Option<JsonRpcResponse>, JsonRpcResponse> {
+    let line = line.trim();
+    if line.is_empty() {
+        return Ok(None);
+    }
+
+    let request: JsonRpcRequest = match serde_json::from_str(line) {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(err_response(
+                Value::Null,
+                -32700,
+                format!("Parse error: {}", e),
+            ));
+        }
+    };
+
+    // Notifications have no id and require no response.
+    if request.id.is_none() {
+        return Ok(None);
+    }
+
+    let id = request.id.unwrap();
+    let params = request.params.unwrap_or(json!({}));
+
+    let response = match request.method.as_str() {
+        "initialize" => handle_initialize(id, transport),
+        "tools/list" => handle_tools_list(id),
+        "tools/call" => handle_tools_call(id, index, config, registry, &params),
+        _ => err_response(id, -32601, format!("Method not found: {}", request.method)),
+    };
+
+    Ok(Some(response))
+}
+
+// ---------------------------------------------------------------------------
+// Stdin line handler (uses process_jsonrpc_message, writes to stdout)
 // ---------------------------------------------------------------------------
 
 fn handle_stdin_line(
@@ -149,40 +218,20 @@ fn handle_stdin_line(
     registry: &ParserRegistry,
     writer: &mut impl Write,
 ) -> anyhow::Result<()> {
-    let line = line.trim();
-    if line.is_empty() {
-        return Ok(());
-    }
-
     eprintln!("< {}", line);
 
-    let request: JsonRpcRequest = match serde_json::from_str(line) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to parse JSON-RPC request: {}", e);
-            let resp = err_response(Value::Null, -32700, format!("Parse error: {}", e));
-            let out = serde_json::to_string(&resp)?;
-            eprintln!("> {}", out);
-            writeln!(writer, "{}", out)?;
-            writer.flush()?;
+    let response = match process_jsonrpc_message(line, index, config, registry, Transport::Stdio) {
+        Ok(Some(resp)) => resp,
+        Ok(None) => {
+            if !line.trim().is_empty() {
+                eprintln!("Notification (no response)");
+            }
             return Ok(());
         }
-    };
-
-    // Notifications have no id and require no response.
-    if request.id.is_none() {
-        eprintln!("Notification: {}", request.method);
-        return Ok(());
-    }
-
-    let id = request.id.unwrap();
-    let params = request.params.unwrap_or(json!({}));
-
-    let response = match request.method.as_str() {
-        "initialize" => handle_initialize(id),
-        "tools/list" => handle_tools_list(id),
-        "tools/call" => handle_tools_call(id, index, config, registry, &params),
-        _ => err_response(id, -32601, format!("Method not found: {}", request.method)),
+        Err(resp) => {
+            eprintln!("Failed to parse JSON-RPC request");
+            resp
+        }
     };
 
     let out = serde_json::to_string(&response)?;
