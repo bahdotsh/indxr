@@ -43,10 +43,38 @@ fn main() -> Result<()> {
         opts,
         watch: enable_watch,
         debounce_ms,
+        http,
     }) = &cli.command
     {
         let config = index_config_from(opts);
         let index = indexer::build_index(&config)?;
+
+        if let Some(addr) = http {
+            #[cfg(feature = "http")]
+            {
+                eprintln!(
+                    "indxr MCP HTTP server starting on {} (indexed {} files)",
+                    addr,
+                    index.files.len()
+                );
+                let rt = tokio::runtime::Runtime::new()?;
+                return rt.block_on(mcp::http::run_http_server(
+                    index,
+                    config,
+                    *enable_watch,
+                    *debounce_ms,
+                    addr,
+                ));
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = addr;
+                anyhow::bail!(
+                    "HTTP transport requires the 'http' feature. Rebuild with: \
+                     cargo install indxr --features http"
+                );
+            }
+        }
 
         eprintln!(
             "indxr MCP server starting (indexed {} files)",

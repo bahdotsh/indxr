@@ -159,6 +159,11 @@ pub enum Command {
         /// Debounce timeout in milliseconds (requires --watch)
         #[arg(long, default_value = "300", requires = "watch")]
         debounce_ms: u64,
+
+        /// Start Streamable HTTP server on the given address (e.g., 127.0.0.1:8080 or :8080).
+        /// Requires the 'http' feature.
+        #[arg(long, value_name = "ADDR")]
+        http: Option<String>,
     },
 
     /// Watch for file changes and keep INDEX.md up to date
