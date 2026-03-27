@@ -16,7 +16,7 @@ use crate::indexer::{self, IndexConfig};
 use crate::model::CodebaseIndex;
 use crate::parser::ParserRegistry;
 
-use super::{JsonRpcRequest, JsonRpcResponse, Transport, err_response, process_jsonrpc_message};
+use super::{JsonRpcRequest, JsonRpcResponse, Transport, err_response, process_jsonrpc_request};
 
 // ---------------------------------------------------------------------------
 // Shared application state
@@ -164,38 +164,25 @@ async fn handle_post(
             .into_response();
     }
 
-    // Dispatch the request via spawn_blocking to avoid blocking the async runtime.
-    // All paths currently acquire a write lock because process_jsonrpc_message takes
-    // &mut. A future refactor could split read/write paths for better concurrency.
+    // Dispatch the pre-parsed request via spawn_blocking to avoid blocking the
+    // async runtime. All paths currently acquire a write lock because
+    // process_jsonrpc_request takes &mut. A future refactor could split
+    // read/write paths for better concurrency.
     let state2 = Arc::clone(&state);
-    let resp = tokio::task::spawn_blocking(move || {
+    let response = tokio::task::spawn_blocking(move || {
         let mut index = state2.index.write().unwrap_or_else(|e| e.into_inner());
-        process_jsonrpc_message(
-            &body,
+        // Safe to unwrap: we already verified request.id is Some (not a notification).
+        process_jsonrpc_request(
+            request,
             &mut index,
             &state2.config,
             &state2.registry,
             Transport::Http,
         )
+        .expect("request with id always produces a response")
     })
     .await
     .expect("JSON-RPC handler panicked");
-
-    let response = match resp {
-        Ok(Some(r)) => r,
-        Ok(None) => {
-            // Shouldn't happen — we checked is_notification above — but handle gracefully.
-            let mut builder = Response::builder().status(StatusCode::ACCEPTED);
-            if let Some(ref sid) = session_id {
-                builder = builder.header("Mcp-Session-Id", sid.as_str());
-            }
-            return builder
-                .body(axum::body::Body::empty())
-                .unwrap()
-                .into_response();
-        }
-        Err(r) => r,
-    };
 
     json_response(StatusCode::OK, &response, session_id.as_deref())
 }
@@ -239,15 +226,18 @@ async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
 // DELETE /mcp — session termination
 // ---------------------------------------------------------------------------
 
-async fn handle_delete(State(state): State<Arc<AppState>>, headers: HeaderMap) -> StatusCode {
-    if let Some(sid) = headers.get("mcp-session-id").and_then(|v| v.to_str().ok()) {
-        state
-            .sessions
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(sid);
+async fn handle_delete(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    match validate_session(&state, &headers) {
+        Ok(sid) => {
+            state
+                .sessions
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&sid);
+            StatusCode::OK.into_response()
+        }
+        Err(resp) => *resp,
     }
-    StatusCode::OK
 }
 
 // ---------------------------------------------------------------------------
@@ -557,5 +547,30 @@ mod tests {
 
         let body = body_json(resp).await;
         assert_eq!(body["error"]["code"], -32700);
+    }
+
+    #[tokio::test]
+    async fn delete_without_session_returns_unauthorized() {
+        let (app, _) = test_app();
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/mcp")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn delete_bogus_session_returns_unauthorized() {
+        let (app, _) = test_app();
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/mcp")
+            .header("Mcp-Session-Id", "bogus-id")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }

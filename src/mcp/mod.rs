@@ -160,11 +160,34 @@ enum ServerEvent {
 // Transport-agnostic JSON-RPC handler
 // ---------------------------------------------------------------------------
 
+/// Dispatch a pre-parsed JSON-RPC request.
+///
+/// Returns `None` for notifications (no id), `Some(response)` otherwise.
+pub(crate) fn process_jsonrpc_request(
+    request: JsonRpcRequest,
+    index: &mut CodebaseIndex,
+    config: &IndexConfig,
+    registry: &ParserRegistry,
+    transport: Transport,
+) -> Option<JsonRpcResponse> {
+    let id = request.id?;
+    let params = request.params.unwrap_or(json!({}));
+
+    let response = match request.method.as_str() {
+        "initialize" => handle_initialize(id, transport),
+        "tools/list" => handle_tools_list(id),
+        "tools/call" => handle_tools_call(id, index, config, registry, &params),
+        _ => err_response(id, -32601, format!("Method not found: {}", request.method)),
+    };
+
+    Some(response)
+}
+
 /// Process a single JSON-RPC message string, returning the response.
 ///
 /// Returns:
 /// - `Ok(Some(response))` for requests that need a response
-/// - `Ok(None)` for notifications (no id)
+/// - `Ok(None)` for notifications (no id) or empty input
 /// - `Err(response)` for parse errors (caller should still send the error response)
 pub(crate) fn process_jsonrpc_message(
     line: &str,
@@ -189,22 +212,9 @@ pub(crate) fn process_jsonrpc_message(
         }
     };
 
-    // Notifications have no id and require no response.
-    if request.id.is_none() {
-        return Ok(None);
-    }
-
-    let id = request.id.unwrap();
-    let params = request.params.unwrap_or(json!({}));
-
-    let response = match request.method.as_str() {
-        "initialize" => handle_initialize(id, transport),
-        "tools/list" => handle_tools_list(id),
-        "tools/call" => handle_tools_call(id, index, config, registry, &params),
-        _ => err_response(id, -32601, format!("Method not found: {}", request.method)),
-    };
-
-    Ok(Some(response))
+    Ok(process_jsonrpc_request(
+        request, index, config, registry, transport,
+    ))
 }
 
 // ---------------------------------------------------------------------------

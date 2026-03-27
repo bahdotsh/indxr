@@ -21,10 +21,12 @@ indxr serve ./my-project
 cargo install indxr --features http
 
 # Start on a specific address
-indxr serve --http 127.0.0.1:8080
-indxr serve --http :8080              # shorthand for 0.0.0.0:8080
+indxr serve --http 127.0.0.1:8080     # recommended: localhost only
+indxr serve --http :8080              # shorthand for 0.0.0.0:8080 (all interfaces)
 indxr serve --http :8080 --watch      # with auto-reindex on file changes
 ```
+
+> **Security note:** The `:PORT` shorthand binds to `0.0.0.0`, exposing the server to all network interfaces. For local development, use `127.0.0.1:PORT` to restrict access to your machine. The HTTP transport has no authentication beyond session IDs.
 
 The HTTP transport implements the MCP Streamable HTTP specification (2025-03-26) with a single `/mcp` endpoint:
 - **POST /mcp** — send JSON-RPC requests, receive JSON responses
