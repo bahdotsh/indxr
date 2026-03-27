@@ -432,6 +432,36 @@ pub(super) fn tool_definitions() -> Value {
                         }
                     }
                 }
+            },
+            {
+                "name": "get_type_flow",
+                "description": "Track where a type flows across function boundaries. Shows which functions produce (return) and consume (accept as parameters) a given type. Useful for understanding data flow and finding related code.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "type_name": {
+                            "type": "string",
+                            "description": "Type name to track (e.g., 'FileIndex', 'Declaration', 'Cache')"
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Optional file or directory path filter to scope the search"
+                        },
+                        "include_fields": {
+                            "type": "boolean",
+                            "description": "If true, also include struct/class fields that hold this type (default false)"
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of results per role (default 50, max 200)"
+                        },
+                        "compact": {
+                            "type": "boolean",
+                            "description": "If true, return columnar format (saves ~30% tokens)"
+                        }
+                    },
+                    "required": ["type_name"]
+                }
             }
         ]
     })
@@ -462,6 +492,7 @@ pub(super) fn handle_tool_call(index: &CodebaseIndex, name: &str, args: &Value) 
         "get_dependency_graph" => tool_get_dependency_graph(index, args),
         "get_hotspots" => tool_get_hotspots(index, args),
         "get_health" => tool_get_health(index, args),
+        "get_type_flow" => tool_get_type_flow(index, args),
         _ => tool_error(&format!("Unknown tool: {}", name)),
     }
 }
@@ -1696,5 +1727,51 @@ pub(super) fn tool_get_health(index: &CodebaseIndex, args: &Value) -> Value {
         "deprecated_count": h.deprecated_count,
         "public_api_count": h.public_api_count,
         "hottest_files": h.hottest_files
+    }))
+}
+
+pub(super) fn tool_get_type_flow(index: &CodebaseIndex, args: &Value) -> Value {
+    let type_name = match args.get("type_name").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return tool_error("Missing required parameter: type_name"),
+    };
+    let path_filter = args.get("path").and_then(|v| v.as_str());
+    let include_fields = args
+        .get("include_fields")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(50)
+        .min(200) as usize;
+
+    let (mut producers, mut consumers) =
+        build_type_flow(index, type_name, path_filter, include_fields);
+
+    let producers_total = producers.len();
+    let consumers_total = consumers.len();
+    producers.truncate(limit);
+    consumers.truncate(limit);
+
+    if is_compact(args) {
+        let cols = &["file", "name", "kind", "line", "signature"];
+        let compact_producers = serialize_compact(&producers, cols);
+        let compact_consumers = serialize_compact(&consumers, cols);
+        return tool_result(json!({
+            "type_name": type_name,
+            "producers_count": producers_total,
+            "consumers_count": consumers_total,
+            "producers": compact_producers,
+            "consumers": compact_consumers,
+        }));
+    }
+
+    tool_result(json!({
+        "type_name": type_name,
+        "producers_count": producers_total,
+        "consumers_count": consumers_total,
+        "producers": producers,
+        "consumers": consumers,
     }))
 }
