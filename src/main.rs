@@ -5,6 +5,7 @@ mod dep_graph;
 mod diff;
 mod error;
 mod filter;
+mod github;
 mod indexer;
 mod init;
 mod languages;
@@ -109,6 +110,41 @@ fn main() -> Result<()> {
         return init::run_init(opts);
     }
 
+    // Handle diff subcommand
+    if let Some(Command::Diff {
+        path,
+        pr,
+        since,
+        format,
+    }) = &cli.command
+    {
+        let root = fs::canonicalize(path)?;
+
+        let since_ref = if let Some(pr_num) = pr {
+            let (base_ref, pr_info) = github::resolve_pr_base(&root, *pr_num)?;
+            eprintln!(
+                "PR #{}: {} ({}...{})",
+                pr_info.number, pr_info.title, pr_info.base_ref, pr_info.head_ref
+            );
+            base_ref
+        } else if let Some(git_ref) = since {
+            git_ref.clone()
+        } else {
+            anyhow::bail!("Either --pr or --since must be specified");
+        };
+
+        // Build index for the project
+        let walk_result = walker::walk_directory(&root, true, 512, None, &[])?;
+        let files: Vec<&walker::FileEntry> = walk_result.files.iter().collect();
+        let mut cache = Cache::disabled();
+        let registry = ParserRegistry::new();
+        let results = indexer::parse_files(&files, &cache, &registry);
+        let (mut file_indices, _, _, _) = indexer::collect_results(results, &mut cache);
+        file_indices.sort_by(|a, b| a.path.cmp(&b.path));
+
+        return handle_git_diff(&root, &since_ref, &file_indices, &registry, format);
+    }
+
     // Normal indexing mode
     let start = Instant::now();
 
@@ -184,7 +220,7 @@ fn main() -> Result<()> {
 
     // Handle --since (git diff mode)
     if let Some(ref since_ref) = cli.since {
-        return handle_git_diff(&root, since_ref, &file_indices, &registry, &cli);
+        return handle_git_diff(&root, since_ref, &file_indices, &registry, &cli.format);
     }
 
     // Build the index
@@ -316,7 +352,7 @@ fn handle_git_diff(
     since_ref: &str,
     current_files: &[model::FileIndex],
     registry: &ParserRegistry,
-    cli: &Cli,
+    format: &OutputFormat,
 ) -> Result<()> {
     let changed_paths = diff::get_changed_files(root, since_ref)?;
 
@@ -354,7 +390,7 @@ fn handle_git_diff(
 
     let structural_diff = diff::compute_structural_diff(&temp_index, &old_files, &changed_paths);
 
-    match cli.format {
+    match format {
         OutputFormat::Json => {
             let json = diff::format_diff_json(&structural_diff)?;
             println!("{}", json);

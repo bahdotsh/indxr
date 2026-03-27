@@ -179,6 +179,25 @@ pub enum Command {
         quiet: bool,
     },
 
+    /// Show structural changes for a GitHub PR or git ref
+    Diff {
+        /// Root directory of the project
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// GitHub PR number to diff against its base branch
+        #[arg(long)]
+        pr: Option<u64>,
+
+        /// Git ref to diff against (branch, tag, or commit)
+        #[arg(long, value_name = "REF", conflicts_with = "pr")]
+        since: Option<String>,
+
+        /// Output format: markdown or json
+        #[arg(short, long, default_value = "markdown")]
+        format: OutputFormat,
+    },
+
     /// Initialize indxr configuration files for AI agent integration
     Init {
         /// Root directory to initialize

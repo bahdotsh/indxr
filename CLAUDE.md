@@ -21,7 +21,7 @@ An MCP server called `indxr` is available. **Always use indxr tools before the R
 | `get_public_api` | ~200-500 | Public API surface of a file or module |
 | `get_callers` | ~100-300 | Who references this symbol (imports + signatures) |
 | `get_related_tests` | ~100-200 | Find tests for a symbol by naming convention |
-| `get_diff_summary` | ~200-500 | Structural changes since a git ref (vs reading raw diffs) |
+| `get_diff_summary` | ~200-500 | Structural changes since a git ref or GitHub PR (vs reading raw diffs) |
 | `get_hotspots` | ~200-500 | Most complex functions ranked by composite score |
 | `get_health` | ~200-400 | Codebase health summary with aggregate complexity metrics |
 | `read_source` (symbol) | ~50-300 | Read one function/struct. Supports `symbols` array and `collapse`. |
@@ -47,7 +47,7 @@ An MCP server called `indxr` is available. **Always use indxr tools before the R
 13. `list_declarations` — list all declarations in a file. Use `kind` filter, `shallow` or `compact` mode to reduce output.
 14. `get_imports` — get import statements for a file.
 15. `get_stats` — codebase stats: file count, line count, language breakdown, indexing duration.
-16. `get_diff_summary` — get structural changes since a git ref. Shows added/removed/modified declarations without reading full diffs.
+16. `get_diff_summary` — get structural changes since a git ref or GitHub PR number. Shows added/removed/modified declarations without reading full diffs. Supports `pr` param as alternative to `since_ref`.
 17. `get_hotspots` — get the most complex functions/methods ranked by composite score. Supports `path`, `min_complexity`, `sort_by`, and `compact` params.
 18. `get_health` — get codebase health summary: aggregate complexity, documentation coverage, test ratio, hottest files. Supports `path` filter.
 19. `regenerate_index` — re-index after code changes. Updates INDEX.md, refreshes in-memory index, and reports what changed (delta).
@@ -94,6 +94,11 @@ indxr -l rust,python                         # by language
 indxr --since main                           # diff against branch
 indxr --since HEAD~5                         # diff against recent commits
 indxr --since v1.0.0                         # diff against tag
+
+# PR-aware structural diffs
+indxr diff --pr 42                           # diff against PR's base branch
+indxr diff --pr 42 -f json                   # JSON output
+indxr diff --since main                      # diff subcommand (same as --since flag)
 
 # Token budget
 indxr --max-tokens 4000                      # progressive truncation
@@ -169,6 +174,7 @@ Key source files:
 - `src/budget.rs` — token estimation and progressive truncation
 - `src/filter.rs` — path/kind/visibility/symbol filtering
 - `src/diff.rs` — git structural diffing
+- `src/github.rs` — GitHub API client for PR-aware diffs
 - `src/dep_graph.rs` — dependency graph generation (DOT, Mermaid, JSON) at file and symbol level
 - `src/model/` — data model (CodebaseIndex, FileIndex, Declaration)
 - `src/parser/complexity.rs` — per-function complexity metrics and hotspot analysis (tree-sitter languages)

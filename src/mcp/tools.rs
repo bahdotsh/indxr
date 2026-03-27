@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use crate::budget::estimate_tokens;
 use crate::dep_graph;
 use crate::diff;
+use crate::github;
 use crate::indexer::{self, IndexConfig};
 use crate::languages::Language;
 use crate::model::declarations::{DeclKind, Declaration};
@@ -260,16 +261,19 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "get_diff_summary",
-                "description": "Get structural changes (added/removed/modified declarations) since a git ref (branch, tag, commit). Much cheaper than reading raw diffs.",
+                "description": "Get structural changes (added/removed/modified declarations) since a git ref or for a GitHub PR. Much cheaper than reading raw diffs.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "since_ref": {
                             "type": "string",
                             "description": "Git ref to diff against (branch name, tag, or commit like HEAD~3)"
+                        },
+                        "pr": {
+                            "type": "number",
+                            "description": "GitHub PR number — resolves the PR's base branch automatically (alternative to since_ref)"
                         }
-                    },
-                    "required": ["since_ref"]
+                    }
                 }
             },
             {
@@ -1227,30 +1231,52 @@ pub(super) fn tool_get_diff_summary(
     registry: &ParserRegistry,
     args: &Value,
 ) -> Value {
-    let since_ref = match args.get("since_ref").and_then(|v| v.as_str()) {
-        Some(r) => r,
-        None => return tool_error("Missing required parameter: since_ref"),
+    // Resolve the git ref — either from a PR number or a direct since_ref
+    let pr_info = if let Some(pr_num) = args.get("pr").and_then(|v| v.as_u64()) {
+        match github::resolve_pr_base(&config.root, pr_num) {
+            Ok((_, info)) => Some(info),
+            Err(e) => return tool_error(&format!("Failed to resolve PR #{}: {}", pr_num, e)),
+        }
+    } else {
+        None
     };
 
-    let changed_paths = match diff::get_changed_files(&config.root, since_ref) {
+    let since_ref = if let Some(ref info) = pr_info {
+        format!("origin/{}", info.base_ref)
+    } else if let Some(r) = args.get("since_ref").and_then(|v| v.as_str()) {
+        r.to_string()
+    } else {
+        return tool_error("Missing required parameter: either 'since_ref' or 'pr'");
+    };
+
+    let changed_paths = match diff::get_changed_files(&config.root, &since_ref) {
         Ok(paths) => paths,
         Err(e) => return tool_error(&format!("Git diff failed: {}", e)),
     };
 
     if changed_paths.is_empty() {
-        return tool_result(json!({
+        let mut result = json!({
             "since_ref": since_ref,
             "changes": 0,
             "files_added": [],
             "files_removed": [],
             "files_modified": []
-        }));
+        });
+        if let Some(ref info) = pr_info {
+            result["pr"] = json!({
+                "number": info.number,
+                "title": &info.title,
+                "base": &info.base_ref,
+                "head": &info.head_ref
+            });
+        }
+        return tool_result(result);
     }
 
     // Parse old file versions using cached registry
     let mut old_files: HashMap<PathBuf, FileIndex> = HashMap::new();
     for path in &changed_paths {
-        if let Ok(Some(old_content)) = diff::get_file_at_ref(&config.root, path, since_ref) {
+        if let Ok(Some(old_content)) = diff::get_file_at_ref(&config.root, path, &since_ref) {
             if let Some(lang) = Language::detect(path) {
                 if let Some(parser) = registry.get_parser(&lang) {
                     if let Ok(fi) = parser.parse_file(path, &old_content) {
@@ -1268,7 +1294,7 @@ pub(super) fn tool_get_diff_summary(
         + structural_diff.files_removed.len()
         + structural_diff.files_modified.len();
 
-    tool_result(json!({
+    let mut result = json!({
         "since_ref": since_ref,
         "changes": total_changes,
         "files_added": structural_diff.files_added.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
@@ -1279,7 +1305,18 @@ pub(super) fn tool_get_diff_summary(
             "removed": fd.declarations_removed.iter().map(|d| json!({"kind": format!("{}", d.kind), "name": &d.name, "signature": &d.signature})).collect::<Vec<_>>(),
             "modified": fd.declarations_modified.iter().map(|d| json!({"kind": format!("{}", d.kind), "name": &d.name, "old_signature": &d.old_signature, "new_signature": &d.new_signature})).collect::<Vec<_>>(),
         })).collect::<Vec<_>>()
-    }))
+    });
+
+    if let Some(ref info) = pr_info {
+        result["pr"] = json!({
+            "number": info.number,
+            "title": &info.title,
+            "base": &info.base_ref,
+            "head": &info.head_ref
+        });
+    }
+
+    tool_result(result)
 }
 
 pub(super) fn tool_batch_file_summaries(index: &CodebaseIndex, args: &Value) -> Value {

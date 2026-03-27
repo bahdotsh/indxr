@@ -20,12 +20,12 @@ Per-function complexity metrics using tree-sitter AST analysis.
 - MCP tools: `get_hotspots` (top N most complex functions), `get_health` (codebase-level summary)
 - CLI: `--hotspots` flag
 
-## Planned
-
 ### PR-aware structural diffs
 Structural diff for GitHub PRs — shows added/removed/modified declarations without reading raw diffs.
-- CLI: `indxr diff --pr 42`
-- MCP: extend `get_diff_summary` with optional `pr` param
+- CLI: `indxr diff --pr 42` (also supports `indxr diff --since <ref>`)
+- MCP: `get_diff_summary` extended with optional `pr` param (resolves base branch via GitHub API)
+
+## Planned
 
 ### Cross-file type flow tracking
 Track where types flow across function boundaries.
