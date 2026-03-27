@@ -557,6 +557,38 @@ fn resolve_index_by_path<'a>(
     None
 }
 
+/// Build a merged `CodebaseIndex` from multiple resolved indices.
+/// Used by tools (health, dependency graph) that require a single `CodebaseIndex`.
+fn merge_indices(indices: &[(&str, &CodebaseIndex)]) -> CodebaseIndex {
+    if indices.len() == 1 {
+        return indices[0].1.clone();
+    }
+    let first = indices[0].1;
+    let mut merged = CodebaseIndex {
+        root: first.root.clone(),
+        root_name: first.root_name.clone(),
+        generated_at: first.generated_at.clone(),
+        stats: crate::model::IndexStats {
+            total_files: 0,
+            total_lines: 0,
+            languages: HashMap::new(),
+            duration_ms: 0,
+        },
+        tree: Vec::new(),
+        files: Vec::new(),
+    };
+    for (_name, index) in indices {
+        merged.files.extend(index.files.iter().cloned());
+        merged.tree.extend(index.tree.iter().cloned());
+        merged.stats.total_files += index.stats.total_files;
+        merged.stats.total_lines += index.stats.total_lines;
+        for (lang, count) in &index.stats.languages {
+            *merged.stats.languages.entry(lang.clone()).or_insert(0) += count;
+        }
+    }
+    merged
+}
+
 // ---------------------------------------------------------------------------
 // Tool dispatch
 // ---------------------------------------------------------------------------
@@ -613,8 +645,7 @@ pub(super) fn tool_regenerate_index(
             let line_count = new_ws.stats.total_lines;
             let output_path = new_ws.root.join("INDEX.md");
 
-            // Compute delta using the first member's index for structural diff
-            // (for single-member workspaces this is exact; for multi-member it's approximate)
+            // Compute delta across all members
             let mut all_paths: Vec<PathBuf> = old_files.keys().cloned().collect();
             for member in &new_ws.members {
                 for f in &member.index.files {
@@ -624,9 +655,25 @@ pub(super) fn tool_regenerate_index(
                 }
             }
 
-            // Use first member's index for structural diff (best effort for multi-member)
-            let first_index = &new_ws.members.first().map(|m| &m.index);
-            let has_changes;
+            // Compute structural diff per member and merge results
+            let mut files_added = Vec::new();
+            let mut files_removed = Vec::new();
+            let mut files_modified = Vec::new();
+            for member in &new_ws.members {
+                let sd = diff::compute_structural_diff(&member.index, &old_files, &all_paths);
+                files_added.extend(sd.files_added);
+                files_removed.extend(sd.files_removed);
+                files_modified.extend(sd.files_modified);
+            }
+            // Deduplicate (paths may appear in multiple member diffs)
+            files_added.sort();
+            files_added.dedup();
+            files_removed.sort();
+            files_removed.dedup();
+
+            let has_changes =
+                !files_added.is_empty() || !files_removed.is_empty() || !files_modified.is_empty();
+
             let mut result = json!({
                 "status": "ok",
                 "message": format!(
@@ -638,24 +685,17 @@ pub(super) fn tool_regenerate_index(
                 "total_lines": line_count
             });
 
-            if let Some(index) = first_index {
-                let structural_diff = diff::compute_structural_diff(index, &old_files, &all_paths);
-                has_changes = !structural_diff.files_added.is_empty()
-                    || !structural_diff.files_removed.is_empty()
-                    || !structural_diff.files_modified.is_empty();
-
-                if has_changes {
-                    result["changes"] = json!({
-                        "files_added": structural_diff.files_added.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-                        "files_removed": structural_diff.files_removed.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-                        "files_modified": structural_diff.files_modified.iter().map(|fd| json!({
-                            "path": fd.path.to_string_lossy().to_string(),
-                            "added": fd.declarations_added.len(),
-                            "removed": fd.declarations_removed.len(),
-                            "modified": fd.declarations_modified.len(),
-                        })).collect::<Vec<_>>()
-                    });
-                }
+            if has_changes {
+                result["changes"] = json!({
+                    "files_added": files_added.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                    "files_removed": files_removed.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                    "files_modified": files_modified.iter().map(|fd| json!({
+                        "path": fd.path.to_string_lossy().to_string(),
+                        "added": fd.declarations_added.len(),
+                        "removed": fd.declarations_removed.len(),
+                        "modified": fd.declarations_modified.len(),
+                    })).collect::<Vec<_>>()
+                });
             }
 
             *workspace = new_ws;
@@ -1476,11 +1516,9 @@ pub(super) fn tool_get_diff_summary(
     registry: &ParserRegistry,
     args: &Value,
 ) -> Value {
-    // Use the first member's index and the workspace root for git operations
-    let index = match workspace.members.first() {
-        Some(m) => &m.index,
-        None => return tool_error("No workspace members available"),
-    };
+    if workspace.members.is_empty() {
+        return tool_error("No workspace members available");
+    }
     let has_pr = args.get("pr").is_some_and(|v| !v.is_null());
     let has_since = args.get("since_ref").is_some_and(|v| !v.is_null());
 
@@ -1552,19 +1590,29 @@ pub(super) fn tool_get_diff_summary(
         }
     }
 
-    let mut structural_diff = diff::compute_structural_diff(index, &old_files, &changed_paths);
-    structural_diff.since_ref = since_ref.to_string();
+    // Compute structural diff across all members
+    let mut files_added = Vec::new();
+    let mut files_removed = Vec::new();
+    let mut files_modified = Vec::new();
+    for member in &workspace.members {
+        let sd = diff::compute_structural_diff(&member.index, &old_files, &changed_paths);
+        files_added.extend(sd.files_added);
+        files_removed.extend(sd.files_removed);
+        files_modified.extend(sd.files_modified);
+    }
+    files_added.sort();
+    files_added.dedup();
+    files_removed.sort();
+    files_removed.dedup();
 
-    let total_changes = structural_diff.files_added.len()
-        + structural_diff.files_removed.len()
-        + structural_diff.files_modified.len();
+    let total_changes = files_added.len() + files_removed.len() + files_modified.len();
 
     let mut result = json!({
         "since_ref": since_ref,
         "changes": total_changes,
-        "files_added": structural_diff.files_added.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-        "files_removed": structural_diff.files_removed.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-        "files_modified": structural_diff.files_modified.iter().map(|fd| json!({
+        "files_added": files_added.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "files_removed": files_removed.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "files_modified": files_modified.iter().map(|fd| json!({
             "path": fd.path.to_string_lossy().to_string(),
             "added": fd.declarations_added.iter().map(|d| json!({"kind": format!("{}", d.kind), "name": &d.name, "signature": &d.signature})).collect::<Vec<_>>(),
             "removed": fd.declarations_removed.iter().map(|d| json!({"kind": format!("{}", d.kind), "name": &d.name, "signature": &d.signature})).collect::<Vec<_>>(),
@@ -1881,12 +1929,12 @@ pub(super) fn tool_get_related_tests(workspace: &WorkspaceIndex, args: &Value) -
 // ---------------------------------------------------------------------------
 
 pub(super) fn tool_get_dependency_graph(workspace: &WorkspaceIndex, args: &Value) -> Value {
-    // Use first matching member for graph generation
     let indices = match resolve_indices(workspace, args) {
         Ok(i) => i,
         Err(e) => return e,
     };
-    let index = indices[0].1;
+    let merged = merge_indices(&indices);
+    let index = &merged;
     let path = args.get("path").and_then(|v| v.as_str());
     let level = args.get("level").and_then(|v| v.as_str()).unwrap_or("file");
     let format = args
@@ -1990,9 +2038,8 @@ pub(super) fn tool_get_health(workspace: &WorkspaceIndex, args: &Value) -> Value
         Ok(i) => i,
         Err(e) => return e,
     };
-    // Use first member for health computation (aggregate could be future enhancement)
-    let index = indices[0].1;
-    let h = compute_health(index, path_filter);
+    let merged = merge_indices(&indices);
+    let h = compute_health(&merged, path_filter);
 
     tool_result(json!({
         "total_functions": h.total_functions,

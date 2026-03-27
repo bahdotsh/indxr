@@ -17,8 +17,6 @@ pub struct WatchGuard {
 
 pub struct WatchOptions {
     pub ws_config: WorkspaceConfig,
-    #[allow(dead_code)]
-    pub member_filter: Option<Vec<String>>,
     pub output: Option<PathBuf>,
     pub debounce_ms: u64,
     pub quiet: bool,

@@ -28,7 +28,6 @@ use clap::Parser;
 use crate::cache::Cache;
 use crate::cli::{Cli, Command, GraphFormat, GraphLevel, OutputFormat};
 use crate::filter::FilterOptions;
-use crate::indexer::WorkspaceConfig;
 use crate::languages::Language;
 use crate::model::declarations::DeclKind;
 use crate::model::{CodebaseIndex, IndexStats};
@@ -49,17 +48,12 @@ fn main() -> Result<()> {
     }) = &cli.command
     {
         let config = index_config_from(opts);
-        let ws_index = indexer::detect_and_build_workspace(
+        let (ws_index, ws_config) = indexer::detect_and_build_workspace(
             &opts.path,
             &config,
             opts.no_workspace,
             opts.member.as_deref(),
         )?;
-        let ws_config = WorkspaceConfig {
-            workspace: workspace::detect_workspace(&opts.path)
-                .unwrap_or_else(|_| workspace::single_root_workspace(&opts.path)),
-            template: config,
-        };
 
         if let Some(addr) = http {
             #[cfg(feature = "http")]
@@ -106,19 +100,15 @@ fn main() -> Result<()> {
     }) = &cli.command
     {
         let config = index_config_from(opts);
-        let ws = if opts.no_workspace {
-            workspace::single_root_workspace(&fs::canonicalize(&opts.path)?)
-        } else {
-            workspace::detect_workspace(&opts.path)?
-        };
-        let ws_config = WorkspaceConfig {
-            workspace: ws,
-            template: config,
-        };
+        let (_ws_index, ws_config) = indexer::detect_and_build_workspace(
+            &opts.path,
+            &config,
+            opts.no_workspace,
+            opts.member.as_deref(),
+        )?;
 
         let watch_opts = watch::WatchOptions {
             ws_config,
-            member_filter: opts.member.clone(),
             output: output.clone(),
             debounce_ms: *debounce_ms,
             quiet: *quiet,

@@ -2183,3 +2183,313 @@ fn test_process_jsonrpc_unknown_method() {
     let json = serde_json::to_value(&resp).unwrap();
     assert_eq!(json["error"]["code"], -32601);
 }
+
+// -----------------------------------------------------------------------
+// Multi-member workspace tests
+// -----------------------------------------------------------------------
+
+/// Build a two-member workspace for testing cross-member behavior.
+fn make_multi_member_workspace() -> WorkspaceIndex {
+    // Member 1: "frontend" with a React component
+    let component = Declaration::new(
+        DeclKind::Function,
+        "App".to_string(),
+        "export function App(): JSX.Element".to_string(),
+        Visibility::Public,
+        1,
+    );
+    let hook = Declaration::new(
+        DeclKind::Function,
+        "useAuth".to_string(),
+        "export function useAuth(): AuthState".to_string(),
+        Visibility::Public,
+        10,
+    );
+    let frontend_file = FileIndex {
+        path: PathBuf::from("src/App.tsx"),
+        language: Language::TypeScript,
+        size: 500,
+        lines: 30,
+        imports: vec![Import {
+            text: "import { useAuth } from './hooks';".to_string(),
+        }],
+        declarations: vec![component],
+    };
+    let hooks_file = FileIndex {
+        path: PathBuf::from("src/hooks.ts"),
+        language: Language::TypeScript,
+        size: 300,
+        lines: 20,
+        imports: vec![],
+        declarations: vec![hook],
+    };
+    let frontend_index = CodebaseIndex {
+        root: PathBuf::from("/tmp/monorepo/packages/frontend"),
+        root_name: "frontend".to_string(),
+        generated_at: "2026-01-01T00:00:00Z".to_string(),
+        stats: IndexStats {
+            total_files: 2,
+            total_lines: 50,
+            languages: HashMap::from([("TypeScript".to_string(), 2)]),
+            duration_ms: 5,
+        },
+        tree: vec![],
+        files: vec![frontend_file, hooks_file],
+    };
+
+    // Member 2: "backend" with a Rust API
+    let handler = {
+        let mut d = Declaration::new(
+            DeclKind::Function,
+            "handle_login".to_string(),
+            "pub async fn handle_login(req: Request) -> Response".to_string(),
+            Visibility::Public,
+            5,
+        );
+        d.complexity = Some(ComplexityMetrics {
+            cyclomatic: 8,
+            max_nesting: 3,
+            param_count: 1,
+        });
+        d.body_lines = Some(25);
+        d
+    };
+    let auth_struct = Declaration::new(
+        DeclKind::Struct,
+        "AuthState".to_string(),
+        "pub struct AuthState".to_string(),
+        Visibility::Public,
+        1,
+    );
+    let backend_file = FileIndex {
+        path: PathBuf::from("src/handlers.rs"),
+        language: Language::Rust,
+        size: 800,
+        lines: 60,
+        imports: vec![Import {
+            text: "use crate::auth::AuthState;".to_string(),
+        }],
+        declarations: vec![handler],
+    };
+    let auth_file = FileIndex {
+        path: PathBuf::from("src/auth.rs"),
+        language: Language::Rust,
+        size: 400,
+        lines: 30,
+        imports: vec![],
+        declarations: vec![auth_struct],
+    };
+    let backend_index = CodebaseIndex {
+        root: PathBuf::from("/tmp/monorepo/packages/backend"),
+        root_name: "backend".to_string(),
+        generated_at: "2026-01-01T00:00:00Z".to_string(),
+        stats: IndexStats {
+            total_files: 2,
+            total_lines: 90,
+            languages: HashMap::from([("Rust".to_string(), 2)]),
+            duration_ms: 5,
+        },
+        tree: vec![],
+        files: vec![backend_file, auth_file],
+    };
+
+    WorkspaceIndex {
+        root: PathBuf::from("/tmp/monorepo"),
+        root_name: "monorepo".to_string(),
+        workspace_kind: "npm".to_string(),
+        generated_at: "2026-01-01T00:00:00Z".to_string(),
+        stats: IndexStats {
+            total_files: 4,
+            total_lines: 140,
+            languages: HashMap::from([("TypeScript".to_string(), 2), ("Rust".to_string(), 2)]),
+            duration_ms: 10,
+        },
+        members: vec![
+            MemberIndex {
+                name: "frontend".to_string(),
+                relative_path: PathBuf::from("packages/frontend"),
+                index: frontend_index,
+            },
+            MemberIndex {
+                name: "backend".to_string(),
+                relative_path: PathBuf::from("packages/backend"),
+                index: backend_index,
+            },
+        ],
+    }
+}
+
+#[test]
+fn test_list_workspace_members() {
+    let ws = make_multi_member_workspace();
+    let result = handle_tool_call(&ws, "list_workspace_members", &json!({}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(content["workspace_kind"], "npm");
+    assert_eq!(content["member_count"], 2);
+    let members = content["members"].as_array().unwrap();
+    let names: Vec<&str> = members
+        .iter()
+        .map(|m| m["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"frontend"));
+    assert!(names.contains(&"backend"));
+}
+
+#[test]
+fn test_lookup_symbol_across_members() {
+    let ws = make_multi_member_workspace();
+    // "Auth" should match symbols in both members
+    let result = tool_lookup_symbol(&ws, &json!({ "name": "Auth" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    let symbols = content["symbols"].as_array().unwrap();
+    let names: Vec<&str> = symbols
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    // Should find useAuth (frontend) and AuthState (backend)
+    assert!(names.contains(&"useAuth"));
+    assert!(names.contains(&"AuthState"));
+}
+
+#[test]
+fn test_lookup_symbol_scoped_to_member() {
+    let ws = make_multi_member_workspace();
+    // Scoping to "backend" should only return AuthState, not useAuth
+    let result = tool_lookup_symbol(&ws, &json!({ "name": "Auth", "member": "backend" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    let symbols = content["symbols"].as_array().unwrap();
+    let names: Vec<&str> = symbols
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"AuthState"));
+    assert!(!names.contains(&"useAuth"));
+}
+
+#[test]
+fn test_member_param_invalid_returns_error() {
+    let ws = make_multi_member_workspace();
+    let result = tool_lookup_symbol(&ws, &json!({ "name": "Auth", "member": "nonexistent" }));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("Unknown workspace member"));
+}
+
+#[test]
+fn test_get_stats_multi_member() {
+    let ws = make_multi_member_workspace();
+    let result = tool_get_stats(&ws, &json!({}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(content["total_files"], 4);
+    assert_eq!(content["total_lines"], 140);
+    assert_eq!(content["member_count"], 2);
+    assert_eq!(content["workspace_kind"], "npm");
+}
+
+#[test]
+fn test_get_stats_single_member() {
+    let ws = make_multi_member_workspace();
+    let result = tool_get_stats(&ws, &json!({ "member": "frontend" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(content["total_files"], 2);
+    assert_eq!(content["total_lines"], 50);
+}
+
+#[test]
+fn test_get_file_summary_auto_resolves_member() {
+    let ws = make_multi_member_workspace();
+    // Should auto-resolve to backend member
+    let result = tool_get_file_summary(&ws, &json!({ "path": "src/handlers.rs" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(content["file"], "src/handlers.rs");
+    assert_eq!(content["language"], "Rust");
+}
+
+#[test]
+fn test_get_callers_across_members() {
+    let ws = make_multi_member_workspace();
+    // AuthState is referenced in backend's handlers.rs imports
+    let result = tool_get_callers(&ws, &json!({ "symbol": "AuthState" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert!(content["count"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_get_hotspots_across_members() {
+    let ws = make_multi_member_workspace();
+    let result = tool_get_hotspots(&ws, &json!({}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    // Only handle_login has complexity data
+    let hotspots = content["hotspots"].as_array().unwrap();
+    assert!(!hotspots.is_empty());
+    assert_eq!(hotspots[0]["name"], "handle_login");
+}
+
+#[test]
+fn test_get_health_across_members() {
+    let ws = make_multi_member_workspace();
+    let result = tool_get_health(&ws, &json!({}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    // 3 functions total across both members: App, useAuth, handle_login
+    assert_eq!(content["total_functions"], 3);
+}
+
+#[test]
+fn test_get_public_api_across_members() {
+    let ws = make_multi_member_workspace();
+    let result = tool_get_public_api(&ws, &json!({}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    // Public: App, useAuth (frontend), handle_login, AuthState (backend)
+    assert_eq!(content["count"], 4);
+}
+
+#[test]
+fn test_search_relevant_across_members() {
+    let ws = make_multi_member_workspace();
+    let result = tool_search_relevant(&ws, &json!({ "query": "auth" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    // Should find auth-related symbols from both members
+    assert!(content["matches"].as_u64().unwrap() >= 2);
+}
+
+#[test]
+fn test_find_member_by_path() {
+    let ws = make_multi_member_workspace();
+    let m = ws.find_member_by_path("src/App.tsx");
+    assert!(m.is_some());
+    assert_eq!(m.unwrap().name, "frontend");
+
+    let m = ws.find_member_by_path("src/handlers.rs");
+    assert!(m.is_some());
+    assert_eq!(m.unwrap().name, "backend");
+
+    let m = ws.find_member_by_path("nonexistent.rs");
+    assert!(m.is_none());
+}
+
+#[test]
+fn test_find_member_by_name() {
+    let ws = make_multi_member_workspace();
+    assert!(ws.find_member("frontend").is_some());
+    assert!(ws.find_member("FRONTEND").is_some()); // case-insensitive
+    assert!(ws.find_member("nonexistent").is_none());
+}
+
+#[test]
+fn test_workspace_is_single() {
+    let ws = make_multi_member_workspace();
+    assert!(!ws.is_single());
+
+    let single = wrap_workspace(make_test_index());
+    assert!(single.is_single());
+}

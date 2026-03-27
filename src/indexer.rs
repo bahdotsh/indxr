@@ -156,28 +156,6 @@ pub fn build_index(config: &IndexConfig) -> anyhow::Result<CodebaseIndex> {
     })
 }
 
-/// Generate INDEX.md content from a `CodebaseIndex`.
-#[allow(dead_code)]
-pub fn generate_index_markdown(index: &CodebaseIndex) -> anyhow::Result<String> {
-    use crate::model::DetailLevel;
-    let formatter = MarkdownFormatter::with_options(MarkdownOptions {
-        omit_imports: false,
-        omit_tree: false,
-    });
-    formatter.format(index, DetailLevel::Signatures)
-}
-
-/// Rebuild the index and write INDEX.md to the project root.
-/// Returns the new `CodebaseIndex`.
-#[allow(dead_code)]
-pub fn regenerate_index_file(config: &IndexConfig) -> anyhow::Result<CodebaseIndex> {
-    let index = build_index(config)?;
-    let markdown = generate_index_markdown(&index)?;
-    let output_path = index.root.join("INDEX.md");
-    fs::write(&output_path, &markdown)?;
-    Ok(index)
-}
-
 // ---------------------------------------------------------------------------
 // Workspace-level indexing
 // ---------------------------------------------------------------------------
@@ -199,7 +177,7 @@ pub fn build_workspace_index(ws_config: &WorkspaceConfig) -> anyhow::Result<Work
 
     let members: Vec<anyhow::Result<MemberIndex>> = workspace
         .members
-        .iter()
+        .par_iter()
         .map(|member| {
             let member_config = IndexConfig {
                 root: member.path.clone(),
@@ -243,12 +221,13 @@ pub fn build_workspace_index(ws_config: &WorkspaceConfig) -> anyhow::Result<Work
 
 /// Detect workspace and build a `WorkspaceIndex`.
 /// If no workspace is detected, creates a single-member workspace wrapping `build_index`.
+/// Returns both the index and the config so callers don't need to re-detect the workspace.
 pub fn detect_and_build_workspace(
     root: &std::path::Path,
     config: &IndexConfig,
     no_workspace: bool,
     member_filter: Option<&[String]>,
-) -> anyhow::Result<WorkspaceIndex> {
+) -> anyhow::Result<(WorkspaceIndex, WorkspaceConfig)> {
     let mut workspace = if no_workspace {
         workspace::single_root_workspace(&fs::canonicalize(root)?)
     } else {
@@ -274,7 +253,8 @@ pub fn detect_and_build_workspace(
         template: config.clone(),
     };
 
-    build_workspace_index(&ws_config)
+    let ws_index = build_workspace_index(&ws_config)?;
+    Ok((ws_index, ws_config))
 }
 
 /// Rebuild a workspace index and write INDEX.md to the workspace root.

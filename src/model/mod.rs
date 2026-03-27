@@ -15,7 +15,7 @@ pub enum DetailLevel {
     Full,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CodebaseIndex {
     pub root: PathBuf,
     pub root_name: String,
@@ -40,14 +40,14 @@ pub struct Import {
     pub text: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TreeEntry {
     pub path: String,
     pub is_dir: bool,
     pub depth: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct IndexStats {
     pub total_files: usize,
     pub total_lines: usize,
