@@ -112,13 +112,14 @@ fn main() -> Result<()> {
 
     // Handle diff subcommand
     if let Some(Command::Diff {
-        path,
+        opts,
         pr,
         since,
         format,
     }) = &cli.command
     {
-        let root = fs::canonicalize(path)?;
+        let config = index_config_from(opts);
+        let root = fs::canonicalize(&config.root)?;
 
         let since_ref = if let Some(pr_num) = pr {
             let (base_ref, pr_info) = github::resolve_pr_base(&root, *pr_num)?;
@@ -132,16 +133,10 @@ fn main() -> Result<()> {
             since.clone().unwrap()
         };
 
-        // Build index for the project
-        let walk_result = walker::walk_directory(&root, true, 512, None, &[])?;
-        let files: Vec<&walker::FileEntry> = walk_result.files.iter().collect();
-        let mut cache = Cache::disabled();
+        let index = indexer::build_index(&config)?;
         let registry = ParserRegistry::new();
-        let results = indexer::parse_files(&files, &cache, &registry);
-        let (mut file_indices, _, _, _) = indexer::collect_results(results, &mut cache);
-        file_indices.sort_by(|a, b| a.path.cmp(&b.path));
 
-        return handle_git_diff(&root, &since_ref, &file_indices, &registry, format);
+        return handle_git_diff(&root, &since_ref, &index.files, &registry, format);
     }
 
     // Normal indexing mode

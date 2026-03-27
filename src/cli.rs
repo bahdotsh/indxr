@@ -182,9 +182,8 @@ pub enum Command {
     /// Show structural changes for a GitHub PR or git ref
     #[command(group(clap::ArgGroup::new("source").required(true).args(["pr", "since"])))]
     Diff {
-        /// Root directory of the project
-        #[arg(default_value = ".")]
-        path: PathBuf,
+        #[command(flatten)]
+        opts: IndexOpts,
 
         /// GitHub PR number to diff against its base branch
         #[arg(long)]
@@ -326,8 +325,8 @@ mod tests {
     fn test_diff_with_custom_path() {
         let cli = Cli::parse_from(["indxr", "diff", "/tmp/project", "--since", "v1.0"]);
         match cli.command {
-            Some(Command::Diff { path, since, .. }) => {
-                assert_eq!(path, PathBuf::from("/tmp/project"));
+            Some(Command::Diff { opts, since, .. }) => {
+                assert_eq!(opts.path, PathBuf::from("/tmp/project"));
                 assert_eq!(since.as_deref(), Some("v1.0"));
             }
             other => panic!("Expected Diff command, got: {other:?}"),

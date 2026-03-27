@@ -1231,8 +1231,8 @@ pub(super) fn tool_get_diff_summary(
     registry: &ParserRegistry,
     args: &Value,
 ) -> Value {
-    let has_pr = args.get("pr").is_some();
-    let has_since = args.get("since_ref").is_some();
+    let has_pr = args.get("pr").is_some_and(|v| !v.is_null());
+    let has_since = args.get("since_ref").is_some_and(|v| !v.is_null());
 
     if has_pr && has_since {
         return tool_error("Provide either 'pr' or 'since_ref', not both");
