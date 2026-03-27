@@ -1,6 +1,6 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-25 18:03:37 UTC | Files: 53 | Lines: 23170
+> Generated: 2026-03-27 07:25:58 UTC | Files: 53 | Lines: 23500
 > Languages: Markdown (14), Python (1), Rust (36), Shell (1), TOML (1)
 
 ## Directory Structure
@@ -508,7 +508,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 48.0 KB | **Lines:** 1872
+**Language:** Markdown | **Size:** 53.1 KB | **Lines:** 2032
 
 **Declarations:**
 
@@ -516,7 +516,7 @@ indxr/
 
 ## README.md
 
-**Language:** Markdown | **Size:** 10.1 KB | **Lines:** 275
+**Language:** Markdown | **Size:** 8.4 KB | **Lines:** 229
 
 **Declarations:**
 
@@ -706,7 +706,7 @@ indxr/
 
 ## src/cli.rs
 
-**Language:** Rust | **Size:** 6.0 KB | **Lines:** 235
+**Language:** Rust | **Size:** 6.1 KB | **Lines:** 239
 
 **Imports:**
 - `std::path::PathBuf`
@@ -851,11 +851,12 @@ indxr/
 
 ## src/init.rs
 
-**Language:** Rust | **Size:** 17.9 KB | **Lines:** 500
+**Language:** Rust | **Size:** 24.9 KB | **Lines:** 705
 
 **Imports:**
 - `std::fs`
 - `std::path::{Path, PathBuf}`
+- `std::process::Command as ProcessCommand`
 - `anyhow::Result`
 - `crate::indexer::{self, IndexConfig}`
 - `crate::model::DetailLevel`
@@ -871,11 +872,17 @@ indxr/
 
 `fn write_file_safe(path: &Path, content: &str, force: bool) -> Result<WriteResult>`
 
-`fn setup_claude(root: &Path, force: bool, include_hooks: bool) -> Result<Vec<WriteResult>>`
+`fn setup_claude( root: &Path, force: bool, include_hooks: bool, include_rtk: bool, ) -> Result<Vec<WriteResult>>`
 
-`fn setup_cursor(root: &Path, force: bool) -> Result<Vec<WriteResult>>`
+`fn setup_cursor(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>>`
 
-`fn setup_windsurf(root: &Path, force: bool) -> Result<Vec<WriteResult>>`
+`fn setup_windsurf(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>>`
+
+`fn detect_rtk() -> bool`
+
+`fn setup_rtk_claude(root: &Path, force: bool) -> Result<Vec<WriteResult>>`
+
+`const RTK_HOOK_SCRIPT: &str = r#"#!/bin/bash # RTK rewrite hook for Claude Code — installed by indxr init # Intercepts Bash commands and rewrites them through rtk for token compression # Skip silently if rtk or jq is not installed command -v rtk >/dev/null 2>&1 || exit 0 command -v jq >/dev/null 2>&1 || exit 0 # Extract the command from tool input COMMAND=$(printf '%s' "$TOOL_INPUT" | jq -r '.command // empty') [ -z "$COMMAND" ] && exit 0 # Ask rtk to rewrite the command REWRITTEN=$(rtk rewrite "$COMMAND" 2>/dev/null) EXIT_CODE=$? case $EXIT_CODE in 0) # Rewrite successful — auto-allow with rewritten command ESCAPED=$(printf '%s' "$REWRITTEN" | jq -Rs .) echo "`
 
 `fn setup_gitignore(root: &Path) -> Result<WriteResult>`
 
@@ -883,13 +890,13 @@ indxr/
 
 `fn mcp_json_content() -> String`
 
-`fn claude_md_content(root: &Path) -> String`
+`fn claude_md_content(root: &Path, include_rtk: bool) -> String`
 
-`fn claude_settings_content() -> String`
+`fn claude_settings_content(include_rtk: bool) -> String`
 
-`fn cursorrules_content() -> String`
+`fn cursorrules_content(include_rtk: bool) -> String`
 
-`fn windsurfrules_content() -> String`
+`fn windsurfrules_content(include_rtk: bool) -> String`
 
 `mod tests`
 
@@ -924,7 +931,7 @@ indxr/
 
 ## src/main.rs
 
-**Language:** Rust | **Size:** 10.1 KB | **Lines:** 362
+**Language:** Rust | **Size:** 10.2 KB | **Lines:** 364
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1965,7 +1972,7 @@ indxr/
 
 ## src/watch.rs
 
-**Language:** Rust | **Size:** 10.2 KB | **Lines:** 336
+**Language:** Rust | **Size:** 10.4 KB | **Lines:** 341
 
 **Imports:**
 - `std::fs`

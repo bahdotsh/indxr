@@ -204,6 +204,10 @@ pub enum Command {
         #[arg(long)]
         no_hooks: bool,
 
+        /// Skip RTK hook setup even if rtk is installed
+        #[arg(long)]
+        no_rtk: bool,
+
         /// Overwrite existing files without prompting
         #[arg(long)]
         force: bool,

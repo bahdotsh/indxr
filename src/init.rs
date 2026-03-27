@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
 use anyhow::Result;
 
@@ -16,6 +17,7 @@ pub struct InitOptions {
     pub generate_index: bool,
     pub force: bool,
     pub include_hooks: bool,
+    pub include_rtk: bool,
     pub max_file_size: u64,
 }
 
@@ -40,18 +42,29 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
     .collect();
 
     eprintln!("indxr init: setting up for {}", agents.join(", "));
+
+    // Detect RTK if not disabled
+    let rtk_detected = opts.include_rtk && detect_rtk();
+    if rtk_detected {
+        eprintln!("  RTK detected — will configure command compression hooks");
+    }
     eprintln!();
 
     let mut results = Vec::new();
 
     if opts.claude {
-        results.extend(setup_claude(&root, opts.force, opts.include_hooks)?);
+        results.extend(setup_claude(
+            &root,
+            opts.force,
+            opts.include_hooks,
+            rtk_detected,
+        )?);
     }
     if opts.cursor {
-        results.extend(setup_cursor(&root, opts.force)?);
+        results.extend(setup_cursor(&root, opts.force, rtk_detected)?);
     }
     if opts.windsurf {
-        results.extend(setup_windsurf(&root, opts.force)?);
+        results.extend(setup_windsurf(&root, opts.force, rtk_detected)?);
     }
 
     results.push(setup_gitignore(&root)?);
@@ -102,7 +115,12 @@ fn write_file_safe(path: &Path, content: &str, force: bool) -> Result<WriteResul
     Ok(WriteResult::Created(path.to_path_buf()))
 }
 
-fn setup_claude(root: &Path, force: bool, include_hooks: bool) -> Result<Vec<WriteResult>> {
+fn setup_claude(
+    root: &Path,
+    force: bool,
+    include_hooks: bool,
+    include_rtk: bool,
+) -> Result<Vec<WriteResult>> {
     let mut results = Vec::new();
     results.push(write_file_safe(
         &root.join(".mcp.json"),
@@ -111,38 +129,106 @@ fn setup_claude(root: &Path, force: bool, include_hooks: bool) -> Result<Vec<Wri
     )?);
     results.push(write_file_safe(
         &root.join("CLAUDE.md"),
-        &claude_md_content(root),
+        &claude_md_content(root, include_rtk),
         force,
     )?);
     if include_hooks {
         results.push(write_file_safe(
             &root.join(".claude/settings.json"),
-            &claude_settings_content(),
+            &claude_settings_content(include_rtk),
             force,
         )?);
+    }
+    if include_rtk && include_hooks {
+        results.extend(setup_rtk_claude(root, force)?);
     }
     Ok(results)
 }
 
-fn setup_cursor(root: &Path, force: bool) -> Result<Vec<WriteResult>> {
+fn setup_cursor(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>> {
     let results = vec![
         write_file_safe(&root.join(".cursor/mcp.json"), &mcp_json_content(), force)?,
-        write_file_safe(&root.join(".cursorrules"), &cursorrules_content(), force)?,
-    ];
-    Ok(results)
-}
-
-fn setup_windsurf(root: &Path, force: bool) -> Result<Vec<WriteResult>> {
-    let results = vec![
-        write_file_safe(&root.join(".windsurf/mcp.json"), &mcp_json_content(), force)?,
         write_file_safe(
-            &root.join(".windsurfrules"),
-            &windsurfrules_content(),
+            &root.join(".cursorrules"),
+            &cursorrules_content(include_rtk),
             force,
         )?,
     ];
     Ok(results)
 }
+
+fn setup_windsurf(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>> {
+    let results = vec![
+        write_file_safe(&root.join(".windsurf/mcp.json"), &mcp_json_content(), force)?,
+        write_file_safe(
+            &root.join(".windsurfrules"),
+            &windsurfrules_content(include_rtk),
+            force,
+        )?,
+    ];
+    Ok(results)
+}
+
+fn detect_rtk() -> bool {
+    ProcessCommand::new("rtk")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn setup_rtk_claude(root: &Path, force: bool) -> Result<Vec<WriteResult>> {
+    let hook_path = root.join(".claude/hooks/rtk-rewrite.sh");
+    let result = write_file_safe(&hook_path, RTK_HOOK_SCRIPT, force)?;
+
+    // Make executable on Unix
+    #[cfg(unix)]
+    if matches!(result, WriteResult::Created(_)) {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&hook_path)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&hook_path, perms)?;
+    }
+
+    Ok(vec![result])
+}
+
+const RTK_HOOK_SCRIPT: &str = r#"#!/bin/bash
+# RTK rewrite hook for Claude Code — installed by indxr init
+# Intercepts Bash commands and rewrites them through rtk for token compression
+
+# Skip silently if rtk or jq is not installed
+command -v rtk >/dev/null 2>&1 || exit 0
+command -v jq >/dev/null 2>&1 || exit 0
+
+# Extract the command from tool input
+COMMAND=$(printf '%s' "$TOOL_INPUT" | jq -r '.command // empty')
+[ -z "$COMMAND" ] && exit 0
+
+# Ask rtk to rewrite the command
+REWRITTEN=$(rtk rewrite "$COMMAND" 2>/dev/null)
+EXIT_CODE=$?
+
+case $EXIT_CODE in
+  0)
+    # Rewrite successful — auto-allow with rewritten command
+    ESCAPED=$(printf '%s' "$REWRITTEN" | jq -Rs .)
+    echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"command\":$ESCAPED}}}"
+    ;;
+  2)
+    # Deny rule matched
+    echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\"}}"
+    ;;
+  3)
+    # Ask rule matched
+    echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\"}}"
+    ;;
+  *)
+    # No rewrite available or error — pass through unchanged
+    exit 0
+    ;;
+esac
+"#;
 
 fn setup_gitignore(root: &Path) -> Result<WriteResult> {
     let gitignore_path = root.join(".gitignore");
@@ -204,13 +290,13 @@ fn mcp_json_content() -> String {
     .to_string()
 }
 
-fn claude_md_content(root: &Path) -> String {
+fn claude_md_content(root: &Path, include_rtk: bool) -> String {
     let project_name = root
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "Project".to_string());
 
-    format!(
+    let mut content = format!(
         r#"# {project_name}
 
 ## Codebase Navigation — MUST USE indxr MCP tools
@@ -272,40 +358,65 @@ An MCP server called `indxr` is available. **Always use indxr tools before the R
 ### After making code changes
 Run `regenerate_index` to keep INDEX.md current.
 "#
-    )
+    );
+
+    if include_rtk {
+        content.push_str(
+            r#"
+## Command output compression — RTK
+
+RTK is configured to automatically compress shell command outputs (git, cargo, npm, etc.) before they reach your context window. This happens transparently via a PreToolUse hook — no manual prefixing needed. Commands like `git status`, `cargo test`, and `npm test` are rewritten through `rtk` for 60-90% token savings on terminal output.
+"#,
+        );
+    }
+
+    content
 }
 
-fn claude_settings_content() -> String {
-    r#"{
-  "hooks": {
-    "PreToolUse": [
-      {
+fn claude_settings_content(include_rtk: bool) -> String {
+    use serde_json::json;
+
+    let read_hook = json!({
         "matcher": "Read",
-        "hooks": [
-          {
+        "hooks": [{
             "type": "command",
             "command": "echo 'IMPORTANT: Before reading full source files, use indxr MCP tools to minimize token usage:\n- get_file_summary: understand a file without reading it (~300 tokens vs ~3000+)\n- lookup_symbol / search_signatures: find specific functions/types\n- read_source: read only the exact function/symbol you need (~100 tokens vs full file)\nOnly use Read when you need to EDIT a file, need exact formatting, or the file is not source code (e.g., CLAUDE.md, Cargo.toml).'"
-          }
-        ]
-      },
-      {
+        }]
+    });
+
+    let rtk_hook = json!({
         "matcher": "Bash",
-        "hooks": [
-          {
+        "hooks": [{
             "type": "command",
-            "command": "if echo \"$TOOL_INPUT\" | grep -qE 'git\\s+diff'; then echo 'IMPORTANT: Use indxr get_diff_summary MCP tool instead of git diff. It shows structural changes (added/removed/modified declarations) at ~200-500 tokens vs thousands for raw diffs. Example: get_diff_summary(since_ref: \"main\")'; fi"
-          }
-        ]
-      }
-    ]
-  }
-}
-"#
-    .to_string()
+            "command": ".claude/hooks/rtk-rewrite.sh"
+        }]
+    });
+
+    let git_diff_hook = json!({
+        "matcher": "Bash",
+        "hooks": [{
+            "type": "command",
+            "command": "if printf '%s' \"$TOOL_INPUT\" | grep -qE 'git\\s+diff'; then echo 'IMPORTANT: Use indxr get_diff_summary MCP tool instead of git diff. It shows structural changes (added/removed/modified declarations) at ~200-500 tokens vs thousands for raw diffs. Example: get_diff_summary(since_ref: \"main\")'; fi"
+        }]
+    });
+
+    let mut hooks = vec![read_hook];
+    if include_rtk {
+        hooks.push(rtk_hook);
+    }
+    hooks.push(git_diff_hook);
+
+    let settings = json!({
+        "hooks": {
+            "PreToolUse": hooks
+        }
+    });
+
+    serde_json::to_string_pretty(&settings).unwrap() + "\n"
 }
 
-fn cursorrules_content() -> String {
-    r#"# Codebase Navigation — Use indxr MCP tools
+fn cursorrules_content(include_rtk: bool) -> String {
+    let mut content = r#"# Codebase Navigation — Use indxr MCP tools
 
 An MCP server called `indxr` is available. Always use indxr tools before reading full files.
 
@@ -333,12 +444,24 @@ An MCP server called `indxr` is available. Always use indxr tools before reading
 ## After making code changes
 Run `regenerate_index` to keep the index current.
 "#
-    .to_string()
+    .to_string();
+
+    if include_rtk {
+        content.push_str(
+            r#"
+## Command output compression — RTK
+
+RTK is installed and compresses shell command outputs (git, cargo, npm, etc.) by 60-90%, saving context window tokens.
+"#,
+        );
+    }
+
+    content
 }
 
-fn windsurfrules_content() -> String {
+fn windsurfrules_content(include_rtk: bool) -> String {
     // Same content as cursorrules — both are concise agent instruction files
-    cursorrules_content()
+    cursorrules_content(include_rtk)
 }
 
 #[cfg(test)]
@@ -356,15 +479,41 @@ mod tests {
 
     #[test]
     fn test_claude_settings_is_valid_json() {
-        let content = claude_settings_content();
+        let content = claude_settings_content(false);
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert!(parsed["hooks"]["PreToolUse"].is_array());
     }
 
     #[test]
+    fn test_claude_settings_with_rtk_is_valid_json() {
+        let content = claude_settings_content(true);
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let hooks = parsed["hooks"]["PreToolUse"].as_array().unwrap();
+        // Should have 3 entries: Read, Bash (rtk), Bash (indxr git diff)
+        assert_eq!(hooks.len(), 3);
+        assert_eq!(hooks[0]["matcher"], "Read");
+        assert_eq!(hooks[1]["matcher"], "Bash");
+        assert!(
+            hooks[1]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("rtk-rewrite")
+        );
+        assert_eq!(hooks[2]["matcher"], "Bash");
+    }
+
+    #[test]
+    fn test_claude_settings_without_rtk_has_two_hooks() {
+        let content = claude_settings_content(false);
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let hooks = parsed["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(hooks.len(), 2);
+    }
+
+    #[test]
     fn test_claude_md_contains_key_sections() {
         let dir = TempDir::new().unwrap();
-        let content = claude_md_content(dir.path());
+        let content = claude_md_content(dir.path(), false);
         assert!(content.contains("MUST USE indxr MCP tools"));
         assert!(content.contains("Token savings reference"));
         assert!(content.contains("Exploration workflow"));
@@ -373,11 +522,25 @@ mod tests {
     }
 
     #[test]
+    fn test_claude_md_with_rtk_contains_rtk_section() {
+        let dir = TempDir::new().unwrap();
+        let content = claude_md_content(dir.path(), true);
+        assert!(content.contains("Command output compression — RTK"));
+    }
+
+    #[test]
+    fn test_claude_md_without_rtk_no_rtk_section() {
+        let dir = TempDir::new().unwrap();
+        let content = claude_md_content(dir.path(), false);
+        assert!(!content.contains("RTK"));
+    }
+
+    #[test]
     fn test_claude_md_uses_directory_name() {
         let dir = TempDir::new().unwrap();
         let subdir = dir.path().join("my-project");
         fs::create_dir(&subdir).unwrap();
-        let content = claude_md_content(&subdir);
+        let content = claude_md_content(&subdir, false);
         assert!(content.starts_with("# my-project"));
     }
 
@@ -463,7 +626,7 @@ mod tests {
     #[test]
     fn test_setup_claude_creates_files() {
         let dir = TempDir::new().unwrap();
-        let results = setup_claude(dir.path(), false, true).unwrap();
+        let results = setup_claude(dir.path(), false, true, false).unwrap();
         assert_eq!(results.len(), 3);
         assert!(dir.path().join(".mcp.json").exists());
         assert!(dir.path().join("CLAUDE.md").exists());
@@ -471,9 +634,32 @@ mod tests {
     }
 
     #[test]
+    fn test_setup_claude_with_rtk_creates_hook() {
+        let dir = TempDir::new().unwrap();
+        let results = setup_claude(dir.path(), false, true, true).unwrap();
+        // 3 base files + 1 rtk hook script
+        assert_eq!(results.len(), 4);
+        assert!(dir.path().join(".claude/hooks/rtk-rewrite.sh").exists());
+
+        // Verify hook script is executable on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = fs::metadata(dir.path().join(".claude/hooks/rtk-rewrite.sh"))
+                .unwrap()
+                .permissions();
+            assert_eq!(perms.mode() & 0o111, 0o111);
+        }
+
+        // Verify settings.json includes rtk hook
+        let settings = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
+        assert!(settings.contains("rtk-rewrite"));
+    }
+
+    #[test]
     fn test_setup_claude_without_hooks() {
         let dir = TempDir::new().unwrap();
-        let results = setup_claude(dir.path(), false, false).unwrap();
+        let results = setup_claude(dir.path(), false, false, false).unwrap();
         assert_eq!(results.len(), 2);
         assert!(dir.path().join(".mcp.json").exists());
         assert!(dir.path().join("CLAUDE.md").exists());
@@ -481,9 +667,18 @@ mod tests {
     }
 
     #[test]
+    fn test_setup_claude_rtk_without_hooks_skips_rtk() {
+        let dir = TempDir::new().unwrap();
+        // include_rtk=true but include_hooks=false — rtk hook should not be created
+        let results = setup_claude(dir.path(), false, false, true).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(!dir.path().join(".claude/hooks/rtk-rewrite.sh").exists());
+    }
+
+    #[test]
     fn test_setup_cursor_creates_files() {
         let dir = TempDir::new().unwrap();
-        let results = setup_cursor(dir.path(), false).unwrap();
+        let results = setup_cursor(dir.path(), false, false).unwrap();
         assert_eq!(results.len(), 2);
         assert!(dir.path().join(".cursor/mcp.json").exists());
         assert!(dir.path().join(".cursorrules").exists());
@@ -492,9 +687,19 @@ mod tests {
     #[test]
     fn test_setup_windsurf_creates_files() {
         let dir = TempDir::new().unwrap();
-        let results = setup_windsurf(dir.path(), false).unwrap();
+        let results = setup_windsurf(dir.path(), false, false).unwrap();
         assert_eq!(results.len(), 2);
         assert!(dir.path().join(".windsurf/mcp.json").exists());
         assert!(dir.path().join(".windsurfrules").exists());
+    }
+
+    #[test]
+    fn test_rtk_hook_script_is_valid_bash() {
+        assert!(RTK_HOOK_SCRIPT.starts_with("#!/bin/bash"));
+        assert!(RTK_HOOK_SCRIPT.contains("rtk rewrite"));
+        assert!(RTK_HOOK_SCRIPT.contains("hookSpecificOutput"));
+        // Must use printf, not echo, for piping $TOOL_INPUT (echo mishandles flags/backslashes)
+        assert!(RTK_HOOK_SCRIPT.contains("printf '%s' \"$TOOL_INPUT\""));
+        assert!(!RTK_HOOK_SCRIPT.contains("echo \"$TOOL_INPUT\""));
     }
 }

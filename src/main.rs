@@ -83,6 +83,7 @@ fn main() -> Result<()> {
         all,
         no_index,
         no_hooks,
+        no_rtk,
         force,
         max_file_size,
     }) = &cli.command
@@ -101,6 +102,7 @@ fn main() -> Result<()> {
             generate_index: !no_index,
             force: *force,
             include_hooks: !no_hooks,
+            include_rtk: !no_rtk,
             max_file_size: *max_file_size,
         };
 
