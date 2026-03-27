@@ -44,7 +44,7 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
     eprintln!("indxr init: setting up for {}", agents.join(", "));
 
     // Detect RTK if not disabled
-    let rtk_detected = opts.include_rtk && detect_rtk().is_some();
+    let rtk_detected = opts.include_rtk && detect_rtk();
     if rtk_detected {
         eprintln!("  RTK detected — will configure command compression hooks");
     }
@@ -169,15 +169,12 @@ fn setup_windsurf(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<Wri
     Ok(results)
 }
 
-fn detect_rtk() -> Option<String> {
-    let output = ProcessCommand::new("rtk")
+fn detect_rtk() -> bool {
+    ProcessCommand::new("rtk")
         .arg("--version")
         .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn setup_rtk_claude(root: &Path, force: bool) -> Result<Vec<WriteResult>> {
@@ -205,7 +202,7 @@ command -v rtk >/dev/null 2>&1 || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 
 # Extract the command from tool input
-COMMAND=$(echo "$TOOL_INPUT" | jq -r '.command // empty')
+COMMAND=$(printf '%s' "$TOOL_INPUT" | jq -r '.command // empty')
 [ -z "$COMMAND" ] && exit 0
 
 # Ask rtk to rewrite the command
@@ -377,70 +374,45 @@ RTK is configured to automatically compress shell command outputs (git, cargo, n
 }
 
 fn claude_settings_content(include_rtk: bool) -> String {
-    if include_rtk {
-        r#"{
-  "hooks": {
-    "PreToolUse": [
-      {
+    use serde_json::json;
+
+    let read_hook = json!({
         "matcher": "Read",
-        "hooks": [
-          {
+        "hooks": [{
             "type": "command",
             "command": "echo 'IMPORTANT: Before reading full source files, use indxr MCP tools to minimize token usage:\n- get_file_summary: understand a file without reading it (~300 tokens vs ~3000+)\n- lookup_symbol / search_signatures: find specific functions/types\n- read_source: read only the exact function/symbol you need (~100 tokens vs full file)\nOnly use Read when you need to EDIT a file, need exact formatting, or the file is not source code (e.g., CLAUDE.md, Cargo.toml).'"
-          }
-        ]
-      },
-      {
+        }]
+    });
+
+    let rtk_hook = json!({
         "matcher": "Bash",
-        "hooks": [
-          {
+        "hooks": [{
             "type": "command",
             "command": ".claude/hooks/rtk-rewrite.sh"
-          }
-        ]
-      },
-      {
+        }]
+    });
+
+    let git_diff_hook = json!({
         "matcher": "Bash",
-        "hooks": [
-          {
+        "hooks": [{
             "type": "command",
             "command": "if echo \"$TOOL_INPUT\" | grep -qE 'git\\s+diff'; then echo 'IMPORTANT: Use indxr get_diff_summary MCP tool instead of git diff. It shows structural changes (added/removed/modified declarations) at ~200-500 tokens vs thousands for raw diffs. Example: get_diff_summary(since_ref: \"main\")'; fi"
-          }
-        ]
-      }
-    ]
-  }
-}
-"#
-        .to_string()
-    } else {
-        r#"{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo 'IMPORTANT: Before reading full source files, use indxr MCP tools to minimize token usage:\n- get_file_summary: understand a file without reading it (~300 tokens vs ~3000+)\n- lookup_symbol / search_signatures: find specific functions/types\n- read_source: read only the exact function/symbol you need (~100 tokens vs full file)\nOnly use Read when you need to EDIT a file, need exact formatting, or the file is not source code (e.g., CLAUDE.md, Cargo.toml).'"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "if echo \"$TOOL_INPUT\" | grep -qE 'git\\s+diff'; then echo 'IMPORTANT: Use indxr get_diff_summary MCP tool instead of git diff. It shows structural changes (added/removed/modified declarations) at ~200-500 tokens vs thousands for raw diffs. Example: get_diff_summary(since_ref: \"main\")'; fi"
-          }
-        ]
-      }
-    ]
-  }
-}
-"#
-        .to_string()
+        }]
+    });
+
+    let mut hooks = vec![read_hook];
+    if include_rtk {
+        hooks.push(rtk_hook);
     }
+    hooks.push(git_diff_hook);
+
+    let settings = json!({
+        "hooks": {
+            "PreToolUse": hooks
+        }
+    });
+
+    serde_json::to_string_pretty(&settings).unwrap() + "\n"
 }
 
 fn cursorrules_content(include_rtk: bool) -> String {
@@ -521,10 +493,12 @@ mod tests {
         assert_eq!(hooks.len(), 3);
         assert_eq!(hooks[0]["matcher"], "Read");
         assert_eq!(hooks[1]["matcher"], "Bash");
-        assert!(hooks[1]["hooks"][0]["command"]
-            .as_str()
-            .unwrap()
-            .contains("rtk-rewrite"));
+        assert!(
+            hooks[1]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("rtk-rewrite")
+        );
         assert_eq!(hooks[2]["matcher"], "Bash");
     }
 
