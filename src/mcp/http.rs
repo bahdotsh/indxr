@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -85,6 +85,7 @@ pub async fn run_http_server(
     let app = Router::new()
         .route("/mcp", post(handle_post).delete(handle_delete))
         .route("/mcp", get(handle_get))
+        .layer(DefaultBodyLimit::max(1_048_576)) // 1 MB
         .with_state(Arc::clone(&state));
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
@@ -171,7 +172,6 @@ async fn handle_post(
     let state2 = Arc::clone(&state);
     let response = match tokio::task::spawn_blocking(move || {
         let mut index = state2.index.write().unwrap_or_else(|e| e.into_inner());
-        // Safe to unwrap: we already verified request.id is Some (not a notification).
         process_jsonrpc_request(
             request,
             &mut index,
@@ -179,11 +179,19 @@ async fn handle_post(
             &state2.registry,
             Transport::Http,
         )
-        .expect("request with id always produces a response")
     })
     .await
     {
-        Ok(resp) => resp,
+        Ok(Some(resp)) => resp,
+        Ok(None) => {
+            // Should not happen — notifications are handled before dispatch
+            let resp = err_response(Value::Null, -32603, "Internal error".to_string());
+            return json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &resp,
+                session_id.as_deref(),
+            );
+        }
         Err(_) => {
             let resp = err_response(
                 Value::Null,
@@ -206,16 +214,20 @@ async fn handle_post(
 // ---------------------------------------------------------------------------
 
 async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if let Err(resp) = validate_session(&state, &headers) {
-        return *resp;
-    }
+    let sid = match validate_session(&state, &headers) {
+        Ok(id) => id,
+        Err(resp) => return *resp,
+    };
 
     let mut rx = state.notify_tx.subscribe();
+    let state_for_stream = Arc::clone(&state);
+    let sid_for_stream = sid.clone();
 
     let stream = async_stream::stream! {
         loop {
-            match rx.recv().await {
-                Ok(sse_event) => {
+            // Check for events with a timeout so we can periodically verify the session
+            match tokio::time::timeout(std::time::Duration::from_secs(60), rx.recv()).await {
+                Ok(Ok(sse_event)) => {
                     let mut event = Event::default().data(sse_event.data);
                     if let Some(id) = sse_event.id {
                         event = event.id(id);
@@ -225,15 +237,26 @@ async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
                     }
                     yield Ok::<_, Infallible>(event);
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => break,
+                Ok(Err(broadcast::error::RecvError::Lagged(_))) => continue,
+                Ok(Err(broadcast::error::RecvError::Closed)) => break,
+                Err(_) => {
+                    // Timeout — check if session is still valid
+                    let sessions = state_for_stream.sessions.read().unwrap_or_else(|e| e.into_inner());
+                    if !matches!(sessions.get(&sid_for_stream), Some(info) if info.created_at.elapsed() < SESSION_TTL) {
+                        break;
+                    }
+                }
             }
         }
     };
 
-    Sse::new(stream)
+    let mut response = Sse::new(stream)
         .keep_alive(KeepAlive::default())
-        .into_response()
+        .into_response();
+    response
+        .headers_mut()
+        .insert("mcp-session-id", sid.parse().unwrap());
+    response
 }
 
 // ---------------------------------------------------------------------------
@@ -712,6 +735,15 @@ mod tests {
                 .to_str()
                 .unwrap(),
             "text/event-stream"
+        );
+        assert_eq!(
+            resp.headers()
+                .get("mcp-session-id")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            sid,
+            "SSE response should include Mcp-Session-Id header"
         );
     }
 }
