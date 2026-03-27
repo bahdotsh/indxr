@@ -4,8 +4,8 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::model::CodebaseIndex;
 use crate::model::declarations::{Declaration, RelKind};
+use crate::model::{CodebaseIndex, FileIndex};
 use crate::utils::contains_word_boundary;
 
 // ---------------------------------------------------------------------------
@@ -383,7 +383,17 @@ pub fn build_file_graph(
     scope: Option<&str>,
     depth: Option<usize>,
 ) -> DepGraph {
-    let all_paths: Vec<&Path> = index.files.iter().map(|f| f.path.as_path()).collect();
+    let refs: Vec<&FileIndex> = index.files.iter().collect();
+    build_file_graph_from_file_refs(&refs, scope, depth)
+}
+
+/// Like `build_file_graph`, but accepts borrowed file references from multiple indices.
+pub fn build_file_graph_from_file_refs(
+    files: &[&FileIndex],
+    scope: Option<&str>,
+    depth: Option<usize>,
+) -> DepGraph {
+    let all_paths: Vec<&Path> = files.iter().map(|f| f.path.as_path()).collect();
 
     // Pre-compute lowercase path info once (avoids repeated allocations in inner loops)
     let path_infos: Vec<PathInfo> = all_paths
@@ -411,7 +421,7 @@ pub fn build_file_graph(
     // discover transitive dependencies through non-scoped files)
     let mut full_adjacency: HashMap<String, HashSet<String>> = HashMap::new();
 
-    for file in &index.files {
+    for file in files {
         let file_path = file.path.to_string_lossy().to_string();
 
         for imp in &file.imports {
@@ -523,12 +533,22 @@ pub fn build_symbol_graph(
     scope: Option<&str>,
     depth: Option<usize>,
 ) -> DepGraph {
+    let refs: Vec<&FileIndex> = index.files.iter().collect();
+    build_symbol_graph_from_file_refs(&refs, scope, depth)
+}
+
+/// Like `build_symbol_graph`, but accepts borrowed file references from multiple indices.
+pub fn build_symbol_graph_from_file_refs(
+    files: &[&FileIndex],
+    scope: Option<&str>,
+    depth: Option<usize>,
+) -> DepGraph {
     let scope_lower = scope.map(|s| s.to_lowercase());
 
     // Collect ALL symbols (needed so relationship targets across files can be resolved)
     let mut name_counts: HashMap<String, usize> = HashMap::new();
     let mut all_symbols: Vec<SymInfo> = Vec::new();
-    for file in &index.files {
+    for file in files {
         let file_path = file.path.to_string_lossy().to_string();
         collect_symbols_ext(
             &file.declarations,

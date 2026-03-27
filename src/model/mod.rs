@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use self::declarations::Declaration;
 use crate::languages::Language;
+use crate::workspace::WorkspaceKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
 pub enum DetailLevel {
@@ -65,7 +66,7 @@ pub struct WorkspaceIndex {
     /// Absolute path to the workspace root.
     pub root: PathBuf,
     pub root_name: String,
-    pub workspace_kind: String,
+    pub workspace_kind: WorkspaceKind,
     pub generated_at: String,
     /// Per-member indices.
     pub members: Vec<MemberIndex>,
@@ -99,11 +100,11 @@ impl WorkspaceIndex {
     ///    `"crates/alpha/src/lib.rs"`)
     /// 3. Reverse suffix: `path` ends with `file_path`
     ///
-    /// When multiple members match via suffix, the one with the longest matching
-    /// file path wins (most specific match). This avoids ambiguity when several
-    /// members contain files with the same basename (e.g. `lib.rs`).
+    /// When multiple members match via suffix at the same specificity level,
+    /// returns `None` to avoid silently picking the wrong member.
     pub fn find_member_by_path(&self, path: &str) -> Option<&MemberIndex> {
         let mut best: Option<(&MemberIndex, usize)> = None; // (member, match_specificity)
+        let mut ambiguous = false;
 
         for member in &self.members {
             for file in &member.index.files {
@@ -114,29 +115,38 @@ impl WorkspaceIndex {
                     return Some(member);
                 }
 
-                let specificity = if file_path.ends_with(path) {
-                    // Query is a suffix of the indexed path — specificity is the
-                    // full indexed path length (longer = more specific context).
-                    Some(file_path.len())
-                } else if path.ends_with(&*file_path) {
-                    Some(file_path.len())
-                } else {
-                    None
-                };
+                let matches = file_path.ends_with(path) || path.ends_with(&*file_path);
 
-                if let Some(s) = specificity {
-                    if best.as_ref().is_none_or(|(_, prev)| s > *prev) {
-                        best = Some((member, s));
+                if matches {
+                    let s = file_path.len();
+                    match best {
+                        Some((prev_member, prev_s)) if s == prev_s => {
+                            // Same specificity but different member → ambiguous
+                            if !std::ptr::eq(prev_member, member) {
+                                ambiguous = true;
+                            }
+                        }
+                        Some((_, prev_s)) if s > prev_s => {
+                            best = Some((member, s));
+                            ambiguous = false;
+                        }
+                        None => {
+                            best = Some((member, s));
+                        }
+                        _ => {} // lower specificity, ignore
                     }
                 }
             }
         }
 
+        if ambiguous {
+            return None;
+        }
         best.map(|(m, _)| m)
     }
 
     /// Returns true if this is a single-member "none" workspace (non-monorepo).
     pub fn is_single(&self) -> bool {
-        self.workspace_kind == "none"
+        self.workspace_kind == WorkspaceKind::None
     }
 }

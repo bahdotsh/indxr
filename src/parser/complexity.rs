@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use crate::languages::Language;
-use crate::model::CodebaseIndex;
 use crate::model::declarations::{ComplexityMetrics, DeclKind, Declaration, Visibility};
+use crate::model::{CodebaseIndex, FileIndex};
 use crate::utils::path_matches_filter;
 
 /// Annotate declarations with complexity metrics by walking the tree-sitter AST.
@@ -500,9 +500,19 @@ pub fn collect_hotspots(
     path_filter: Option<&str>,
     min_complexity: u16,
 ) -> Vec<HotspotEntry> {
+    let refs: Vec<&FileIndex> = index.files.iter().collect();
+    collect_hotspots_from_file_refs(&refs, path_filter, min_complexity)
+}
+
+/// Like `collect_hotspots`, but accepts borrowed file references from multiple indices.
+pub fn collect_hotspots_from_file_refs(
+    files: &[&FileIndex],
+    path_filter: Option<&str>,
+    min_complexity: u16,
+) -> Vec<HotspotEntry> {
     let mut entries = Vec::new();
 
-    for file in &index.files {
+    for file in files {
         let file_path = file.path.to_string_lossy();
         if let Some(filter) = path_filter {
             if !path_matches_filter(&file_path, filter) {
@@ -657,10 +667,17 @@ fn round1(v: f64) -> f64 {
 }
 
 /// Compute a codebase health report with aggregate complexity metrics.
-pub fn compute_health(index: &CodebaseIndex, path_filter: Option<&str>) -> HealthReport {
+///
+/// Accepts borrowed file references, allowing callers to pass files from
+/// a single `CodebaseIndex` (`index.files.iter().collect()`) or from
+/// multiple workspace members without cloning.
+pub fn compute_health_from_file_refs(
+    files: &[&FileIndex],
+    path_filter: Option<&str>,
+) -> HealthReport {
     let mut acc = HealthAccumulator::new();
 
-    for file in &index.files {
+    for file in files {
         let file_path = file.path.to_string_lossy();
         if let Some(filter) = path_filter {
             if !path_matches_filter(&file_path, filter) {

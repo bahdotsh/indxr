@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 /// The kind of workspace detected at a root directory.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum WorkspaceKind {
     /// Cargo workspace (`Cargo.toml` with `[workspace]` section).
     Cargo,
@@ -269,8 +270,13 @@ fn detect_go_workspace(root: &Path, go_work: &Path) -> Result<Option<Workspace>>
         let trimmed = line.trim();
 
         // Single-line: use ./path
-        if trimmed.starts_with("use ") && !trimmed.contains('(') {
-            if let Some(path_str) = parse_go_work_path(trimmed.strip_prefix("use ").unwrap()) {
+        // Strip inline comments before checking for '(' to avoid confusing
+        // `use ./path // some (comment)` with a multi-line use block.
+        let without_comment = trimmed.split("//").next().unwrap_or(trimmed).trim();
+        if without_comment.starts_with("use ") && !without_comment.contains('(') {
+            if let Some(path_str) =
+                parse_go_work_path(without_comment.strip_prefix("use ").unwrap())
+            {
                 if let Some(member) = resolve_go_member(root, &path_str) {
                     members.push(member);
                 }

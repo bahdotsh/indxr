@@ -13,7 +13,7 @@ use crate::languages::Language;
 use crate::model::declarations::{DeclKind, Declaration};
 use crate::model::{CodebaseIndex, FileIndex, WorkspaceIndex};
 use crate::parser::ParserRegistry;
-use crate::parser::complexity::{collect_hotspots, compute_health, sort_hotspots};
+use crate::parser::complexity::{collect_hotspots, compute_health_from_file_refs, sort_hotspots};
 
 use super::helpers::*;
 use super::type_flow::*;
@@ -534,59 +534,43 @@ fn resolve_indices<'a>(
 }
 
 /// Resolve a single member index from a path argument, searching across members.
+///
+/// Returns `Err` with a tool error if an explicit `member` param doesn't match.
+/// Returns `Ok(None)` only when no member can be found by path and there are
+/// multiple members (caller should produce a "file not found" error).
 fn resolve_index_by_path<'a>(
     workspace: &'a WorkspaceIndex,
     args: &Value,
     path: &str,
-) -> Option<(&'a str, &'a CodebaseIndex)> {
-    // If member is explicitly specified, use it
+) -> Result<Option<(&'a str, &'a CodebaseIndex)>, Value> {
+    // If member is explicitly specified, use it — error if it doesn't match
     if let Some(member_name) = args.get("member").and_then(|v| v.as_str()) {
-        if let Some(m) = workspace.find_member(member_name) {
-            return Some((&m.name, &m.index));
-        }
+        return match workspace.find_member(member_name) {
+            Some(m) => Ok(Some((&m.name, &m.index))),
+            None => Err(tool_error(&format!(
+                "Unknown workspace member: {}. Use list_workspace_members to see available members.",
+                member_name
+            ))),
+        };
     }
     // Auto-resolve by finding which member has this file
     if let Some(m) = workspace.find_member_by_path(path) {
-        return Some((&m.name, &m.index));
+        return Ok(Some((&m.name, &m.index)));
     }
     // Single-member fallback
     if workspace.members.len() == 1 {
         let m = &workspace.members[0];
-        return Some((&m.name, &m.index));
+        return Ok(Some((&m.name, &m.index)));
     }
-    None
+    Ok(None)
 }
 
-/// Build a merged `CodebaseIndex` from multiple resolved indices.
-/// Used by tools (health, dependency graph) that require a single `CodebaseIndex`.
-fn merge_indices(indices: &[(&str, &CodebaseIndex)]) -> CodebaseIndex {
-    if indices.len() == 1 {
-        return indices[0].1.clone();
-    }
-    let first = indices[0].1;
-    let mut merged = CodebaseIndex {
-        root: first.root.clone(),
-        root_name: first.root_name.clone(),
-        generated_at: first.generated_at.clone(),
-        stats: crate::model::IndexStats {
-            total_files: 0,
-            total_lines: 0,
-            languages: HashMap::new(),
-            duration_ms: 0,
-        },
-        tree: Vec::new(),
-        files: Vec::new(),
-    };
-    for (_name, index) in indices {
-        merged.files.extend(index.files.iter().cloned());
-        merged.tree.extend(index.tree.iter().cloned());
-        merged.stats.total_files += index.stats.total_files;
-        merged.stats.total_lines += index.stats.total_lines;
-        for (lang, count) in &index.stats.languages {
-            *merged.stats.languages.entry(lang.clone()).or_insert(0) += count;
-        }
-    }
-    merged
+/// Collect borrowed file references from resolved indices (zero-copy).
+fn collect_file_refs<'a>(indices: &[(&str, &'a CodebaseIndex)]) -> Vec<&'a FileIndex> {
+    indices
+        .iter()
+        .flat_map(|(_, index)| index.files.iter())
+        .collect()
 }
 
 /// Merged structural diff result across workspace members.
@@ -822,8 +806,11 @@ pub(super) fn tool_list_declarations(workspace: &WorkspaceIndex, args: &Value) -
     };
 
     let (_member_name, index) = match resolve_index_by_path(workspace, args, path) {
-        Some(r) => r,
-        None => return tool_error(&format!("File not found in any workspace member: {}", path)),
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return tool_error(&format!("File not found in any workspace member: {}", path));
+        }
+        Err(e) => return e,
     };
 
     let file = find_file(index, path);
@@ -985,8 +972,11 @@ pub(super) fn tool_get_imports(workspace: &WorkspaceIndex, args: &Value) -> Valu
     };
 
     let (_member_name, index) = match resolve_index_by_path(workspace, args, path) {
-        Some(r) => r,
-        None => return tool_error(&format!("File not found in any workspace member: {}", path)),
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return tool_error(&format!("File not found in any workspace member: {}", path));
+        }
+        Err(e) => return e,
     };
 
     let file = match find_file(index, path) {
@@ -1040,8 +1030,11 @@ pub(super) fn tool_get_file_summary(workspace: &WorkspaceIndex, args: &Value) ->
     };
 
     let (_member_name, index) = match resolve_index_by_path(workspace, args, path) {
-        Some(r) => r,
-        None => return tool_error(&format!("File not found in any workspace member: {}", path)),
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return tool_error(&format!("File not found in any workspace member: {}", path));
+        }
+        Err(e) => return e,
     };
 
     let file = match find_file(index, path) {
@@ -1059,8 +1052,11 @@ pub(super) fn tool_read_source(workspace: &WorkspaceIndex, args: &Value) -> Valu
     };
 
     let (_member_name, index) = match resolve_index_by_path(workspace, args, path) {
-        Some(r) => r,
-        None => return tool_error(&format!("File not found in any workspace member: {}", path)),
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return tool_error(&format!("File not found in any workspace member: {}", path));
+        }
+        Err(e) => return e,
     };
 
     let file = match find_file(index, path) {
@@ -1214,8 +1210,11 @@ pub(super) fn tool_get_file_context(workspace: &WorkspaceIndex, args: &Value) ->
     };
 
     let (_member_name, index) = match resolve_index_by_path(workspace, args, path) {
-        Some(r) => r,
-        None => return tool_error(&format!("File not found in any workspace member: {}", path)),
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return tool_error(&format!("File not found in any workspace member: {}", path));
+        }
+        Err(e) => return e,
     };
 
     let file = match find_file(index, path) {
@@ -1404,8 +1403,11 @@ pub(super) fn tool_get_token_estimate(workspace: &WorkspaceIndex, args: &Value) 
     };
 
     let (_member_name, index) = match resolve_index_by_path(workspace, args, path) {
-        Some(r) => r,
-        None => return tool_error(&format!("File not found in any workspace member: {}", path)),
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return tool_error(&format!("File not found in any workspace member: {}", path));
+        }
+        Err(e) => return e,
     };
 
     let file = match find_file(index, path) {
@@ -1955,8 +1957,7 @@ pub(super) fn tool_get_dependency_graph(workspace: &WorkspaceIndex, args: &Value
         Ok(i) => i,
         Err(e) => return e,
     };
-    let merged = merge_indices(&indices);
-    let index = &merged;
+    let file_refs = collect_file_refs(&indices);
     let path = args.get("path").and_then(|v| v.as_str());
     let level = args.get("level").and_then(|v| v.as_str()).unwrap_or("file");
     let format = args
@@ -1969,8 +1970,8 @@ pub(super) fn tool_get_dependency_graph(workspace: &WorkspaceIndex, args: &Value
         .map(|d| d as usize);
 
     let graph = match level {
-        "symbol" => dep_graph::build_symbol_graph(index, path, depth),
-        _ => dep_graph::build_file_graph(index, path, depth),
+        "symbol" => dep_graph::build_symbol_graph_from_file_refs(&file_refs, path, depth),
+        _ => dep_graph::build_file_graph_from_file_refs(&file_refs, path, depth),
     };
 
     let node_count = graph.nodes.len();
@@ -2060,8 +2061,8 @@ pub(super) fn tool_get_health(workspace: &WorkspaceIndex, args: &Value) -> Value
         Ok(i) => i,
         Err(e) => return e,
     };
-    let merged = merge_indices(&indices);
-    let h = compute_health(&merged, path_filter);
+    let file_refs = collect_file_refs(&indices);
+    let h = compute_health_from_file_refs(&file_refs, path_filter);
 
     tool_result(json!({
         "total_functions": h.total_functions,

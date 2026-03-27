@@ -8,6 +8,7 @@ use crate::model::declarations::{
     ComplexityMetrics, DeclKind, Declaration, RelKind, Relationship, Visibility,
 };
 use crate::model::{CodebaseIndex, FileIndex, Import, IndexStats, MemberIndex, WorkspaceIndex};
+use crate::workspace::WorkspaceKind;
 
 use super::helpers::*;
 use super::tools::*;
@@ -21,7 +22,7 @@ fn wrap_workspace(index: CodebaseIndex) -> WorkspaceIndex {
     WorkspaceIndex {
         root: index.root.clone(),
         root_name: index.root_name.clone(),
-        workspace_kind: "none".to_string(),
+        workspace_kind: WorkspaceKind::None,
         generated_at: index.generated_at.clone(),
         stats: IndexStats {
             total_files: index.stats.total_files,
@@ -2296,7 +2297,7 @@ fn make_multi_member_workspace() -> WorkspaceIndex {
     WorkspaceIndex {
         root: PathBuf::from("/tmp/monorepo"),
         root_name: "monorepo".to_string(),
-        workspace_kind: "npm".to_string(),
+        workspace_kind: WorkspaceKind::Npm,
         generated_at: "2026-01-01T00:00:00Z".to_string(),
         stats: IndexStats {
             total_files: 4,

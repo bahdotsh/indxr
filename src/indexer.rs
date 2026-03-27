@@ -210,7 +210,7 @@ pub fn build_workspace_index(ws_config: &WorkspaceConfig) -> anyhow::Result<Work
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "workspace".to_string()),
-        workspace_kind: workspace.kind.as_str().to_string(),
+        workspace_kind: workspace.kind,
         generated_at: chrono::Utc::now()
             .format("%Y-%m-%d %H:%M:%S UTC")
             .to_string(),
@@ -288,7 +288,7 @@ pub fn generate_workspace_markdown(ws_index: &WorkspaceIndex) -> anyhow::Result<
         out,
         "> Generated: {} | Workspace: {} | Members: {} | Files: {} | Lines: {}",
         ws_index.generated_at,
-        ws_index.workspace_kind,
+        ws_index.workspace_kind.as_str(),
         ws_index.members.len(),
         ws_index.stats.total_files,
         ws_index.stats.total_lines
