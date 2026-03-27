@@ -68,7 +68,7 @@ fn collect_from_ast(
 
 fn apply_metrics(decls: &mut [Declaration], metrics: &HashMap<usize, ComplexityMetrics>) {
     for decl in decls.iter_mut() {
-        if is_function_kind(&decl.kind) {
+        if is_ts_function_kind(&decl.kind) {
             if let Some(m) = metrics.get(&decl.line) {
                 decl.complexity = Some(m.clone());
             }
@@ -355,7 +355,7 @@ fn nesting_node_kinds(language: &Language) -> &'static [&'static str] {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn is_function_kind(kind: &DeclKind) -> bool {
+fn is_ts_function_kind(kind: &DeclKind) -> bool {
     matches!(kind, DeclKind::Function | DeclKind::Method)
 }
 
@@ -594,6 +594,42 @@ int factorial(int n) {
         assert_eq!(c.param_count, 1);
         assert_eq!(c.cyclomatic, 2); // 1 + if
         assert_eq!(c.max_nesting, 1);
+    }
+
+    #[test]
+    fn typescript_ternary_and_nullish_coalescing() {
+        let src = r#"
+function choose(x: number, fallback: string | null): string {
+    const a = x > 0 ? "pos" : "neg";
+    const b = fallback ?? "default";
+    if (x === 0) {
+        return b;
+    }
+    return a;
+}
+"#;
+        let decls = parse_and_annotate(src, Language::TypeScript);
+        let c = get_complexity(&decls, "choose").expect("should have complexity");
+        assert_eq!(c.param_count, 2);
+        // 1 base + ternary + ?? + if = 4
+        assert_eq!(c.cyclomatic, 4);
+        assert_eq!(c.max_nesting, 1); // only the if_statement nests
+    }
+
+    #[test]
+    fn javascript_ternary_and_logical_or() {
+        let src = r#"
+function greet(name, loud) {
+    const greeting = loud ? "HELLO" : "hello";
+    return greeting + " " + (name || "world");
+}
+"#;
+        let decls = parse_and_annotate(src, Language::JavaScript);
+        let c = get_complexity(&decls, "greet").expect("should have complexity");
+        assert_eq!(c.param_count, 2);
+        // 1 base + ternary + || = 3
+        assert_eq!(c.cyclomatic, 3);
+        assert_eq!(c.max_nesting, 0);
     }
 
     #[test]

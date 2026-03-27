@@ -9,7 +9,7 @@ use crate::dep_graph;
 use crate::diff;
 use crate::indexer::{self, IndexConfig};
 use crate::languages::Language;
-use crate::model::declarations::{DeclKind, Declaration};
+use crate::model::declarations::{DeclKind, Declaration, Visibility};
 use crate::model::{CodebaseIndex, FileIndex};
 use crate::parser::ParserRegistry;
 use crate::parser::complexity::collect_hotspots;
@@ -1666,8 +1666,6 @@ impl HealthAccumulator {
     }
 
     fn collect(&mut self, file_path: &str, decls: &[Declaration]) {
-        use crate::model::declarations::Visibility;
-
         for decl in decls {
             let is_func = matches!(
                 decl.kind,
@@ -1741,7 +1739,7 @@ pub(super) fn tool_get_health(index: &CodebaseIndex, args: &Value) -> Value {
     let p90_cc = if acc.cc_values.is_empty() {
         0
     } else {
-        acc.cc_values[(acc.cc_values.len() as f64 * 0.9) as usize]
+        acc.cc_values[((acc.cc_values.len() as f64 * 0.9) as usize).min(acc.cc_values.len() - 1)]
     };
     let max_cc = acc.cc_values.last().copied().unwrap_or(0);
     let avg_cc = if acc.cc_values.is_empty() {
