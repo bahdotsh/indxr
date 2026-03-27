@@ -32,6 +32,8 @@ Track where types flow across function boundaries.
 - MCP tool: `get_type_flow` — given a type name, show who produces and consumes it
 - Supports path filtering, field inclusion, compact mode, and result limiting
 
+## Planned
+
 ### HTTP+SSE MCP transport
 HTTP server with SSE transport alongside existing stdin/stdout JSON-RPC.
 - `indxr serve --http :8080`
