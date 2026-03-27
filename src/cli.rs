@@ -98,6 +98,11 @@ pub struct Cli {
     #[arg(long)]
     pub omit_tree: bool,
 
+    // === Complexity hotspots ===
+    /// Show complexity hotspots (most complex functions) and exit
+    #[arg(long)]
+    pub hotspots: bool,
+
     // === Dependency graph ===
     /// Output dependency graph instead of index (dot, mermaid, or json)
     #[arg(long, value_name = "FORMAT")]

@@ -440,6 +440,81 @@ Get structural changes (added/removed/modified declarations) since a git ref. Mu
 }
 ```
 
+### `get_hotspots`
+
+Get the most complex functions/methods in the codebase, ranked by a composite complexity score. Useful for identifying refactoring targets and understanding where technical debt concentrates. Only includes tree-sitter parsed languages (Rust, Python, TS, JS, Go, Java, C, C++).
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `limit` | number | no | Maximum number of results (default: 20, max: 100) |
+| `path` | string | no | Optional file or directory path filter |
+| `min_complexity` | number | no | Minimum cyclomatic complexity to include (default: 1) |
+| `sort_by` | string | no | Sort criterion: `score` (default), `complexity`, `nesting`, `params`, `body_lines` |
+| `compact` | boolean | no | Return columnar format (saves ~30% tokens) |
+
+**Example:**
+```json
+{
+  "params": {
+    "name": "get_hotspots",
+    "arguments": { "limit": 10, "min_complexity": 5 }
+  }
+}
+```
+
+**Example response:**
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "{\"total\":42,\"hotspots\":[{\"file\":\"src/parser.rs\",\"name\":\"parse_file\",\"kind\":\"function\",\"line\":10,\"cyclomatic\":12,\"max_nesting\":4,\"param_count\":1,\"body_lines\":20,\"score\":18.5}]}"
+  }]
+}
+```
+
+**Score formula:** `cyclomatic + nesting*2 + params*0.5 + body_lines/20`
+
+### `get_health`
+
+Get a codebase health summary with aggregate complexity metrics, documentation coverage, test ratio, and quality indicators. Only complexity data from tree-sitter parsed languages is included.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `path` | string | no | Optional path filter to scope to a directory or file |
+
+**Example:**
+```json
+{
+  "params": {
+    "name": "get_health",
+    "arguments": { "path": "src/parser" }
+  }
+}
+```
+
+**Example response:**
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "{\"total_functions\":150,\"analyzed\":120,\"complexity\":{\"avg\":4.2,\"median\":3,\"max\":25,\"p90\":10},\"nesting\":{\"avg\":1.8},\"params\":{\"avg\":2.1},\"body_lines\":{\"avg\":15.3},\"high_complexity_count\":8,\"high_complexity_pct\":6.7,\"documented_pct\":45.0,\"test_count\":35,\"deprecated_count\":2,\"public_api_count\":60,\"hottest_files\":[{\"file\":\"src/parser.rs\",\"functions\":12,\"avg_complexity\":8.5,\"max_complexity\":25}]}"
+  }]
+}
+```
+
+**Fields:**
+- `total_functions` — total function/method count (all languages)
+- `analyzed` — functions with complexity data (tree-sitter languages only)
+- `complexity` — avg, median, max, p90 cyclomatic complexity
+- `high_complexity_count/pct` — functions with cyclomatic complexity >= 10
+- `documented_pct` — percentage of functions with doc comments
+- `test_count` — number of test functions
+- `hottest_files` — top 5 files by average complexity (min 2 functions)
+
 ## Configuration for AI Tools
 
 > **Tip:** `indxr init` can create all these configuration files automatically. See `indxr init --help` or the [Agent Integration Guide](agent-integration.md#quick-setup).

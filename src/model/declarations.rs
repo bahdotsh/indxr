@@ -22,9 +22,20 @@ pub struct Declaration {
     #[serde(default)]
     pub body_lines: Option<usize>,
 
+    // Complexity metrics (tree-sitter languages only)
+    #[serde(default)]
+    pub complexity: Option<ComplexityMetrics>,
+
     // Cross-references
     #[serde(default)]
     pub relationships: Vec<Relationship>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ComplexityMetrics {
+    pub cyclomatic: u16,
+    pub max_nesting: u16,
+    pub param_count: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +108,7 @@ impl Declaration {
             is_async: false,
             is_deprecated: false,
             body_lines: None,
+            complexity: None,
             relationships: Vec::new(),
         }
     }

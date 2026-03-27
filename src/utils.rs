@@ -1,3 +1,8 @@
+/// Returns true if `file_path` matches the given filter (substring match).
+pub fn path_matches_filter(file_path: &str, filter: &str) -> bool {
+    file_path.contains(filter)
+}
+
 /// Check if `text` contains `word` at a word boundary (not part of a larger identifier).
 /// Word boundaries are non-alphanumeric, non-underscore characters or string edges.
 pub fn contains_word_boundary(text: &str, word: &str) -> bool {

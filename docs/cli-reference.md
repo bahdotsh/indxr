@@ -122,6 +122,14 @@ indxr /home/user/repos/backend
 | `--no-cache` | Disable incremental caching | off |
 | `--cache-dir <DIR>` | Custom cache directory | `.indxr-cache` |
 
+### Complexity Hotspots
+
+| Flag | Description |
+|------|-------------|
+| `--hotspots` | Show the top 30 most complex functions and exit |
+
+Outputs a table with composite score, cyclomatic complexity, max nesting depth, parameter count, and body lines for each function. Only tree-sitter parsed languages (Rust, Python, TypeScript, JavaScript, Go, Java, C, C++) are analyzed. Combine with `--filter-path` to scope to a directory.
+
 ### Dependency Graph
 
 | Flag | Description |
@@ -283,6 +291,22 @@ indxr init --force
 
 # Re-run after initial setup (skips existing files)
 indxr init
+```
+
+### Complexity Hotspots
+
+```bash
+# Show top 30 most complex functions
+indxr --hotspots
+
+# Scoped to a directory
+indxr --hotspots --filter-path src/parser
+
+# Example output:
+#   Score   CC  Nest Params  Lines  Function
+# ------------------------------------------------------------------------------
+#    18.5   12     4      1     20  src/parser.rs:10  parse_file
+#     5.3    2     1      1      5  src/utils.rs:35   internal_helper
 ```
 
 ### Dependency Graph

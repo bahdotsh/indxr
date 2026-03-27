@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use serde_json::{Value, json};
 
 use crate::languages::Language;
-use crate::model::declarations::{DeclKind, Declaration, RelKind, Relationship, Visibility};
+use crate::model::declarations::{
+    ComplexityMetrics, DeclKind, Declaration, RelKind, Relationship, Visibility,
+};
 use crate::model::{CodebaseIndex, FileIndex, Import, IndexStats};
 
 use super::helpers::*;
@@ -181,8 +183,10 @@ fn test_tool_definitions_include_new_tools() {
     assert!(names.contains(&"explain_symbol"));
     assert!(names.contains(&"get_related_tests"));
     assert!(names.contains(&"get_dependency_graph"));
-    // Total: 12 original + 7 new = 19
-    assert_eq!(names.len(), 19);
+    assert!(names.contains(&"get_hotspots"));
+    assert!(names.contains(&"get_health"));
+    // Total: 12 original + 9 new = 21
+    assert_eq!(names.len(), 21);
 }
 
 // -----------------------------------------------------------------------
@@ -445,6 +449,11 @@ fn make_test_index() -> CodebaseIndex {
         );
         d.body_lines = Some(20);
         d.doc_comment = Some("Parse a single source file.".to_string());
+        d.complexity = Some(ComplexityMetrics {
+            cyclomatic: 12,
+            max_nesting: 4,
+            param_count: 1,
+        });
         d.relationships.push(Relationship {
             kind: RelKind::Implements,
             target: "Parser".to_string(),
@@ -465,13 +474,22 @@ fn make_test_index() -> CodebaseIndex {
         d
     };
 
-    let helper_fn = Declaration::new(
-        DeclKind::Function,
-        "internal_helper".to_string(),
-        "fn internal_helper(x: &str) -> bool".to_string(),
-        Visibility::Private,
-        35,
-    );
+    let helper_fn = {
+        let mut d = Declaration::new(
+            DeclKind::Function,
+            "internal_helper".to_string(),
+            "fn internal_helper(x: &str) -> bool".to_string(),
+            Visibility::Private,
+            35,
+        );
+        d.body_lines = Some(5);
+        d.complexity = Some(ComplexityMetrics {
+            cyclomatic: 2,
+            max_nesting: 1,
+            param_count: 1,
+        });
+        d
+    };
 
     let cache_struct = {
         let mut d = Declaration::new(
@@ -1310,4 +1328,139 @@ fn test_tool_dependency_graph_defaults_to_mermaid() {
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["format"], "mermaid");
+}
+
+// -----------------------------------------------------------------------
+// get_hotspots
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_tool_get_hotspots_default() {
+    let index = make_test_index();
+    let result = tool_get_hotspots(&index, &json!({}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    // parse_file (cc=12) and internal_helper (cc=2) have complexity
+    assert_eq!(content["total"], 2);
+    let hotspots = content["hotspots"].as_array().unwrap();
+    assert_eq!(hotspots.len(), 2);
+    // Sorted by score descending — parse_file should be first
+    assert_eq!(hotspots[0]["name"], "parse_file");
+    assert_eq!(hotspots[1]["name"], "internal_helper");
+}
+
+#[test]
+fn test_tool_get_hotspots_min_complexity_filter() {
+    let index = make_test_index();
+    let result = tool_get_hotspots(&index, &json!({ "min_complexity": 10 }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    // Only parse_file (cc=12) meets min_complexity=10
+    assert_eq!(content["total"], 1);
+    let hotspots = content["hotspots"].as_array().unwrap();
+    assert_eq!(hotspots[0]["name"], "parse_file");
+}
+
+#[test]
+fn test_tool_get_hotspots_path_filter() {
+    let index = make_test_index();
+    let result = tool_get_hotspots(&index, &json!({ "path": "cache" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    // cache.rs has no complexity data
+    assert_eq!(content["total"], 0);
+}
+
+#[test]
+fn test_tool_get_hotspots_sort_by_complexity() {
+    let index = make_test_index();
+    let result = tool_get_hotspots(&index, &json!({ "sort_by": "complexity" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    let hotspots = content["hotspots"].as_array().unwrap();
+    assert_eq!(hotspots[0]["cyclomatic"], 12);
+    assert_eq!(hotspots[1]["cyclomatic"], 2);
+}
+
+#[test]
+fn test_tool_get_hotspots_compact() {
+    let index = make_test_index();
+    let result = tool_get_hotspots(&index, &json!({ "compact": true }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    let hotspots = &content["hotspots"];
+    assert!(hotspots["columns"].is_array());
+    assert!(hotspots["rows"].is_array());
+}
+
+#[test]
+fn test_tool_get_hotspots_total_before_truncate() {
+    let index = make_test_index();
+    // limit=1 but total should reflect all matching hotspots (2)
+    let result = tool_get_hotspots(&index, &json!({ "limit": 1 }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(content["total"], 2);
+    let hotspots = content["hotspots"].as_array().unwrap();
+    assert_eq!(hotspots.len(), 1);
+}
+
+// -----------------------------------------------------------------------
+// get_health
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_tool_get_health_default() {
+    let index = make_test_index();
+    let result = tool_get_health(&index, &json!({}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    // 3 functions total: parse_file, internal_helper, test_parse_file
+    // plus Cache::get method = 4
+    assert_eq!(content["total_functions"], 4);
+    // 2 have complexity data
+    assert_eq!(content["analyzed"], 2);
+    // parse_file has cc=12 which is >= 10
+    assert_eq!(content["high_complexity_count"], 1);
+    // parse_file is documented, others are not
+    assert!(content["documented_pct"].as_f64().unwrap() > 0.0);
+    // test_parse_file is a test
+    assert_eq!(content["test_count"], 1);
+    // parse_file is public, Cache::get is public = 2 public
+    assert!(content["public_api_count"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_tool_get_health_path_filter() {
+    let index = make_test_index();
+    let result = tool_get_health(&index, &json!({ "path": "src/cache" }));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    // Only cache.rs: Cache::get method, no complexity data
+    assert_eq!(content["total_functions"], 1);
+    assert_eq!(content["analyzed"], 0);
+}
+
+#[test]
+fn test_tool_get_health_empty_codebase() {
+    let index = CodebaseIndex {
+        root: PathBuf::from("/tmp/empty"),
+        root_name: "empty".to_string(),
+        generated_at: String::new(),
+        stats: IndexStats {
+            total_files: 0,
+            total_lines: 0,
+            languages: HashMap::new(),
+            duration_ms: 0,
+        },
+        tree: vec![],
+        files: vec![],
+    };
+    let result = tool_get_health(&index, &json!({}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(content["total_functions"], 0);
+    assert_eq!(content["analyzed"], 0);
+    assert_eq!(content["high_complexity_count"], 0);
+    assert_eq!(content["documented_pct"], 0.0);
 }

@@ -1,3 +1,4 @@
+pub mod complexity;
 pub mod queries;
 pub mod regex_parser;
 pub mod tree_sitter_parser;

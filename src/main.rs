@@ -235,6 +235,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Handle --hotspots mode
+    if cli.hotspots {
+        return handle_hotspots(&index, cli.filter_path.as_deref());
+    }
+
     // Apply filters
     let filter_opts = FilterOptions {
         filter_path: cli.filter_path.clone(),
@@ -360,5 +365,39 @@ fn handle_git_diff(
         }
     }
 
+    Ok(())
+}
+
+fn handle_hotspots(index: &CodebaseIndex, path_filter: Option<&str>) -> Result<()> {
+    let mut entries = parser::complexity::collect_hotspots(index, path_filter, 1);
+    parser::complexity::sort_hotspots(&mut entries, "score");
+    entries.truncate(30);
+
+    if entries.is_empty() {
+        println!("No complexity data found (only tree-sitter languages are analyzed).");
+        return Ok(());
+    }
+
+    println!(
+        "\n{:>7} {:>4} {:>5} {:>6} {:>6}  Function",
+        "Score", "CC", "Nest", "Params", "Lines"
+    );
+    println!("{}", "-".repeat(78));
+
+    for e in &entries {
+        println!(
+            "{:>7.1} {:>4} {:>5} {:>6} {:>6}  {}:{}  {}",
+            e.score,
+            e.cyclomatic,
+            e.max_nesting,
+            e.param_count,
+            e.body_lines,
+            e.file,
+            e.line,
+            e.name
+        );
+    }
+
+    println!();
     Ok(())
 }

@@ -6,6 +6,7 @@ use crate::languages::Language;
 use crate::model::FileIndex;
 
 use super::LanguageParser;
+use super::complexity;
 use super::queries;
 
 pub struct TreeSitterParser {
@@ -57,7 +58,9 @@ impl LanguageParser for TreeSitterParser {
 
         let root = tree.root_node();
         let extractor = queries::get_extractor(&self.language);
-        let (imports, declarations) = extractor.extract(root, content);
+        let (imports, mut declarations) = extractor.extract(root, content);
+
+        complexity::annotate_complexity(&mut declarations, root, content, &self.language);
 
         let lines = content.lines().count();
 

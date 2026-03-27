@@ -12,6 +12,7 @@ use crate::languages::Language;
 use crate::model::declarations::{DeclKind, Declaration};
 use crate::model::{CodebaseIndex, FileIndex};
 use crate::parser::ParserRegistry;
+use crate::parser::complexity::{collect_hotspots, compute_health, sort_hotspots};
 
 use super::helpers::*;
 
@@ -384,6 +385,49 @@ pub(super) fn tool_definitions() -> Value {
                         }
                     }
                 }
+            },
+            {
+                "name": "get_hotspots",
+                "description": "Get the most complex functions/methods in the codebase, ranked by a composite complexity score. Useful for identifying refactoring targets and understanding where technical debt concentrates. Only includes tree-sitter parsed languages (Rust, Python, TS, JS, Go, Java, C, C++).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of results (default 20, max 100)"
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Optional file or directory path filter"
+                        },
+                        "min_complexity": {
+                            "type": "number",
+                            "description": "Minimum cyclomatic complexity to include (default 1)"
+                        },
+                        "sort_by": {
+                            "type": "string",
+                            "enum": ["score", "complexity", "nesting", "params", "body_lines"],
+                            "description": "Sort criterion (default: score — a composite of all metrics)"
+                        },
+                        "compact": {
+                            "type": "boolean",
+                            "description": "If true, return columnar format (saves ~30% tokens)"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "get_health",
+                "description": "Get a codebase health summary with aggregate complexity metrics, documentation coverage, test ratio, and quality indicators. Only complexity data from tree-sitter parsed languages is included.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Optional path filter to scope to a directory or file"
+                        }
+                    }
+                }
             }
         ]
     })
@@ -412,6 +456,8 @@ pub(super) fn handle_tool_call(index: &CodebaseIndex, name: &str, args: &Value) 
         "explain_symbol" => tool_explain_symbol(index, args),
         "get_related_tests" => tool_get_related_tests(index, args),
         "get_dependency_graph" => tool_get_dependency_graph(index, args),
+        "get_hotspots" => tool_get_hotspots(index, args),
+        "get_health" => tool_get_health(index, args),
         _ => tool_error(&format!("Unknown tool: {}", name)),
     }
 }
@@ -1526,4 +1572,77 @@ pub(super) fn tool_get_dependency_graph(index: &CodebaseIndex, args: &Value) -> 
             "graph": dep_graph::format_mermaid(&graph)
         })),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Complexity hotspots & health
+// ---------------------------------------------------------------------------
+
+pub(super) fn tool_get_hotspots(index: &CodebaseIndex, args: &Value) -> Value {
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20)
+        .min(100) as usize;
+    let path_filter = args.get("path").and_then(|v| v.as_str());
+    let min_complexity = args
+        .get("min_complexity")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1) as u16;
+    let sort_by = args
+        .get("sort_by")
+        .and_then(|v| v.as_str())
+        .unwrap_or("score");
+
+    let mut entries = collect_hotspots(index, path_filter, min_complexity);
+    sort_hotspots(&mut entries, sort_by);
+
+    let total = entries.len();
+    entries.truncate(limit);
+
+    if is_compact(args) {
+        let compact = serialize_compact(
+            &entries,
+            &[
+                "file",
+                "name",
+                "kind",
+                "line",
+                "cyclomatic",
+                "max_nesting",
+                "param_count",
+                "body_lines",
+                "score",
+            ],
+        );
+        return tool_result(json!({ "total": total, "hotspots": compact }));
+    }
+
+    tool_result(json!({ "total": total, "hotspots": entries }))
+}
+
+pub(super) fn tool_get_health(index: &CodebaseIndex, args: &Value) -> Value {
+    let path_filter = args.get("path").and_then(|v| v.as_str());
+    let h = compute_health(index, path_filter);
+
+    tool_result(json!({
+        "total_functions": h.total_functions,
+        "analyzed": h.analyzed,
+        "complexity": {
+            "avg": h.avg_cc,
+            "median": h.median_cc,
+            "max": h.max_cc,
+            "p90": h.p90_cc
+        },
+        "nesting": { "avg": h.avg_nesting },
+        "params": { "avg": h.avg_params },
+        "body_lines": { "avg": h.avg_body_lines },
+        "high_complexity_count": h.high_complexity_count,
+        "high_complexity_pct": h.high_complexity_pct,
+        "documented_pct": h.documented_pct,
+        "test_count": h.test_count,
+        "deprecated_count": h.deprecated_count,
+        "public_api_count": h.public_api_count,
+        "hottest_files": h.hottest_files
+    }))
 }
