@@ -103,6 +103,21 @@ async fn handle_post(
     headers: HeaderMap,
     body: String,
 ) -> Response {
+    // Validate Content-Type per MCP Streamable HTTP spec
+    let content_type_ok = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.starts_with("application/json"))
+        .unwrap_or(false);
+    if !content_type_ok {
+        let resp = err_response(
+            Value::Null,
+            -32700,
+            "Unsupported Content-Type; expected application/json".to_string(),
+        );
+        return json_response(StatusCode::UNSUPPORTED_MEDIA_TYPE, &resp, None);
+    }
+
     // Parse request early to determine if it's an initialize (which creates a session)
     let request: JsonRpcRequest = match serde_json::from_str(body.trim()) {
         Ok(r) => r,
@@ -171,7 +186,10 @@ async fn handle_post(
     // read/write paths for better concurrency.
     let state2 = Arc::clone(&state);
     let response = match tokio::task::spawn_blocking(move || {
-        let mut index = state2.index.write().unwrap_or_else(|e| e.into_inner());
+        let mut index = state2.index.write().unwrap_or_else(|e| {
+            eprintln!("WARNING: index lock was poisoned, recovering");
+            e.into_inner()
+        });
         process_jsonrpc_request(
             request,
             &mut index,
@@ -317,7 +335,10 @@ fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<
             };
 
             let file_count = new_index.files.len();
-            *state.index.write().unwrap_or_else(|e| e.into_inner()) = new_index;
+            *state.index.write().unwrap_or_else(|e| {
+                eprintln!("WARNING: index lock was poisoned, recovering");
+                e.into_inner()
+            }) = new_index;
             eprintln!("Auto-reindex complete ({file_count} files)");
 
             // Broadcast notification to all SSE listeners
@@ -607,6 +628,38 @@ mod tests {
 
         let body = body_json(resp).await;
         assert_eq!(body["error"]["code"], -32700);
+    }
+
+    #[tokio::test]
+    async fn wrong_content_type_returns_415() {
+        let (app, _) = test_app();
+        let req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("Content-Type", "text/plain")
+            .body(Body::from(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+            ))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+        let body = body_json(resp).await;
+        assert_eq!(body["error"]["code"], -32700);
+    }
+
+    #[tokio::test]
+    async fn missing_content_type_returns_415() {
+        let (app, _) = test_app();
+        let req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .body(Body::from(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+            ))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 
     #[tokio::test]
