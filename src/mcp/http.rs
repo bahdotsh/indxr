@@ -5,12 +5,12 @@ use std::time::Instant;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde_json::{Value, json};
-use tokio::sync::{RwLock as AsyncRwLock, broadcast};
+use tokio::sync::{RwLock as AsyncRwLock, broadcast, watch};
 
 use crate::indexer::{self, IndexConfig};
 use crate::model::CodebaseIndex;
@@ -35,10 +35,15 @@ struct AppState {
 struct SessionInfo {
     /// Updated on every valid access — sessions expire after [`SESSION_TTL`] of *inactivity*.
     last_accessed: Instant,
+    /// Signals SSE streams to close when the session is terminated.
+    close_tx: watch::Sender<bool>,
 }
 
 /// Maximum inactivity before a session is considered expired (sliding window).
 const SESSION_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
+/// How often to refresh `last_accessed` under a write lock. Requests within this
+/// window are validated with a cheaper read lock.
+const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 /// Maximum number of concurrent sessions.
 const MAX_SESSIONS: usize = 1000;
 
@@ -95,7 +100,7 @@ pub async fn run_http_server(
 }
 
 // ---------------------------------------------------------------------------
-// POST /mcp — main JSON-RPC request handler
+// POST /mcp — main JSON-RPC request handler (single and batch)
 // ---------------------------------------------------------------------------
 
 async fn handle_post(
@@ -118,8 +123,40 @@ async fn handle_post(
         return json_response(StatusCode::UNSUPPORTED_MEDIA_TYPE, &resp, None);
     }
 
-    // Parse request early to determine if it's an initialize (which creates a session)
-    let request: JsonRpcRequest = match serde_json::from_str(body.trim()) {
+    // Parse body as generic JSON to support both single and batch requests
+    let parsed: Value = match serde_json::from_str(body.trim()) {
+        Ok(v) => v,
+        Err(e) => {
+            let resp = err_response(Value::Null, -32700, format!("Parse error: {e}"));
+            return json_response(StatusCode::OK, &resp, None);
+        }
+    };
+
+    match parsed {
+        Value::Array(items) if !items.is_empty() => handle_batch(state, &headers, items).await,
+        Value::Array(_) => {
+            // JSON-RPC 2.0: clients MUST NOT send an empty array
+            let resp = err_response(Value::Null, -32600, "Empty batch request".to_string());
+            json_response(StatusCode::OK, &resp, None)
+        }
+        value @ Value::Object(_) => handle_single(state, &headers, value).await,
+        _ => {
+            let resp = err_response(
+                Value::Null,
+                -32700,
+                "Expected JSON object or array".to_string(),
+            );
+            json_response(StatusCode::OK, &resp, None)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Single JSON-RPC request
+// ---------------------------------------------------------------------------
+
+async fn handle_single(state: Arc<AppState>, headers: &HeaderMap, value: Value) -> Response {
+    let request: JsonRpcRequest = match serde_json::from_value(value) {
         Ok(r) => r,
         Err(e) => {
             let resp = err_response(Value::Null, -32700, format!("Parse error: {e}"));
@@ -142,27 +179,19 @@ async fn handle_post(
 
     // Session enforcement: all requests except `initialize` must include a valid session.
     let session_id = if is_initialize {
-        let id = uuid::Uuid::new_v4().to_string();
-        let mut sessions = state.sessions.write().await;
-        // Evict expired sessions and enforce max limit
-        evict_expired_sessions(&mut sessions);
-        if sessions.len() >= MAX_SESSIONS {
-            let resp = err_response(
-                request.id.unwrap_or(Value::Null),
-                -32000,
-                "Too many active sessions".to_string(),
-            );
-            return json_response(StatusCode::SERVICE_UNAVAILABLE, &resp, None);
+        match create_session(&state).await {
+            Ok(id) => Some(id),
+            Err(()) => {
+                let resp = err_response(
+                    request.id.unwrap_or(Value::Null),
+                    -32000,
+                    "Too many active sessions".to_string(),
+                );
+                return json_response(StatusCode::SERVICE_UNAVAILABLE, &resp, None);
+            }
         }
-        sessions.insert(
-            id.clone(),
-            SessionInfo {
-                last_accessed: Instant::now(),
-            },
-        );
-        Some(id)
     } else {
-        match validate_session(&state, &headers).await {
+        match validate_session(&state, headers).await {
             Ok(id) => Some(id),
             Err(resp) => return *resp,
         }
@@ -206,7 +235,7 @@ async fn handle_post(
             // Clean up the session created during this initialize to avoid orphans.
             if is_initialize {
                 if let Some(ref sid) = session_id {
-                    state.sessions.write().await.remove(sid);
+                    cleanup_session(&state, sid).await;
                 }
             }
             let resp = err_response(Value::Null, -32603, "Internal error".to_string());
@@ -220,7 +249,7 @@ async fn handle_post(
             // Handler panicked — clean up the session to avoid orphans.
             if is_initialize {
                 if let Some(ref sid) = session_id {
-                    state.sessions.write().await.remove(sid);
+                    cleanup_session(&state, sid).await;
                 }
             }
             let resp = err_response(
@@ -240,6 +269,124 @@ async fn handle_post(
 }
 
 // ---------------------------------------------------------------------------
+// Batch JSON-RPC request (JSON-RPC 2.0 section 6)
+// ---------------------------------------------------------------------------
+
+async fn handle_batch(state: Arc<AppState>, headers: &HeaderMap, items: Vec<Value>) -> Response {
+    // Check if the batch contains an initialize request
+    let has_initialize = items
+        .iter()
+        .any(|v| v.get("method").and_then(Value::as_str) == Some("initialize"));
+
+    // Session enforcement: validate from header, or create if batch has initialize
+    let has_session_header = headers.contains_key("mcp-session-id");
+    let session_id: Option<String> = if has_session_header {
+        match validate_session(&state, headers).await {
+            Ok(id) => Some(id),
+            Err(resp) => return *resp,
+        }
+    } else if has_initialize {
+        match create_session(&state).await {
+            Ok(id) => Some(id),
+            Err(()) => {
+                let resp =
+                    err_response(Value::Null, -32000, "Too many active sessions".to_string());
+                return json_response(StatusCode::SERVICE_UNAVAILABLE, &resp, None);
+            }
+        }
+    } else {
+        return unauthorized_response(
+            "Missing Mcp-Session-Id header. Send an initialize request first.",
+        );
+    };
+
+    // Parse all items, preserving the id from raw JSON for better error responses
+    let parsed: Vec<Result<JsonRpcRequest, (Value, String)>> = items
+        .into_iter()
+        .map(|item| {
+            let id = item.get("id").cloned().unwrap_or(Value::Null);
+            serde_json::from_value::<JsonRpcRequest>(item)
+                .map_err(|e| (id, format!("Parse error: {e}")))
+        })
+        .collect();
+
+    // Process all requests in a single spawn_blocking call (they share the
+    // index write lock, so parallelism wouldn't help).
+    let state2 = Arc::clone(&state);
+    let responses = tokio::task::spawn_blocking(move || {
+        let mut index = state2.index.write().unwrap_or_else(|e| {
+            eprintln!("WARNING: index lock was poisoned, recovering");
+            e.into_inner()
+        });
+        parsed
+            .into_iter()
+            .map(|item| match item {
+                Err((id, msg)) => Some(err_response(id, -32700, msg)),
+                Ok(request) if request.id.is_none() => None, // notification
+                Ok(request) => process_jsonrpc_request(
+                    request,
+                    &mut index,
+                    &state2.config,
+                    &state2.registry,
+                    Transport::Http,
+                ),
+            })
+            .collect::<Vec<_>>()
+    })
+    .await;
+
+    let responses = match responses {
+        Ok(r) => r,
+        Err(_) => {
+            // Handler panicked — clean up if we created the session
+            if has_initialize && !has_session_header {
+                if let Some(ref sid) = session_id {
+                    cleanup_session(&state, sid).await;
+                }
+            }
+            let resp = err_response(
+                Value::Null,
+                -32603,
+                "Internal error: handler panicked".to_string(),
+            );
+            return json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &resp,
+                session_id.as_deref(),
+            );
+        }
+    };
+
+    // Collect non-None responses (skip notifications)
+    let responses: Vec<&JsonRpcResponse> = responses.iter().filter_map(|r| r.as_ref()).collect();
+
+    // If all were notifications, return 202 Accepted
+    if responses.is_empty() {
+        let mut builder = Response::builder().status(StatusCode::ACCEPTED);
+        if let Some(ref sid) = session_id {
+            builder = builder.header("Mcp-Session-Id", sid.as_str());
+        }
+        return builder
+            .body(axum::body::Body::empty())
+            .unwrap()
+            .into_response();
+    }
+
+    // Return array of responses
+    let json = serde_json::to_string(&responses).unwrap();
+    let mut builder = Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json");
+    if let Some(ref sid) = session_id {
+        builder = builder.header("Mcp-Session-Id", sid.as_str());
+    }
+    builder
+        .body(axum::body::Body::from(json))
+        .unwrap()
+        .into_response()
+}
+
+// ---------------------------------------------------------------------------
 // GET /mcp — SSE stream for server-to-client notifications
 // ---------------------------------------------------------------------------
 
@@ -249,31 +396,48 @@ async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
         Err(resp) => return *resp,
     };
 
+    // Obtain a close-signal receiver for this session so the stream terminates
+    // promptly when the session is deleted (instead of waiting for a timeout).
+    let mut close_rx = {
+        let sessions = state.sessions.read().await;
+        match sessions.get(&sid) {
+            Some(info) => info.close_tx.subscribe(),
+            None => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    "Invalid or expired Mcp-Session-Id.",
+                )
+                    .into_response();
+            }
+        }
+    };
+
     let mut rx = state.notify_tx.subscribe();
-    let state_for_stream = Arc::clone(&state);
-    let sid_for_stream = sid.clone();
 
     let stream = async_stream::stream! {
         loop {
-            // Check for events with a timeout so we can periodically verify the session
-            match tokio::time::timeout(std::time::Duration::from_secs(60), rx.recv()).await {
-                Ok(Ok(sse_event)) => {
-                    let mut event = Event::default().data(sse_event.data);
-                    if let Some(id) = sse_event.id {
-                        event = event.id(id);
-                    }
-                    if let Some(name) = sse_event.event {
-                        event = event.event(name);
-                    }
-                    yield Ok::<_, Infallible>(event);
-                }
-                Ok(Err(broadcast::error::RecvError::Lagged(_))) => continue,
-                Ok(Err(broadcast::error::RecvError::Closed)) => break,
-                Err(_) => {
-                    // Timeout — check if session is still valid
-                    let sessions = state_for_stream.sessions.read().await;
-                    if !matches!(sessions.get(&sid_for_stream), Some(info) if info.last_accessed.elapsed() < SESSION_TTL) {
-                        break;
+            tokio::select! {
+                // Session was terminated (DELETE /mcp or expiry) — close immediately
+                _ = close_rx.changed() => break,
+                // Wait for a broadcast event (with timeout for liveness)
+                result = tokio::time::timeout(std::time::Duration::from_secs(60), rx.recv()) => {
+                    match result {
+                        Ok(Ok(sse_event)) => {
+                            let mut event = Event::default().data(sse_event.data);
+                            if let Some(id) = sse_event.id {
+                                event = event.id(id);
+                            }
+                            if let Some(name) = sse_event.event {
+                                event = event.event(name);
+                            }
+                            yield Ok::<_, Infallible>(event);
+                        }
+                        Ok(Err(broadcast::error::RecvError::Lagged(_))) => continue,
+                        Ok(Err(broadcast::error::RecvError::Closed)) => break,
+                        Err(_) => {
+                            // Timeout — continue; close_rx handles session termination
+                            continue;
+                        }
                     }
                 }
             }
@@ -283,9 +447,10 @@ async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
     let mut response = Sse::new(stream)
         .keep_alive(KeepAlive::default())
         .into_response();
-    response
-        .headers_mut()
-        .insert("mcp-session-id", sid.parse().unwrap());
+    response.headers_mut().insert(
+        "mcp-session-id",
+        HeaderValue::from_str(&sid).expect("session ID is valid ASCII"),
+    );
     response
 }
 
@@ -296,7 +461,7 @@ async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
 async fn handle_delete(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     match validate_session(&state, &headers).await {
         Ok(sid) => {
-            state.sessions.write().await.remove(&sid);
+            cleanup_session(&state, &sid).await;
             StatusCode::OK.into_response()
         }
         Err(resp) => *resp,
@@ -363,7 +528,8 @@ fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<
 // ---------------------------------------------------------------------------
 
 /// Validate that the request includes a valid, non-expired Mcp-Session-Id header.
-/// Refreshes `last_accessed` on every successful validation (sliding-window TTL).
+/// Uses a read lock for the fast path (session valid and recently refreshed),
+/// falling back to a write lock to refresh `last_accessed` or evict expired sessions.
 async fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Box<Response>> {
     let sid = headers
         .get("mcp-session-id")
@@ -378,6 +544,18 @@ async fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<Strin
             )
         })?;
 
+    // Fast path: read lock — valid session that was recently refreshed
+    {
+        let sessions = state.sessions.read().await;
+        if let Some(info) = sessions.get(sid) {
+            let elapsed = info.last_accessed.elapsed();
+            if elapsed < SESSION_TTL && elapsed < REFRESH_INTERVAL {
+                return Ok(sid.to_string());
+            }
+        }
+    }
+
+    // Slow path: write lock — refresh last_accessed or evict
     let mut sessions = state.sessions.write().await;
     match sessions.get_mut(sid) {
         Some(info) if info.last_accessed.elapsed() < SESSION_TTL => {
@@ -385,8 +563,10 @@ async fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<Strin
             Ok(sid.to_string())
         }
         Some(_) => {
-            // Expired — evict eagerly
-            sessions.remove(sid);
+            // Expired — evict and signal SSE streams to close
+            if let Some(info) = sessions.remove(sid) {
+                let _ = info.close_tx.send(true);
+            }
             Err(Box::new(
                 (
                     StatusCode::UNAUTHORIZED,
@@ -405,9 +585,48 @@ async fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<Strin
     }
 }
 
-/// Remove sessions that have exceeded the TTL (no activity within the window).
+/// Create a new session, evicting expired ones first. Returns the session ID.
+async fn create_session(state: &AppState) -> Result<String, ()> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let mut sessions = state.sessions.write().await;
+    evict_expired_sessions(&mut sessions);
+    if sessions.len() >= MAX_SESSIONS {
+        return Err(());
+    }
+    let (close_tx, _) = watch::channel(false);
+    sessions.insert(
+        id.clone(),
+        SessionInfo {
+            last_accessed: Instant::now(),
+            close_tx,
+        },
+    );
+    Ok(id)
+}
+
+/// Remove a session and signal any SSE streams to close.
+async fn cleanup_session(state: &AppState, sid: &str) {
+    let mut sessions = state.sessions.write().await;
+    if let Some(info) = sessions.remove(sid) {
+        let _ = info.close_tx.send(true);
+    }
+}
+
+/// Remove sessions that have exceeded the TTL, signaling their SSE streams to close.
 fn evict_expired_sessions(sessions: &mut HashMap<String, SessionInfo>) {
-    sessions.retain(|_, info| info.last_accessed.elapsed() < SESSION_TTL);
+    sessions.retain(|_, info| {
+        if info.last_accessed.elapsed() < SESSION_TTL {
+            true
+        } else {
+            let _ = info.close_tx.send(true);
+            false
+        }
+    });
+}
+
+/// Build an UNAUTHORIZED response.
+fn unauthorized_response(message: &str) -> Response {
+    (StatusCode::UNAUTHORIZED, message.to_string()).into_response()
 }
 
 /// Build a JSON response with optional Mcp-Session-Id header.
@@ -712,10 +931,12 @@ mod tests {
         {
             let mut sessions = state.sessions.write().await;
             for i in 0..MAX_SESSIONS {
+                let (close_tx, _) = watch::channel(false);
                 sessions.insert(
                     format!("fake-session-{i}"),
                     SessionInfo {
                         last_accessed: Instant::now(),
+                        close_tx,
                     },
                 );
             }
@@ -742,10 +963,12 @@ mod tests {
         let expired_sid = "expired-session-id".to_string();
         {
             let mut sessions = state.sessions.write().await;
+            let (close_tx, _) = watch::channel(false);
             sessions.insert(
                 expired_sid.clone(),
                 SessionInfo {
                     last_accessed: Instant::now() - SESSION_TTL - std::time::Duration::from_secs(1),
+                    close_tx,
                 },
             );
         }
@@ -809,5 +1032,110 @@ mod tests {
             sid,
             "SSE response should include Mcp-Session-Id header"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Batch JSON-RPC tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn batch_initialize_and_tools_list() {
+        let (app, _) = test_app();
+        let batch = serde_json::to_string(&json!([
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+        ]))
+        .unwrap();
+
+        let resp = send_post(&app, &batch, None).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(resp.headers().contains_key("mcp-session-id"));
+
+        let body = body_json(resp).await;
+        let arr = body.as_array().expect("batch response should be an array");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["result"]["protocolVersion"], "2025-03-26");
+        assert!(arr[1]["result"]["tools"].is_array());
+    }
+
+    #[tokio::test]
+    async fn batch_with_session() {
+        let (app, _) = test_app();
+        let sid = do_initialize(&app).await;
+
+        let batch = serde_json::to_string(&json!([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_stats", "arguments": {}}}
+        ]))
+        .unwrap();
+
+        let resp = send_post(&app, &batch, Some(&sid)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = body_json(resp).await;
+        let arr = body.as_array().expect("batch response should be an array");
+        assert_eq!(arr.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn batch_without_session_no_initialize_returns_401() {
+        let (app, _) = test_app();
+        let batch = serde_json::to_string(&json!([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+        ]))
+        .unwrap();
+
+        let resp = send_post(&app, &batch, None).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn empty_batch_returns_error() {
+        let (app, _) = test_app();
+        let resp = send_post(&app, "[]", None).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = body_json(resp).await;
+        assert_eq!(body["error"]["code"], -32600);
+    }
+
+    #[tokio::test]
+    async fn batch_all_notifications_returns_202() {
+        let (app, _) = test_app();
+        let sid = do_initialize(&app).await;
+
+        let batch = serde_json::to_string(&json!([
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "method": "notifications/cancelled"}
+        ]))
+        .unwrap();
+
+        let resp = send_post(&app, &batch, Some(&sid)).await;
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn batch_with_parse_errors() {
+        let (app, _) = test_app();
+        let sid = do_initialize(&app).await;
+
+        // Mix of valid request and invalid (missing method field)
+        let batch = r#"[
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            {"jsonrpc": "2.0", "id": 2}
+        ]"#;
+
+        let resp = send_post(&app, batch, Some(&sid)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = body_json(resp).await;
+        let arr = body.as_array().expect("batch response should be an array");
+        assert_eq!(arr.len(), 2);
+        // First should succeed
+        assert!(arr[0]["result"].is_object());
+        // Second should be a parse error with preserved id
+        assert_eq!(arr[1]["id"], 2);
+        assert_eq!(arr[1]["error"]["code"], -32700);
     }
 }
