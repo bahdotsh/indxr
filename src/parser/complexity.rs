@@ -520,8 +520,8 @@ fn check(x: i32) -> bool {
         let c = get_complexity(&decls, "check").expect("should have complexity");
         assert_eq!(c.param_count, 1);
         // if + for + if + else-if(if_expression) + && = 5, base 1 = 6
-        assert!(c.cyclomatic >= 5, "cyclomatic={}", c.cyclomatic);
-        assert!(c.max_nesting >= 3, "nesting={}", c.max_nesting); // if > for > if
+        assert_eq!(c.cyclomatic, 6, "cyclomatic={}", c.cyclomatic);
+        assert_eq!(c.max_nesting, 3, "nesting={}", c.max_nesting); // if > for > if
     }
 
     #[test]
@@ -540,7 +540,7 @@ fn classify(x: i32) -> &'static str {
         assert_eq!(c.param_count, 1);
         // 3 match arms = 3, base 1 = 4
         assert_eq!(c.cyclomatic, 4);
-        assert!(c.max_nesting >= 1); // match_expression
+        assert_eq!(c.max_nesting, 1); // match_expression
     }
 
     #[test]
@@ -630,6 +630,28 @@ function greet(name, loud) {
         // 1 base + ternary + || = 3
         assert_eq!(c.cyclomatic, 3);
         assert_eq!(c.max_nesting, 0);
+    }
+
+    #[test]
+    fn java_method() {
+        let src = r#"
+class Util {
+    public int clamp(int value, int min, int max) {
+        if (value < min) {
+            return min;
+        } else if (value > max) {
+            return max;
+        }
+        return value;
+    }
+}
+"#;
+        let decls = parse_and_annotate(src, Language::Java);
+        let c = get_complexity(&decls, "clamp").expect("should have complexity");
+        assert_eq!(c.param_count, 3);
+        // 1 base + if + else-if(if) = 3
+        assert_eq!(c.cyclomatic, 3);
+        assert_eq!(c.max_nesting, 2); // else-if is a nested if_statement in tree-sitter
     }
 
     #[test]

@@ -1739,7 +1739,7 @@ pub(super) fn tool_get_health(index: &CodebaseIndex, args: &Value) -> Value {
     let p90_cc = if acc.cc_values.is_empty() {
         0
     } else {
-        acc.cc_values[((acc.cc_values.len() as f64 * 0.9) as usize).min(acc.cc_values.len() - 1)]
+        acc.cc_values[(((acc.cc_values.len() - 1) as f64 * 0.9) as usize).min(acc.cc_values.len() - 1)]
     };
     let max_cc = acc.cc_values.last().copied().unwrap_or(0);
     let avg_cc = if acc.cc_values.is_empty() {
@@ -1785,8 +1785,8 @@ pub(super) fn tool_get_health(index: &CodebaseIndex, args: &Value) -> Value {
         "params": { "avg": (acc.params_sum / n * 10.0).round() / 10.0 },
         "body_lines": { "avg": (acc.body_lines_sum / n * 10.0).round() / 10.0 },
         "high_complexity_count": acc.high_complexity,
-        "high_complexity_pct": if acc.total_functions > 0 {
-            (acc.high_complexity as f64 / acc.total_functions as f64 * 1000.0).round() / 10.0
+        "high_complexity_pct": if acc.analyzed > 0 {
+            (acc.high_complexity as f64 / acc.analyzed as f64 * 1000.0).round() / 10.0
         } else { 0.0 },
         "documented_pct": if acc.total_functions > 0 {
             (acc.documented as f64 / acc.total_functions as f64 * 1000.0).round() / 10.0
