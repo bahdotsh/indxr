@@ -7,14 +7,35 @@ use crate::languages::Language;
 use crate::model::declarations::{
     ComplexityMetrics, DeclKind, Declaration, RelKind, Relationship, Visibility,
 };
-use crate::model::{CodebaseIndex, FileIndex, Import, IndexStats};
+use crate::model::{CodebaseIndex, FileIndex, Import, IndexStats, MemberIndex, WorkspaceIndex};
 
 use super::helpers::*;
 use super::tools::*;
 use super::type_flow::*;
 use super::{Transport, process_jsonrpc_message};
-use crate::indexer::IndexConfig;
+use crate::indexer::{IndexConfig, WorkspaceConfig};
 use crate::parser::ParserRegistry;
+
+/// Wrap a `CodebaseIndex` in a single-member `WorkspaceIndex` for testing.
+fn wrap_workspace(index: CodebaseIndex) -> WorkspaceIndex {
+    WorkspaceIndex {
+        root: index.root.clone(),
+        root_name: index.root_name.clone(),
+        workspace_kind: "none".to_string(),
+        generated_at: index.generated_at.clone(),
+        stats: IndexStats {
+            total_files: index.stats.total_files,
+            total_lines: index.stats.total_lines,
+            languages: index.stats.languages.clone(),
+            duration_ms: index.stats.duration_ms,
+        },
+        members: vec![MemberIndex {
+            name: index.root_name.clone(),
+            relative_path: PathBuf::from("."),
+            index,
+        }],
+    }
+}
 
 // -----------------------------------------------------------------------
 // score_match tests
@@ -190,8 +211,9 @@ fn test_tool_definitions_include_new_tools() {
     assert!(names.contains(&"get_hotspots"));
     assert!(names.contains(&"get_health"));
     assert!(names.contains(&"get_type_flow"));
-    // Total: 12 original + 10 new = 22
-    assert_eq!(names.len(), 22);
+    assert!(names.contains(&"list_workspace_members"));
+    // Total: 12 original + 11 new = 23
+    assert_eq!(names.len(), 23);
 }
 
 // -----------------------------------------------------------------------
@@ -213,7 +235,8 @@ fn test_handle_tool_call_unknown_tool() {
         tree: vec![],
         files: vec![],
     };
-    let result = handle_tool_call(&index, "nonexistent_tool", &json!({}));
+    let ws = wrap_workspace(index);
+    let result = handle_tool_call(&ws, "nonexistent_tool", &json!({}));
     // Should return an error
     let content = result["content"][0]["text"].as_str().unwrap();
     assert!(content.contains("Unknown tool"));
@@ -567,8 +590,9 @@ fn make_test_index() -> CodebaseIndex {
 #[test]
 fn test_tool_batch_file_summaries_paths() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     let result = tool_batch_file_summaries(
-        &index,
+        &ws,
         &json!({
             "paths": ["src/parser.rs", "src/cache.rs"]
         }),
@@ -584,7 +608,8 @@ fn test_tool_batch_file_summaries_paths() {
 #[test]
 fn test_tool_batch_file_summaries_glob() {
     let index = make_test_index();
-    let result = tool_batch_file_summaries(&index, &json!({ "glob": "*.rs" }));
+    let ws = wrap_workspace(index);
+    let result = tool_batch_file_summaries(&ws, &json!({ "glob": "*.rs" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["count"], 2);
@@ -593,7 +618,8 @@ fn test_tool_batch_file_summaries_glob() {
 #[test]
 fn test_tool_batch_file_summaries_no_args() {
     let index = make_test_index();
-    let result = tool_batch_file_summaries(&index, &json!({}));
+    let ws = wrap_workspace(index);
+    let result = tool_batch_file_summaries(&ws, &json!({}));
     let text = result["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("Provide either"));
 }
@@ -601,7 +627,8 @@ fn test_tool_batch_file_summaries_no_args() {
 #[test]
 fn test_tool_get_callers() {
     let index = make_test_index();
-    let result = tool_get_callers(&index, &json!({ "symbol": "parse_file" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_callers(&ws, &json!({ "symbol": "parse_file" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     // cache.rs imports parse_file
@@ -616,8 +643,9 @@ fn test_tool_get_callers() {
 #[test]
 fn test_tool_get_callers_no_false_positive() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     // "get" should not match "budget" or "widget" — word-boundary matching
-    let result = tool_get_callers(&index, &json!({ "symbol": "nonexistent_sym" }));
+    let result = tool_get_callers(&ws, &json!({ "symbol": "nonexistent_sym" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["count"], 0);
@@ -626,7 +654,8 @@ fn test_tool_get_callers_no_false_positive() {
 #[test]
 fn test_tool_get_public_api() {
     let index = make_test_index();
-    let result = tool_get_public_api(&index, &json!({}));
+    let ws = wrap_workspace(index);
+    let result = tool_get_public_api(&ws, &json!({}));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     // Public declarations: parse_file, Cache, Cache::get
@@ -643,7 +672,8 @@ fn test_tool_get_public_api() {
 #[test]
 fn test_tool_get_public_api_scoped() {
     let index = make_test_index();
-    let result = tool_get_public_api(&index, &json!({ "path": "src/cache.rs" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_public_api(&ws, &json!({ "path": "src/cache.rs" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     let decls = content["declarations"].as_array().unwrap();
@@ -655,7 +685,8 @@ fn test_tool_get_public_api_scoped() {
 #[test]
 fn test_tool_explain_symbol() {
     let index = make_test_index();
-    let result = tool_explain_symbol(&index, &json!({ "name": "parse_file" }));
+    let ws = wrap_workspace(index);
+    let result = tool_explain_symbol(&ws, &json!({ "name": "parse_file" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["count"], 1);
@@ -684,7 +715,8 @@ fn test_tool_explain_symbol() {
 #[test]
 fn test_tool_explain_symbol_case_insensitive() {
     let index = make_test_index();
-    let result = tool_explain_symbol(&index, &json!({ "name": "CACHE" }));
+    let ws = wrap_workspace(index);
+    let result = tool_explain_symbol(&ws, &json!({ "name": "CACHE" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["count"], 1);
@@ -694,7 +726,8 @@ fn test_tool_explain_symbol_case_insensitive() {
 #[test]
 fn test_tool_explain_symbol_not_found() {
     let index = make_test_index();
-    let result = tool_explain_symbol(&index, &json!({ "name": "nonexistent" }));
+    let ws = wrap_workspace(index);
+    let result = tool_explain_symbol(&ws, &json!({ "name": "nonexistent" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["count"], 0);
@@ -703,7 +736,8 @@ fn test_tool_explain_symbol_not_found() {
 #[test]
 fn test_tool_get_related_tests() {
     let index = make_test_index();
-    let result = tool_get_related_tests(&index, &json!({ "symbol": "parse_file" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_related_tests(&ws, &json!({ "symbol": "parse_file" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert!(content["count"].as_u64().unwrap() >= 1);
@@ -715,8 +749,9 @@ fn test_tool_get_related_tests() {
 #[test]
 fn test_tool_get_related_tests_scoped() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     let result = tool_get_related_tests(
-        &index,
+        &ws,
         &json!({
             "symbol": "parse_file",
             "path": "src/parser.rs"
@@ -730,7 +765,8 @@ fn test_tool_get_related_tests_scoped() {
 #[test]
 fn test_tool_get_related_tests_no_match() {
     let index = make_test_index();
-    let result = tool_get_related_tests(&index, &json!({ "symbol": "nonexistent" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_related_tests(&ws, &json!({ "symbol": "nonexistent" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["count"], 0);
@@ -739,7 +775,8 @@ fn test_tool_get_related_tests_no_match() {
 #[test]
 fn test_tool_get_token_estimate_directory() {
     let index = make_test_index();
-    let result = tool_get_token_estimate(&index, &json!({ "directory": "src" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_token_estimate(&ws, &json!({ "directory": "src" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["file_count"], 2);
@@ -749,7 +786,8 @@ fn test_tool_get_token_estimate_directory() {
 #[test]
 fn test_tool_get_token_estimate_glob() {
     let index = make_test_index();
-    let result = tool_get_token_estimate(&index, &json!({ "glob": "*.rs" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_token_estimate(&ws, &json!({ "glob": "*.rs" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["file_count"], 2);
@@ -758,7 +796,8 @@ fn test_tool_get_token_estimate_glob() {
 #[test]
 fn test_tool_get_token_estimate_no_args() {
     let index = make_test_index();
-    let result = tool_get_token_estimate(&index, &json!({}));
+    let ws = wrap_workspace(index);
+    let result = tool_get_token_estimate(&ws, &json!({}));
     let text = result["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("Provide"));
 }
@@ -849,8 +888,9 @@ fn test_collapse_raw_string_no_hash() {
 #[test]
 fn test_tool_lookup_symbol_compact() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     let result = tool_lookup_symbol(
-        &index,
+        &ws,
         &json!({
             "name": "parse_file",
             "compact": true
@@ -872,7 +912,8 @@ fn test_tool_lookup_symbol_compact() {
 #[test]
 fn test_tool_lookup_symbol_non_compact() {
     let index = make_test_index();
-    let result = tool_lookup_symbol(&index, &json!({ "name": "parse_file" }));
+    let ws = wrap_workspace(index);
+    let result = tool_lookup_symbol(&ws, &json!({ "name": "parse_file" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     // Non-compact has "symbols" array of objects
@@ -885,8 +926,9 @@ fn test_tool_lookup_symbol_non_compact() {
 #[test]
 fn test_tool_list_declarations_compact() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     let result = tool_list_declarations(
-        &index,
+        &ws,
         &json!({
             "path": "src/parser.rs",
             "compact": true
@@ -904,8 +946,9 @@ fn test_tool_list_declarations_compact() {
 #[test]
 fn test_tool_search_signatures_compact() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     let result = tool_search_signatures(
-        &index,
+        &ws,
         &json!({
             "query": "Result<",
             "compact": true
@@ -921,8 +964,9 @@ fn test_tool_search_signatures_compact() {
 #[test]
 fn test_tool_search_relevant_compact() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     let result = tool_search_relevant(
-        &index,
+        &ws,
         &json!({
             "query": "parse",
             "compact": true
@@ -943,9 +987,10 @@ fn test_tool_search_relevant_compact() {
 #[test]
 fn test_tool_search_relevant_kind_filter() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     // Filter to only structs
     let result = tool_search_relevant(
-        &index,
+        &ws,
         &json!({
             "query": "cache",
             "kind": "struct"
@@ -973,9 +1018,10 @@ fn test_tool_search_relevant_kind_filter() {
 #[test]
 fn test_tool_search_relevant_kind_filter_fn() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     // Filter to only functions
     let result = tool_search_relevant(
-        &index,
+        &ws,
         &json!({
             "query": "parse",
             "kind": "fn"
@@ -1012,8 +1058,9 @@ fn test_tool_read_source_multi_symbol() {
     // Point index root at our temp dir
     index.root = dir.clone();
 
+    let ws = wrap_workspace(index);
     let result = tool_read_source(
-        &index,
+        &ws,
         &json!({
             "path": "src/parser.rs",
             "symbols": ["parse_file", "internal_helper"]
@@ -1059,8 +1106,9 @@ fn test_tool_read_source_multi_symbol_not_found() {
     f.write_all(source.as_bytes()).unwrap();
     index.root = dir.clone();
 
+    let ws = wrap_workspace(index);
     let result = tool_read_source(
-        &index,
+        &ws,
         &json!({
             "path": "src/parser.rs",
             "symbols": ["parse_file", "nonexistent_fn"]
@@ -1090,8 +1138,9 @@ fn test_tool_read_source_collapse() {
     f.write_all(source.as_bytes()).unwrap();
     index.root = dir.clone();
 
+    let ws = wrap_workspace(index);
     let result = tool_read_source(
-        &index,
+        &ws,
         &json!({
             "path": "src/parser.rs",
             "symbol": "parse_file",
@@ -1124,8 +1173,9 @@ fn test_tool_read_source_multi_symbol_collapse() {
     f.write_all(source.as_bytes()).unwrap();
     index.root = dir.clone();
 
+    let ws = wrap_workspace(index);
     let result = tool_read_source(
-        &index,
+        &ws,
         &json!({
             "path": "src/parser.rs",
             "symbols": ["parse_file", "internal_helper"],
@@ -1181,7 +1231,8 @@ fn test_tool_batch_file_summaries_cap() {
         files,
     };
 
-    let result = tool_batch_file_summaries(&index, &json!({ "glob": "*.rs" }));
+    let ws = wrap_workspace(index);
+    let result = tool_batch_file_summaries(&ws, &json!({ "glob": "*.rs" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     // Should cap at 30
@@ -1196,8 +1247,9 @@ fn test_tool_batch_file_summaries_cap() {
 #[test]
 fn test_tool_get_callers_common_word() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     // "get" is a method on Cache — should only match word-boundary occurrences
-    let result = tool_get_callers(&index, &json!({ "symbol": "get" }));
+    let result = tool_get_callers(&ws, &json!({ "symbol": "get" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     // Should not produce false positives from "budget", "widget", etc.
@@ -1220,7 +1272,8 @@ fn test_tool_get_callers_common_word() {
 #[test]
 fn test_tool_dependency_graph_file_level_mermaid() {
     let index = make_test_index();
-    let result = tool_get_dependency_graph(&index, &json!({ "format": "mermaid" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_dependency_graph(&ws, &json!({ "format": "mermaid" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["format"], "mermaid");
@@ -1249,7 +1302,8 @@ fn test_tool_dependency_graph_file_level_mermaid() {
 #[test]
 fn test_tool_dependency_graph_file_level_dot() {
     let index = make_test_index();
-    let result = tool_get_dependency_graph(&index, &json!({ "format": "dot" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_dependency_graph(&ws, &json!({ "format": "dot" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["format"], "dot");
@@ -1260,7 +1314,8 @@ fn test_tool_dependency_graph_file_level_dot() {
 #[test]
 fn test_tool_dependency_graph_file_level_json() {
     let index = make_test_index();
-    let result = tool_get_dependency_graph(&index, &json!({ "format": "json" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_dependency_graph(&ws, &json!({ "format": "json" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["format"], "json");
@@ -1272,7 +1327,8 @@ fn test_tool_dependency_graph_file_level_json() {
 #[test]
 fn test_tool_dependency_graph_symbol_level() {
     let index = make_test_index();
-    let result = tool_get_dependency_graph(&index, &json!({ "level": "symbol", "format": "json" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_dependency_graph(&ws, &json!({ "level": "symbol", "format": "json" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["format"], "json");
@@ -1294,8 +1350,8 @@ fn test_tool_dependency_graph_symbol_level() {
 #[test]
 fn test_tool_dependency_graph_scoped() {
     let index = make_test_index();
-    let result =
-        tool_get_dependency_graph(&index, &json!({ "path": "src/cache", "format": "json" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_dependency_graph(&ws, &json!({ "path": "src/cache", "format": "json" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     let graph = &content["graph"];
@@ -1312,8 +1368,9 @@ fn test_tool_dependency_graph_scoped() {
 #[test]
 fn test_tool_dependency_graph_depth_limit() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     // Full graph: cache.rs → parser.rs (at least 1 edge)
-    let full = tool_get_dependency_graph(&index, &json!({ "format": "json" }));
+    let full = tool_get_dependency_graph(&ws, &json!({ "format": "json" }));
     let full_content: Value =
         serde_json::from_str(full["content"][0]["text"].as_str().unwrap()).unwrap();
     let full_edges = full_content["edges"].as_u64().unwrap();
@@ -1321,7 +1378,7 @@ fn test_tool_dependency_graph_depth_limit() {
 
     // depth=0 scoped to cache: no hops allowed, so no edges
     let d0 = tool_get_dependency_graph(
-        &index,
+        &ws,
         &json!({ "path": "src/cache", "depth": 0, "format": "json" }),
     );
     let d0_content: Value =
@@ -1336,7 +1393,8 @@ fn test_tool_dependency_graph_depth_limit() {
 #[test]
 fn test_tool_dependency_graph_defaults_to_mermaid() {
     let index = make_test_index();
-    let result = tool_get_dependency_graph(&index, &json!({}));
+    let ws = wrap_workspace(index);
+    let result = tool_get_dependency_graph(&ws, &json!({}));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["format"], "mermaid");
@@ -1349,7 +1407,8 @@ fn test_tool_dependency_graph_defaults_to_mermaid() {
 #[test]
 fn test_tool_get_hotspots_default() {
     let index = make_test_index();
-    let result = tool_get_hotspots(&index, &json!({}));
+    let ws = wrap_workspace(index);
+    let result = tool_get_hotspots(&ws, &json!({}));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     // parse_file (cc=12) and internal_helper (cc=2) have complexity
@@ -1364,7 +1423,8 @@ fn test_tool_get_hotspots_default() {
 #[test]
 fn test_tool_get_hotspots_min_complexity_filter() {
     let index = make_test_index();
-    let result = tool_get_hotspots(&index, &json!({ "min_complexity": 10 }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_hotspots(&ws, &json!({ "min_complexity": 10 }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     // Only parse_file (cc=12) meets min_complexity=10
@@ -1376,7 +1436,8 @@ fn test_tool_get_hotspots_min_complexity_filter() {
 #[test]
 fn test_tool_get_hotspots_path_filter() {
     let index = make_test_index();
-    let result = tool_get_hotspots(&index, &json!({ "path": "cache" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_hotspots(&ws, &json!({ "path": "cache" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     // cache.rs has no complexity data
@@ -1386,7 +1447,8 @@ fn test_tool_get_hotspots_path_filter() {
 #[test]
 fn test_tool_get_hotspots_sort_by_complexity() {
     let index = make_test_index();
-    let result = tool_get_hotspots(&index, &json!({ "sort_by": "complexity" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_hotspots(&ws, &json!({ "sort_by": "complexity" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     let hotspots = content["hotspots"].as_array().unwrap();
@@ -1397,7 +1459,8 @@ fn test_tool_get_hotspots_sort_by_complexity() {
 #[test]
 fn test_tool_get_hotspots_compact() {
     let index = make_test_index();
-    let result = tool_get_hotspots(&index, &json!({ "compact": true }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_hotspots(&ws, &json!({ "compact": true }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     let hotspots = &content["hotspots"];
@@ -1408,8 +1471,9 @@ fn test_tool_get_hotspots_compact() {
 #[test]
 fn test_tool_get_hotspots_total_before_truncate() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     // limit=1 but total should reflect all matching hotspots (2)
-    let result = tool_get_hotspots(&index, &json!({ "limit": 1 }));
+    let result = tool_get_hotspots(&ws, &json!({ "limit": 1 }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["total"], 2);
@@ -1424,7 +1488,8 @@ fn test_tool_get_hotspots_total_before_truncate() {
 #[test]
 fn test_tool_get_health_default() {
     let index = make_test_index();
-    let result = tool_get_health(&index, &json!({}));
+    let ws = wrap_workspace(index);
+    let result = tool_get_health(&ws, &json!({}));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     // 3 functions total: parse_file, internal_helper, test_parse_file
@@ -1445,7 +1510,8 @@ fn test_tool_get_health_default() {
 #[test]
 fn test_tool_get_health_path_filter() {
     let index = make_test_index();
-    let result = tool_get_health(&index, &json!({ "path": "src/cache" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_health(&ws, &json!({ "path": "src/cache" }));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     // Only cache.rs: Cache::get method, no complexity data
@@ -1468,7 +1534,8 @@ fn test_tool_get_health_empty_codebase() {
         tree: vec![],
         files: vec![],
     };
-    let result = tool_get_health(&index, &json!({}));
+    let ws = wrap_workspace(index);
+    let result = tool_get_health(&ws, &json!({}));
     let content: Value =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(content["total_functions"], 0);
@@ -1482,8 +1549,8 @@ fn test_tool_get_health_empty_codebase() {
 // -----------------------------------------------------------------------
 
 fn make_diff_test_fixtures() -> (
-    CodebaseIndex,
-    crate::indexer::IndexConfig,
+    WorkspaceIndex,
+    WorkspaceConfig,
     crate::parser::ParserRegistry,
 ) {
     let index = CodebaseIndex {
@@ -1507,15 +1574,20 @@ fn make_diff_test_fixtures() -> (
         exclude: vec![],
         no_gitignore: false,
     };
+    let ws_config = WorkspaceConfig {
+        workspace: crate::workspace::single_root_workspace(&config.root),
+        template: config.clone(),
+    };
     let registry = crate::parser::ParserRegistry::new();
-    (index, config, registry)
+    let ws = wrap_workspace(index);
+    (ws, ws_config, registry)
 }
 
 #[test]
 fn test_tool_get_diff_summary_both_params_error() {
-    let (index, config, registry) = make_diff_test_fixtures();
+    let (ws, ws_config, registry) = make_diff_test_fixtures();
     let args = json!({"since_ref": "main", "pr": 42});
-    let result = tool_get_diff_summary(&index, &config, &registry, &args);
+    let result = tool_get_diff_summary(&ws, &ws_config, &registry, &args);
     let text = result["content"][0]["text"].as_str().unwrap();
     assert!(
         text.contains("not both"),
@@ -1526,9 +1598,9 @@ fn test_tool_get_diff_summary_both_params_error() {
 
 #[test]
 fn test_tool_get_diff_summary_neither_param_error() {
-    let (index, config, registry) = make_diff_test_fixtures();
+    let (ws, ws_config, registry) = make_diff_test_fixtures();
     let args = json!({});
-    let result = tool_get_diff_summary(&index, &config, &registry, &args);
+    let result = tool_get_diff_summary(&ws, &ws_config, &registry, &args);
     let text = result["content"][0]["text"].as_str().unwrap();
     assert!(
         text.contains("since_ref") && text.contains("pr"),
@@ -1539,9 +1611,9 @@ fn test_tool_get_diff_summary_neither_param_error() {
 
 #[test]
 fn test_tool_get_diff_summary_invalid_pr_zero() {
-    let (index, config, registry) = make_diff_test_fixtures();
+    let (ws, ws_config, registry) = make_diff_test_fixtures();
     let args = json!({"pr": 0});
-    let result = tool_get_diff_summary(&index, &config, &registry, &args);
+    let result = tool_get_diff_summary(&ws, &ws_config, &registry, &args);
     let text = result["content"][0]["text"].as_str().unwrap();
     assert!(
         text.contains("positive integer"),
@@ -1552,9 +1624,9 @@ fn test_tool_get_diff_summary_invalid_pr_zero() {
 
 #[test]
 fn test_tool_get_diff_summary_invalid_pr_negative() {
-    let (index, config, registry) = make_diff_test_fixtures();
+    let (ws, ws_config, registry) = make_diff_test_fixtures();
     let args = json!({"pr": -1});
-    let result = tool_get_diff_summary(&index, &config, &registry, &args);
+    let result = tool_get_diff_summary(&ws, &ws_config, &registry, &args);
     let text = result["content"][0]["text"].as_str().unwrap();
     assert!(
         text.contains("positive integer"),
@@ -1565,9 +1637,9 @@ fn test_tool_get_diff_summary_invalid_pr_negative() {
 
 #[test]
 fn test_tool_get_diff_summary_invalid_pr_string() {
-    let (index, config, registry) = make_diff_test_fixtures();
+    let (ws, ws_config, registry) = make_diff_test_fixtures();
     let args = json!({"pr": "not-a-number"});
-    let result = tool_get_diff_summary(&index, &config, &registry, &args);
+    let result = tool_get_diff_summary(&ws, &ws_config, &registry, &args);
     let text = result["content"][0]["text"].as_str().unwrap();
     assert!(
         text.contains("positive integer"),
@@ -1578,9 +1650,9 @@ fn test_tool_get_diff_summary_invalid_pr_string() {
 
 #[test]
 fn test_tool_get_diff_summary_empty_since_ref() {
-    let (index, config, registry) = make_diff_test_fixtures();
+    let (ws, ws_config, registry) = make_diff_test_fixtures();
     let args = json!({"since_ref": ""});
-    let result = tool_get_diff_summary(&index, &config, &registry, &args);
+    let result = tool_get_diff_summary(&ws, &ws_config, &registry, &args);
     let text = result["content"][0]["text"].as_str().unwrap();
     assert!(
         text.contains("must not be empty"),
@@ -1591,9 +1663,9 @@ fn test_tool_get_diff_summary_empty_since_ref() {
 
 #[test]
 fn test_tool_get_diff_summary_whitespace_since_ref() {
-    let (index, config, registry) = make_diff_test_fixtures();
+    let (ws, ws_config, registry) = make_diff_test_fixtures();
     let args = json!({"since_ref": "   "});
-    let result = tool_get_diff_summary(&index, &config, &registry, &args);
+    let result = tool_get_diff_summary(&ws, &ws_config, &registry, &args);
     let text = result["content"][0]["text"].as_str().unwrap();
     assert!(
         text.contains("must not be empty"),
@@ -1748,7 +1820,8 @@ fn test_extract_types_ruby_no_types() {
 #[test]
 fn test_tool_get_type_flow_producers() {
     let index = make_test_index();
-    let result = tool_get_type_flow(&index, &json!({ "type_name": "FileIndex" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_type_flow(&ws, &json!({ "type_name": "FileIndex" }));
     let text = result["content"][0]["text"].as_str().unwrap();
     let content: Value = serde_json::from_str(text).unwrap();
 
@@ -1772,7 +1845,8 @@ fn test_tool_get_type_flow_consumers() {
     // Value is consumed... but actually it's a return type.
     // parse_file(path: &Path) -> Path is a param → consumer
     let index = make_test_index();
-    let result = tool_get_type_flow(&index, &json!({ "type_name": "Path" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_type_flow(&ws, &json!({ "type_name": "Path" }));
     let text = result["content"][0]["text"].as_str().unwrap();
     let content: Value = serde_json::from_str(text).unwrap();
 
@@ -1785,7 +1859,8 @@ fn test_tool_get_type_flow_consumers() {
 #[test]
 fn test_tool_get_type_flow_not_found() {
     let index = make_test_index();
-    let result = tool_get_type_flow(&index, &json!({ "type_name": "NonexistentType" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_type_flow(&ws, &json!({ "type_name": "NonexistentType" }));
     let text = result["content"][0]["text"].as_str().unwrap();
     let content: Value = serde_json::from_str(text).unwrap();
 
@@ -1796,7 +1871,8 @@ fn test_tool_get_type_flow_not_found() {
 #[test]
 fn test_tool_get_type_flow_case_insensitive() {
     let index = make_test_index();
-    let result = tool_get_type_flow(&index, &json!({ "type_name": "fileindex" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_type_flow(&ws, &json!({ "type_name": "fileindex" }));
     let text = result["content"][0]["text"].as_str().unwrap();
     let content: Value = serde_json::from_str(text).unwrap();
 
@@ -1806,10 +1882,8 @@ fn test_tool_get_type_flow_case_insensitive() {
 #[test]
 fn test_tool_get_type_flow_compact() {
     let index = make_test_index();
-    let result = tool_get_type_flow(
-        &index,
-        &json!({ "type_name": "FileIndex", "compact": true }),
-    );
+    let ws = wrap_workspace(index);
+    let result = tool_get_type_flow(&ws, &json!({ "type_name": "FileIndex", "compact": true }));
     let text = result["content"][0]["text"].as_str().unwrap();
     let content: Value = serde_json::from_str(text).unwrap();
 
@@ -1821,8 +1895,9 @@ fn test_tool_get_type_flow_compact() {
 #[test]
 fn test_tool_get_type_flow_path_filter() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     let result = tool_get_type_flow(
-        &index,
+        &ws,
         &json!({ "type_name": "FileIndex", "path": "src/cache" }),
     );
     let text = result["content"][0]["text"].as_str().unwrap();
@@ -1835,21 +1910,24 @@ fn test_tool_get_type_flow_path_filter() {
 #[test]
 fn test_tool_get_type_flow_missing_param() {
     let index = make_test_index();
-    let result = tool_get_type_flow(&index, &json!({}));
+    let ws = wrap_workspace(index);
+    let result = tool_get_type_flow(&ws, &json!({}));
     assert!(result["isError"].as_bool().unwrap_or(false));
 }
 
 #[test]
 fn test_tool_get_type_flow_whitespace_only_param() {
     let index = make_test_index();
-    let result = tool_get_type_flow(&index, &json!({ "type_name": "   " }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_type_flow(&ws, &json!({ "type_name": "   " }));
     assert!(result["isError"].as_bool().unwrap_or(false));
 }
 
 #[test]
 fn test_tool_get_type_flow_with_limit() {
     let index = make_test_index();
-    let result = tool_get_type_flow(&index, &json!({ "type_name": "FileIndex", "limit": 1 }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_type_flow(&ws, &json!({ "type_name": "FileIndex", "limit": 1 }));
     let text = result["content"][0]["text"].as_str().unwrap();
     let content: Value = serde_json::from_str(text).unwrap();
 
@@ -1860,8 +1938,9 @@ fn test_tool_get_type_flow_with_limit() {
 #[test]
 fn test_tool_get_type_flow_include_fields() {
     let index = make_test_index();
+    let ws = wrap_workspace(index);
     // Without include_fields, the Cache.entries field should not appear
-    let result = tool_get_type_flow(&index, &json!({ "type_name": "FileIndex" }));
+    let result = tool_get_type_flow(&ws, &json!({ "type_name": "FileIndex" }));
     let text = result["content"][0]["text"].as_str().unwrap();
     let content: Value = serde_json::from_str(text).unwrap();
     let consumers = content["consumers"].as_array().unwrap();
@@ -1877,7 +1956,7 @@ fn test_tool_get_type_flow_include_fields() {
 
     // With include_fields, the Cache.entries field should appear as a consumer
     let result = tool_get_type_flow(
-        &index,
+        &ws,
         &json!({ "type_name": "FileIndex", "include_fields": true }),
     );
     let text = result["content"][0]["text"].as_str().unwrap();
@@ -2001,7 +2080,8 @@ fn test_tool_get_type_flow_producer_and_consumer() {
     // Path is both a param type (consumer) and could be a return type (producer)
     // in the test index: parse_file(path: &Path) → consumes Path
     let index = make_test_index();
-    let result = tool_get_type_flow(&index, &json!({ "type_name": "Value" }));
+    let ws = wrap_workspace(index);
+    let result = tool_get_type_flow(&ws, &json!({ "type_name": "Value" }));
     let text = result["content"][0]["text"].as_str().unwrap();
     let content: Value = serde_json::from_str(text).unwrap();
 
@@ -2016,43 +2096,48 @@ fn test_tool_get_type_flow_producer_and_consumer() {
 // process_jsonrpc_message tests
 // -----------------------------------------------------------------------
 
-fn make_test_config() -> IndexConfig {
-    IndexConfig {
+fn make_test_config() -> (WorkspaceConfig, IndexConfig) {
+    let config = IndexConfig {
         root: PathBuf::from("."),
         cache_dir: PathBuf::from(".indxr-cache"),
         max_file_size: 512,
         max_depth: None,
         exclude: vec![],
         no_gitignore: false,
-    }
+    };
+    let ws_config = WorkspaceConfig {
+        workspace: crate::workspace::single_root_workspace(&config.root),
+        template: config.clone(),
+    };
+    (ws_config, config)
 }
 
 #[test]
 fn test_process_jsonrpc_empty_line() {
-    let config = make_test_config();
+    let (ws_config, _config) = make_test_config();
     let registry = ParserRegistry::new();
-    let mut index = make_test_index();
-    let result = process_jsonrpc_message("", &mut index, &config, &registry, Transport::Stdio);
+    let mut ws = wrap_workspace(make_test_index());
+    let result = process_jsonrpc_message("", &mut ws, &ws_config, &registry, Transport::Stdio);
     assert!(result.unwrap().is_none());
 }
 
 #[test]
 fn test_process_jsonrpc_notification_returns_none() {
-    let config = make_test_config();
+    let (ws_config, _config) = make_test_config();
     let registry = ParserRegistry::new();
-    let mut index = make_test_index();
+    let mut ws = wrap_workspace(make_test_index());
     let msg = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-    let result = process_jsonrpc_message(msg, &mut index, &config, &registry, Transport::Stdio);
+    let result = process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio);
     assert!(result.unwrap().is_none());
 }
 
 #[test]
 fn test_process_jsonrpc_parse_error() {
-    let config = make_test_config();
+    let (ws_config, _config) = make_test_config();
     let registry = ParserRegistry::new();
-    let mut index = make_test_index();
+    let mut ws = wrap_workspace(make_test_index());
     let result =
-        process_jsonrpc_message("not json", &mut index, &config, &registry, Transport::Stdio);
+        process_jsonrpc_message("not json", &mut ws, &ws_config, &registry, Transport::Stdio);
     let err_resp = result.unwrap_err();
     let json = serde_json::to_value(&err_resp).unwrap();
     assert_eq!(json["error"]["code"], -32700);
@@ -2060,11 +2145,11 @@ fn test_process_jsonrpc_parse_error() {
 
 #[test]
 fn test_process_jsonrpc_initialize() {
-    let config = make_test_config();
+    let (ws_config, _config) = make_test_config();
     let registry = ParserRegistry::new();
-    let mut index = make_test_index();
+    let mut ws = wrap_workspace(make_test_index());
     let msg = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
-    let result = process_jsonrpc_message(msg, &mut index, &config, &registry, Transport::Stdio);
+    let result = process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio);
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();
     assert_eq!(json["result"]["protocolVersion"], "2024-11-05");
@@ -2073,11 +2158,11 @@ fn test_process_jsonrpc_initialize() {
 
 #[test]
 fn test_process_jsonrpc_tools_list() {
-    let config = make_test_config();
+    let (ws_config, _config) = make_test_config();
     let registry = ParserRegistry::new();
-    let mut index = make_test_index();
+    let mut ws = wrap_workspace(make_test_index());
     let msg = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#;
-    let result = process_jsonrpc_message(msg, &mut index, &config, &registry, Transport::Stdio);
+    let result = process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio);
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();
     let tools = json["result"]["tools"].as_array().unwrap();
@@ -2089,11 +2174,11 @@ fn test_process_jsonrpc_tools_list() {
 
 #[test]
 fn test_process_jsonrpc_unknown_method() {
-    let config = make_test_config();
+    let (ws_config, _config) = make_test_config();
     let registry = ParserRegistry::new();
-    let mut index = make_test_index();
+    let mut ws = wrap_workspace(make_test_index());
     let msg = r#"{"jsonrpc":"2.0","id":3,"method":"bogus/method","params":{}}"#;
-    let result = process_jsonrpc_message(msg, &mut index, &config, &registry, Transport::Stdio);
+    let result = process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio);
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();
     assert_eq!(json["error"]["code"], -32601);

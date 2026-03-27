@@ -15,8 +15,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{self, Value, json};
 
-use crate::indexer::{self, IndexConfig};
-use crate::model::CodebaseIndex;
+use crate::indexer::{self, WorkspaceConfig};
+use crate::model::WorkspaceIndex;
 use crate::parser::ParserRegistry;
 
 use self::tools::{
@@ -118,8 +118,8 @@ pub(crate) fn handle_tools_list(id: Value) -> JsonRpcResponse {
 
 pub(crate) fn handle_tools_call(
     id: Value,
-    index: &mut CodebaseIndex,
-    config: &IndexConfig,
+    workspace: &mut WorkspaceIndex,
+    config: &WorkspaceConfig,
     registry: &ParserRegistry,
     params: &Value,
 ) -> JsonRpcResponse {
@@ -133,16 +133,16 @@ pub(crate) fn handle_tools_call(
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
     if tool_name == "regenerate_index" {
-        let result = tool_regenerate_index(index, config);
+        let result = tool_regenerate_index(workspace, config);
         return ok_response(id, result);
     }
 
     if tool_name == "get_diff_summary" {
-        let result = tool_get_diff_summary(index, config, registry, &arguments);
+        let result = tool_get_diff_summary(workspace, config, registry, &arguments);
         return ok_response(id, result);
     }
 
-    let result = handle_tool_call(index, tool_name, &arguments);
+    let result = handle_tool_call(workspace, tool_name, &arguments);
     ok_response(id, result)
 }
 
@@ -165,8 +165,8 @@ enum ServerEvent {
 /// Returns `None` for notifications (no id), `Some(response)` otherwise.
 pub(crate) fn process_jsonrpc_request(
     request: JsonRpcRequest,
-    index: &mut CodebaseIndex,
-    config: &IndexConfig,
+    workspace: &mut WorkspaceIndex,
+    config: &WorkspaceConfig,
     registry: &ParserRegistry,
     transport: Transport,
 ) -> Option<JsonRpcResponse> {
@@ -176,7 +176,7 @@ pub(crate) fn process_jsonrpc_request(
     let response = match request.method.as_str() {
         "initialize" => handle_initialize(id, transport),
         "tools/list" => handle_tools_list(id),
-        "tools/call" => handle_tools_call(id, index, config, registry, &params),
+        "tools/call" => handle_tools_call(id, workspace, config, registry, &params),
         _ => err_response(id, -32601, format!("Method not found: {}", request.method)),
     };
 
@@ -191,8 +191,8 @@ pub(crate) fn process_jsonrpc_request(
 /// - `Err(response)` for parse errors (caller should still send the error response)
 pub(crate) fn process_jsonrpc_message(
     line: &str,
-    index: &mut CodebaseIndex,
-    config: &IndexConfig,
+    workspace: &mut WorkspaceIndex,
+    config: &WorkspaceConfig,
     registry: &ParserRegistry,
     transport: Transport,
 ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse> {
@@ -213,7 +213,7 @@ pub(crate) fn process_jsonrpc_message(
     };
 
     Ok(process_jsonrpc_request(
-        request, index, config, registry, transport,
+        request, workspace, config, registry, transport,
     ))
 }
 
@@ -223,26 +223,27 @@ pub(crate) fn process_jsonrpc_message(
 
 fn handle_stdin_line(
     line: &str,
-    index: &mut CodebaseIndex,
-    config: &IndexConfig,
+    workspace: &mut WorkspaceIndex,
+    config: &WorkspaceConfig,
     registry: &ParserRegistry,
     writer: &mut impl Write,
 ) -> anyhow::Result<()> {
     eprintln!("< {}", line);
 
-    let response = match process_jsonrpc_message(line, index, config, registry, Transport::Stdio) {
-        Ok(Some(resp)) => resp,
-        Ok(None) => {
-            if !line.trim().is_empty() {
-                eprintln!("Notification (no response)");
+    let response =
+        match process_jsonrpc_message(line, workspace, config, registry, Transport::Stdio) {
+            Ok(Some(resp)) => resp,
+            Ok(None) => {
+                if !line.trim().is_empty() {
+                    eprintln!("Notification (no response)");
+                }
+                return Ok(());
             }
-            return Ok(());
-        }
-        Err(resp) => {
-            eprintln!("Failed to parse JSON-RPC request");
-            resp
-        }
-    };
+            Err(resp) => {
+                eprintln!("Failed to parse JSON-RPC request");
+                resp
+            }
+        };
 
     let out = serde_json::to_string(&response)?;
     eprintln!("> {}", out);
@@ -256,12 +257,15 @@ fn handle_stdin_line(
 // ---------------------------------------------------------------------------
 
 pub fn run_mcp_server(
-    mut index: CodebaseIndex,
-    config: IndexConfig,
+    mut workspace: WorkspaceIndex,
+    config: WorkspaceConfig,
     watch: bool,
     debounce_ms: u64,
 ) -> anyhow::Result<()> {
-    eprintln!("indxr MCP server starting (root: {})", index.root.display());
+    eprintln!(
+        "indxr MCP server starting (root: {})",
+        workspace.root.display()
+    );
     let registry = ParserRegistry::new();
 
     let (tx, rx) = mpsc::channel::<ServerEvent>();
@@ -291,10 +295,10 @@ pub fn run_mcp_server(
     // so the OS-level file subscription stays active.
     let mut _watch_guard: Option<crate::watch::WatchGuard> = None;
     if watch {
-        let root = std::fs::canonicalize(&config.root)?;
+        let root = std::fs::canonicalize(&workspace.root)?;
         let output_path = root.join("INDEX.md");
-        let cache_dir = std::fs::canonicalize(root.join(&config.cache_dir))
-            .unwrap_or_else(|_| root.join(&config.cache_dir));
+        let cache_dir = std::fs::canonicalize(root.join(&config.template.cache_dir))
+            .unwrap_or_else(|_| root.join(&config.template.cache_dir));
         let (watch_rx, guard) =
             crate::watch::spawn_watcher(&root, &cache_dir, &output_path, debounce_ms)?;
         _watch_guard = Some(guard);
@@ -334,10 +338,10 @@ pub fn run_mcp_server(
                 }
 
                 eprintln!("File change detected, auto-reindexing...");
-                match indexer::regenerate_index_file(&config) {
-                    Ok(new_index) => {
-                        eprintln!("Auto-reindex complete ({} files)", new_index.files.len());
-                        index = new_index;
+                match indexer::regenerate_workspace_index(&config) {
+                    Ok(new_ws) => {
+                        eprintln!("Auto-reindex complete ({} files)", new_ws.stats.total_files);
+                        workspace = new_ws;
                     }
                     Err(e) => {
                         eprintln!("Auto-reindex failed: {}", e);
@@ -352,14 +356,20 @@ pub fn run_mcp_server(
                             return Ok(());
                         }
                         ServerEvent::StdinLine(line) => {
-                            handle_stdin_line(&line, &mut index, &config, &registry, &mut writer)?;
+                            handle_stdin_line(
+                                &line,
+                                &mut workspace,
+                                &config,
+                                &registry,
+                                &mut writer,
+                            )?;
                         }
                         ServerEvent::FileChanged => unreachable!(),
                     }
                 }
             }
             ServerEvent::StdinLine(line) => {
-                handle_stdin_line(&line, &mut index, &config, &registry, &mut writer)?;
+                handle_stdin_line(&line, &mut workspace, &config, &registry, &mut writer)?;
             }
         }
     }

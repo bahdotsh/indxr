@@ -8,10 +8,10 @@ use crate::budget::estimate_tokens;
 use crate::dep_graph;
 use crate::diff;
 use crate::github;
-use crate::indexer::{self, IndexConfig};
+use crate::indexer::{self, WorkspaceConfig};
 use crate::languages::Language;
 use crate::model::declarations::{DeclKind, Declaration};
-use crate::model::{CodebaseIndex, FileIndex};
+use crate::model::{CodebaseIndex, FileIndex, WorkspaceIndex};
 use crate::parser::ParserRegistry;
 use crate::parser::complexity::{collect_hotspots, compute_health, sort_hotspots};
 
@@ -22,9 +22,27 @@ use super::type_flow::*;
 // Tool definitions for tools/list
 // ---------------------------------------------------------------------------
 
-pub(super) fn tool_definitions() -> Value {
+/// JSON property definition for the optional `member` parameter, shared across tools.
+fn member_property() -> Value {
     json!({
+        "type": "string",
+        "description": "Workspace member name to scope this operation. Omit to search all members."
+    })
+}
+
+pub(super) fn tool_definitions() -> Value {
+    let mp = member_property();
+    let mut defs = json!({
         "tools": [
+            {
+                "name": "list_workspace_members",
+                "description": "List workspace members (monorepo packages/crates). Returns member names, paths, and workspace type. In single-project mode, returns one member.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
             {
                 "name": "lookup_symbol",
                 "description": "Find declarations matching a name (case-insensitive substring search across all indexed files).",
@@ -42,7 +60,8 @@ pub(super) fn tool_definitions() -> Value {
                         "compact": {
                             "type": "boolean",
                             "description": "If true, return columnar format [columns, rows] instead of objects (saves ~30% tokens)"
-                        }
+                        },
+                        "member": mp
                     },
                     "required": ["name"]
                 }
@@ -465,35 +484,109 @@ pub(super) fn tool_definitions() -> Value {
                 }
             }
         ]
-    })
+    });
+
+    // Post-process: add optional "member" property to all tools that don't already
+    // have it and aren't workspace-meta tools (list_workspace_members, regenerate_index).
+    let skip = ["list_workspace_members", "regenerate_index"];
+    if let Some(tools) = defs["tools"].as_array_mut() {
+        for tool in tools.iter_mut() {
+            let name = tool["name"].as_str().unwrap_or("");
+            if skip.contains(&name) {
+                continue;
+            }
+            if let Some(props) = tool["inputSchema"]["properties"].as_object_mut() {
+                if !props.contains_key("member") {
+                    props.insert("member".to_string(), mp.clone());
+                }
+            }
+        }
+    }
+
+    defs
+}
+
+// ---------------------------------------------------------------------------
+// Workspace resolution helpers
+// ---------------------------------------------------------------------------
+
+/// Resolve which member indices to operate on, based on optional `member` arg.
+/// Returns a list of (member_name, &CodebaseIndex) pairs.
+fn resolve_indices<'a>(
+    workspace: &'a WorkspaceIndex,
+    args: &Value,
+) -> Result<Vec<(&'a str, &'a CodebaseIndex)>, Value> {
+    if let Some(member_name) = args.get("member").and_then(|v| v.as_str()) {
+        match workspace.find_member(member_name) {
+            Some(m) => Ok(vec![(&m.name, &m.index)]),
+            None => Err(tool_error(&format!(
+                "Unknown workspace member: {}. Use list_workspace_members to see available members.",
+                member_name
+            ))),
+        }
+    } else {
+        Ok(workspace
+            .members
+            .iter()
+            .map(|m| (m.name.as_str(), &m.index))
+            .collect())
+    }
+}
+
+/// Resolve a single member index from a path argument, searching across members.
+fn resolve_index_by_path<'a>(
+    workspace: &'a WorkspaceIndex,
+    args: &Value,
+    path: &str,
+) -> Option<(&'a str, &'a CodebaseIndex)> {
+    // If member is explicitly specified, use it
+    if let Some(member_name) = args.get("member").and_then(|v| v.as_str()) {
+        if let Some(m) = workspace.find_member(member_name) {
+            return Some((&m.name, &m.index));
+        }
+    }
+    // Auto-resolve by finding which member has this file
+    if let Some(m) = workspace.find_member_by_path(path) {
+        return Some((&m.name, &m.index));
+    }
+    // Single-member fallback
+    if workspace.members.len() == 1 {
+        let m = &workspace.members[0];
+        return Some((&m.name, &m.index));
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
 // Tool dispatch
 // ---------------------------------------------------------------------------
 
-pub(super) fn handle_tool_call(index: &CodebaseIndex, name: &str, args: &Value) -> Value {
+pub(super) fn handle_tool_call(workspace: &WorkspaceIndex, name: &str, args: &Value) -> Value {
     match name {
-        "lookup_symbol" => tool_lookup_symbol(index, args),
-        "list_declarations" => tool_list_declarations(index, args),
-        "search_signatures" => tool_search_signatures(index, args),
-        "get_tree" => tool_get_tree(index, args),
-        "get_imports" => tool_get_imports(index, args),
-        "get_stats" => tool_get_stats(index),
-        "get_file_summary" => tool_get_file_summary(index, args),
-        "read_source" => tool_read_source(index, args),
-        "get_file_context" => tool_get_file_context(index, args),
-        "get_token_estimate" => tool_get_token_estimate(index, args),
-        "search_relevant" => tool_search_relevant(index, args),
-        "batch_file_summaries" => tool_batch_file_summaries(index, args),
-        "get_callers" => tool_get_callers(index, args),
-        "get_public_api" => tool_get_public_api(index, args),
-        "explain_symbol" => tool_explain_symbol(index, args),
-        "get_related_tests" => tool_get_related_tests(index, args),
-        "get_dependency_graph" => tool_get_dependency_graph(index, args),
-        "get_hotspots" => tool_get_hotspots(index, args),
-        "get_health" => tool_get_health(index, args),
-        "get_type_flow" => tool_get_type_flow(index, args),
+        "list_workspace_members" => tool_list_workspace_members(workspace),
+        // Tools that search across all members
+        "lookup_symbol" => tool_lookup_symbol(workspace, args),
+        "search_signatures" => tool_search_signatures(workspace, args),
+        "search_relevant" => tool_search_relevant(workspace, args),
+        "get_callers" => tool_get_callers(workspace, args),
+        "explain_symbol" => tool_explain_symbol(workspace, args),
+        "get_related_tests" => tool_get_related_tests(workspace, args),
+        "get_hotspots" => tool_get_hotspots(workspace, args),
+        "get_health" => tool_get_health(workspace, args),
+        "get_type_flow" => tool_get_type_flow(workspace, args),
+        "get_public_api" => tool_get_public_api(workspace, args),
+        "get_dependency_graph" => tool_get_dependency_graph(workspace, args),
+        // Tools that operate on aggregate/workspace level
+        "get_stats" => tool_get_stats(workspace, args),
+        "get_tree" => tool_get_tree(workspace, args),
+        "get_token_estimate" => tool_get_token_estimate(workspace, args),
+        "batch_file_summaries" => tool_batch_file_summaries(workspace, args),
+        // Tools that need a specific file (resolve member from path)
+        "list_declarations" => tool_list_declarations(workspace, args),
+        "get_imports" => tool_get_imports(workspace, args),
+        "get_file_summary" => tool_get_file_summary(workspace, args),
+        "read_source" => tool_read_source(workspace, args),
+        "get_file_context" => tool_get_file_context(workspace, args),
         _ => tool_error(&format!("Unknown tool: {}", name)),
     }
 }
@@ -502,36 +595,38 @@ pub(super) fn handle_tool_call(index: &CodebaseIndex, name: &str, args: &Value) 
 // Tool implementations
 // ---------------------------------------------------------------------------
 
-pub(super) fn tool_regenerate_index(index: &mut CodebaseIndex, config: &IndexConfig) -> Value {
+pub(super) fn tool_regenerate_index(
+    workspace: &mut WorkspaceIndex,
+    config: &WorkspaceConfig,
+) -> Value {
     // Snapshot current state for delta computation
-    let old_files: HashMap<PathBuf, FileIndex> = index
-        .files
-        .iter()
-        .map(|f| (f.path.clone(), f.clone()))
-        .collect();
+    let mut old_files: HashMap<PathBuf, FileIndex> = HashMap::new();
+    for member in &workspace.members {
+        for f in &member.index.files {
+            old_files.insert(f.path.clone(), f.clone());
+        }
+    }
 
-    match indexer::regenerate_index_file(config) {
-        Ok(new_index) => {
-            let file_count = new_index.stats.total_files;
-            let line_count = new_index.stats.total_lines;
-            let output_path = new_index.root.join("INDEX.md");
+    match indexer::regenerate_workspace_index(config) {
+        Ok(new_ws) => {
+            let file_count = new_ws.stats.total_files;
+            let line_count = new_ws.stats.total_lines;
+            let output_path = new_ws.root.join("INDEX.md");
 
-            // Compute delta: union of old and new paths
+            // Compute delta using the first member's index for structural diff
+            // (for single-member workspaces this is exact; for multi-member it's approximate)
             let mut all_paths: Vec<PathBuf> = old_files.keys().cloned().collect();
-            for f in &new_index.files {
-                if !old_files.contains_key(&f.path) {
-                    all_paths.push(f.path.clone());
+            for member in &new_ws.members {
+                for f in &member.index.files {
+                    if !old_files.contains_key(&f.path) {
+                        all_paths.push(f.path.clone());
+                    }
                 }
             }
 
-            let structural_diff = diff::compute_structural_diff(&new_index, &old_files, &all_paths);
-
-            let has_changes = !structural_diff.files_added.is_empty()
-                || !structural_diff.files_removed.is_empty()
-                || !structural_diff.files_modified.is_empty();
-
-            *index = new_index;
-
+            // Use first member's index for structural diff (best effort for multi-member)
+            let first_index = &new_ws.members.first().map(|m| &m.index);
+            let has_changes;
             let mut result = json!({
                 "status": "ok",
                 "message": format!(
@@ -543,26 +638,56 @@ pub(super) fn tool_regenerate_index(index: &mut CodebaseIndex, config: &IndexCon
                 "total_lines": line_count
             });
 
-            if has_changes {
-                result["changes"] = json!({
-                    "files_added": structural_diff.files_added.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-                    "files_removed": structural_diff.files_removed.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-                    "files_modified": structural_diff.files_modified.iter().map(|fd| json!({
-                        "path": fd.path.to_string_lossy().to_string(),
-                        "added": fd.declarations_added.len(),
-                        "removed": fd.declarations_removed.len(),
-                        "modified": fd.declarations_modified.len(),
-                    })).collect::<Vec<_>>()
-                });
+            if let Some(index) = first_index {
+                let structural_diff = diff::compute_structural_diff(index, &old_files, &all_paths);
+                has_changes = !structural_diff.files_added.is_empty()
+                    || !structural_diff.files_removed.is_empty()
+                    || !structural_diff.files_modified.is_empty();
+
+                if has_changes {
+                    result["changes"] = json!({
+                        "files_added": structural_diff.files_added.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                        "files_removed": structural_diff.files_removed.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                        "files_modified": structural_diff.files_modified.iter().map(|fd| json!({
+                            "path": fd.path.to_string_lossy().to_string(),
+                            "added": fd.declarations_added.len(),
+                            "removed": fd.declarations_removed.len(),
+                            "modified": fd.declarations_modified.len(),
+                        })).collect::<Vec<_>>()
+                    });
+                }
             }
 
+            *workspace = new_ws;
             tool_result(result)
         }
         Err(e) => tool_error(&format!("Failed to regenerate index: {}", e)),
     }
 }
 
-pub(super) fn tool_lookup_symbol(index: &CodebaseIndex, args: &Value) -> Value {
+fn tool_list_workspace_members(workspace: &WorkspaceIndex) -> Value {
+    let members: Vec<Value> = workspace
+        .members
+        .iter()
+        .map(|m| {
+            json!({
+                "name": m.name,
+                "path": m.relative_path.to_string_lossy(),
+                "files": m.index.stats.total_files,
+                "lines": m.index.stats.total_lines,
+            })
+        })
+        .collect();
+
+    tool_result(json!({
+        "workspace_kind": workspace.workspace_kind,
+        "workspace_root": workspace.root.to_string_lossy(),
+        "member_count": members.len(),
+        "members": members,
+    }))
+}
+
+pub(super) fn tool_lookup_symbol(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let name = match args.get("name").and_then(|v| v.as_str()) {
         Some(n) => n,
         None => return tool_error("Missing required parameter: name"),
@@ -573,18 +698,25 @@ pub(super) fn tool_lookup_symbol(index: &CodebaseIndex, args: &Value) -> Value {
         .unwrap_or(50)
         .min(200) as usize;
 
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+
     let query = name.to_lowercase();
     let mut results = Vec::new();
 
-    for file in &index.files {
-        if results.len() >= limit {
-            break;
-        }
-        let file_path = file.path.to_string_lossy().to_string();
-        for decl in &file.declarations {
-            find_symbols_in_decl(decl, &query, &file_path, &mut results, limit);
+    for (_member_name, index) in &indices {
+        for file in &index.files {
             if results.len() >= limit {
                 break;
+            }
+            let file_path = file.path.to_string_lossy().to_string();
+            for decl in &file.declarations {
+                find_symbols_in_decl(decl, &query, &file_path, &mut results, limit);
+                if results.len() >= limit {
+                    break;
+                }
             }
         }
     }
@@ -609,10 +741,15 @@ pub(super) fn tool_lookup_symbol(index: &CodebaseIndex, args: &Value) -> Value {
     tool_result(result)
 }
 
-pub(super) fn tool_list_declarations(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_list_declarations(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let path = match args.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => return tool_error("Missing required parameter: path"),
+    };
+
+    let (_member_name, index) = match resolve_index_by_path(workspace, args, path) {
+        Some(r) => r,
+        None => return tool_error(&format!("File not found in any workspace member: {}", path)),
     };
 
     let file = find_file(index, path);
@@ -674,7 +811,7 @@ pub(super) fn tool_list_declarations(index: &CodebaseIndex, args: &Value) -> Val
     }
 }
 
-pub(super) fn tool_search_signatures(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_search_signatures(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let query = match args.get("query").and_then(|v| v.as_str()) {
         Some(q) => q,
         None => return tool_error("Missing required parameter: query"),
@@ -685,18 +822,25 @@ pub(super) fn tool_search_signatures(index: &CodebaseIndex, args: &Value) -> Val
         .unwrap_or(20)
         .min(100) as usize;
 
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+
     let query_lower = query.to_lowercase();
     let mut results = Vec::new();
 
-    for file in &index.files {
-        if results.len() >= limit {
-            break;
-        }
-        let file_path = file.path.to_string_lossy().to_string();
-        for decl in &file.declarations {
-            find_signatures_in_decl(decl, &query_lower, &file_path, &mut results, limit);
+    for (_member_name, index) in &indices {
+        for file in &index.files {
             if results.len() >= limit {
                 break;
+            }
+            let file_path = file.path.to_string_lossy().to_string();
+            for decl in &file.declarations {
+                find_signatures_in_decl(decl, &query_lower, &file_path, &mut results, limit);
+                if results.len() >= limit {
+                    break;
+                }
             }
         }
     }
@@ -721,27 +865,38 @@ pub(super) fn tool_search_signatures(index: &CodebaseIndex, args: &Value) -> Val
     tool_result(result)
 }
 
-pub(super) fn tool_get_tree(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_get_tree(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let path_prefix = args.get("path").and_then(|v| v.as_str());
 
-    let entries: Vec<Value> = index
-        .tree
-        .iter()
-        .filter(|entry| {
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+
+    let mut entries: Vec<Value> = Vec::new();
+    for (member_name, index) in &indices {
+        let prefix_label = if !workspace.is_single() {
+            Some(*member_name)
+        } else {
+            None
+        };
+        for entry in &index.tree {
             if let Some(prefix) = path_prefix {
-                entry.path.starts_with(prefix)
-            } else {
-                true
+                if !entry.path.starts_with(prefix) {
+                    continue;
+                }
             }
-        })
-        .map(|entry| {
-            json!({
+            let mut e = json!({
                 "path": entry.path,
                 "is_dir": entry.is_dir,
                 "depth": entry.depth
-            })
-        })
-        .collect();
+            });
+            if let Some(label) = prefix_label {
+                e["member"] = json!(label);
+            }
+            entries.push(e);
+        }
+    }
 
     tool_result(json!({
         "count": entries.len(),
@@ -749,14 +904,18 @@ pub(super) fn tool_get_tree(index: &CodebaseIndex, args: &Value) -> Value {
     }))
 }
 
-pub(super) fn tool_get_imports(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_get_imports(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let path = match args.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => return tool_error("Missing required parameter: path"),
     };
 
-    let file = find_file(index, path);
-    let file = match file {
+    let (_member_name, index) = match resolve_index_by_path(workspace, args, path) {
+        Some(r) => r,
+        None => return tool_error(&format!("File not found in any workspace member: {}", path)),
+    };
+
+    let file = match find_file(index, path) {
         Some(f) => f,
         None => return tool_error(&format!("File not found in index: {}", path)),
     };
@@ -768,22 +927,47 @@ pub(super) fn tool_get_imports(index: &CodebaseIndex, args: &Value) -> Value {
     }))
 }
 
-pub(super) fn tool_get_stats(index: &CodebaseIndex) -> Value {
+pub(super) fn tool_get_stats(workspace: &WorkspaceIndex, args: &Value) -> Value {
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+
+    if indices.len() == 1 {
+        let index = indices[0].1;
+        return tool_result(json!({
+            "root": index.root.to_string_lossy(),
+            "root_name": index.root_name,
+            "generated_at": index.generated_at,
+            "total_files": index.stats.total_files,
+            "total_lines": index.stats.total_lines,
+            "languages": index.stats.languages,
+            "duration_ms": index.stats.duration_ms
+        }));
+    }
+
     tool_result(json!({
-        "root": index.root.to_string_lossy(),
-        "root_name": index.root_name,
-        "generated_at": index.generated_at,
-        "total_files": index.stats.total_files,
-        "total_lines": index.stats.total_lines,
-        "languages": index.stats.languages,
-        "duration_ms": index.stats.duration_ms
+        "root": workspace.root.to_string_lossy(),
+        "root_name": workspace.root_name,
+        "workspace_kind": workspace.workspace_kind,
+        "generated_at": workspace.generated_at,
+        "total_files": workspace.stats.total_files,
+        "total_lines": workspace.stats.total_lines,
+        "languages": workspace.stats.languages,
+        "member_count": workspace.members.len(),
+        "duration_ms": workspace.stats.duration_ms
     }))
 }
 
-pub(super) fn tool_get_file_summary(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_get_file_summary(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let path = match args.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => return tool_error("Missing required parameter: path"),
+    };
+
+    let (_member_name, index) = match resolve_index_by_path(workspace, args, path) {
+        Some(r) => r,
+        None => return tool_error(&format!("File not found in any workspace member: {}", path)),
     };
 
     let file = match find_file(index, path) {
@@ -794,10 +978,15 @@ pub(super) fn tool_get_file_summary(index: &CodebaseIndex, args: &Value) -> Valu
     tool_result(file_summary_data(file))
 }
 
-pub(super) fn tool_read_source(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_read_source(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let path = match args.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => return tool_error("Missing required parameter: path"),
+    };
+
+    let (_member_name, index) = match resolve_index_by_path(workspace, args, path) {
+        Some(r) => r,
+        None => return tool_error(&format!("File not found in any workspace member: {}", path)),
     };
 
     let file = match find_file(index, path) {
@@ -944,10 +1133,15 @@ pub(super) fn tool_read_source(index: &CodebaseIndex, args: &Value) -> Value {
     tool_result(result)
 }
 
-pub(super) fn tool_get_file_context(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_get_file_context(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let path = match args.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => return tool_error("Missing required parameter: path"),
+    };
+
+    let (_member_name, index) = match resolve_index_by_path(workspace, args, path) {
+        Some(r) => r,
+        None => return tool_error(&format!("File not found in any workspace member: {}", path)),
     };
 
     let file = match find_file(index, path) {
@@ -1063,10 +1257,15 @@ pub(super) fn tool_get_file_context(index: &CodebaseIndex, args: &Value) -> Valu
     tool_result(summary)
 }
 
-pub(super) fn tool_get_token_estimate(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_get_token_estimate(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let path = args.get("path").and_then(|v| v.as_str());
     let directory = args.get("directory").and_then(|v| v.as_str());
     let glob = args.get("glob").and_then(|v| v.as_str());
+
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
 
     // Directory/glob mode: estimate tokens for multiple files
     if let Some(dir_or_glob) = directory.or(glob) {
@@ -1076,21 +1275,23 @@ pub(super) fn tool_get_token_estimate(index: &CodebaseIndex, args: &Value) -> Va
         } else {
             None
         };
-        let matched_files: Vec<&FileIndex> = index
-            .files
-            .iter()
-            .filter(|f| {
+        let mut matched_files: Vec<&FileIndex> = Vec::new();
+        for (_member_name, index) in &indices {
+            for f in &index.files {
                 let fp = f.path.to_string_lossy();
-                if is_dir {
+                let matches = if is_dir {
                     fp.starts_with(dir_or_glob) || fp.starts_with(&format!("{}/", dir_or_glob))
                 } else {
                     match &glob_matcher {
                         Some(m) => m.is_match(fp.as_ref()),
                         None => fp == dir_or_glob || fp.starts_with(&format!("{}/", dir_or_glob)),
                     }
+                };
+                if matches {
+                    matched_files.push(f);
                 }
-            })
-            .collect();
+            }
+        }
 
         let mut total_tokens = 0usize;
         let mut total_lines = 0usize;
@@ -1126,6 +1327,11 @@ pub(super) fn tool_get_token_estimate(index: &CodebaseIndex, args: &Value) -> Va
     let path = match path {
         Some(p) => p,
         None => return tool_error("Provide 'path', 'directory', or 'glob'"),
+    };
+
+    let (_member_name, index) = match resolve_index_by_path(workspace, args, path) {
+        Some(r) => r,
+        None => return tool_error(&format!("File not found in any workspace member: {}", path)),
     };
 
     let file = match find_file(index, path) {
@@ -1186,7 +1392,7 @@ pub(super) fn tool_get_token_estimate(index: &CodebaseIndex, args: &Value) -> Va
     }
 }
 
-pub(super) fn tool_search_relevant(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_search_relevant(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let query = match args.get("query").and_then(|v| v.as_str()) {
         Some(q) => q,
         None => return tool_error("Missing required parameter: query"),
@@ -1201,39 +1407,46 @@ pub(super) fn tool_search_relevant(index: &CodebaseIndex, args: &Value) -> Value
         .and_then(|v| v.as_str())
         .and_then(DeclKind::from_name);
 
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+
     let query_lower = query.to_lowercase();
     let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
     let mut results: Vec<RelevanceMatch> = Vec::new();
 
-    for file in &index.files {
-        let file_path = file.path.to_string_lossy().to_string();
-        let file_path_lower = file_path.to_lowercase();
+    for (_member_name, index) in &indices {
+        for file in &index.files {
+            let file_path = file.path.to_string_lossy().to_string();
+            let file_path_lower = file_path.to_lowercase();
 
-        // Score file path matches (skip when kind filter is active)
-        if kind_filter.is_none() {
-            let path_score = score_match(&file_path_lower, &query_lower, &query_terms);
-            if path_score > 0 {
-                results.push(RelevanceMatch {
-                    file: file_path.clone(),
-                    symbol: None,
-                    kind: None,
-                    signature: None,
-                    line: None,
-                    match_on: "path".to_string(),
-                    score: path_score,
-                });
+            // Score file path matches (skip when kind filter is active)
+            if kind_filter.is_none() {
+                let path_score = score_match(&file_path_lower, &query_lower, &query_terms);
+                if path_score > 0 {
+                    results.push(RelevanceMatch {
+                        file: file_path.clone(),
+                        symbol: None,
+                        kind: None,
+                        signature: None,
+                        line: None,
+                        match_on: "path".to_string(),
+                        score: path_score,
+                    });
+                }
             }
-        }
 
-        // Score declaration matches
-        score_decls_recursive(
-            &file.declarations,
-            &file_path,
-            &query_lower,
-            &query_terms,
-            &mut results,
-            kind_filter.as_ref(),
-        );
+            // Score declaration matches
+            score_decls_recursive(
+                &file.declarations,
+                &file_path,
+                &query_lower,
+                &query_terms,
+                &mut results,
+                kind_filter.as_ref(),
+            );
+        }
     }
 
     // Sort by score descending
@@ -1258,11 +1471,16 @@ pub(super) fn tool_search_relevant(index: &CodebaseIndex, args: &Value) -> Value
 }
 
 pub(super) fn tool_get_diff_summary(
-    index: &CodebaseIndex,
-    config: &IndexConfig,
+    workspace: &WorkspaceIndex,
+    _config: &WorkspaceConfig,
     registry: &ParserRegistry,
     args: &Value,
 ) -> Value {
+    // Use the first member's index and the workspace root for git operations
+    let index = match workspace.members.first() {
+        Some(m) => &m.index,
+        None => return tool_error("No workspace members available"),
+    };
     let has_pr = args.get("pr").is_some_and(|v| !v.is_null());
     let has_since = args.get("since_ref").is_some_and(|v| !v.is_null());
 
@@ -1273,7 +1491,7 @@ pub(super) fn tool_get_diff_summary(
     // Resolve the git ref — either from a PR number or a direct since_ref
     let (resolved_ref, pr_info) = if let Some(pr_val) = args.get("pr") {
         if let Some(pr_num) = pr_val.as_u64().filter(|&n| n > 0) {
-            match github::resolve_pr_base(&config.root, pr_num) {
+            match github::resolve_pr_base(&workspace.root, pr_num) {
                 Ok((local_ref, info)) => (Some(local_ref), Some(info)),
                 Err(e) => return tool_error(&format!("Failed to resolve PR #{}: {}", pr_num, e)),
             }
@@ -1296,7 +1514,7 @@ pub(super) fn tool_get_diff_summary(
         return tool_error("Missing required parameter: either 'since_ref' or 'pr'");
     };
 
-    let changed_paths = match diff::get_changed_files(&config.root, &since_ref) {
+    let changed_paths = match diff::get_changed_files(&workspace.root, &since_ref) {
         Ok(paths) => paths,
         Err(e) => return tool_error(&format!("Git diff failed: {}", e)),
     };
@@ -1323,7 +1541,7 @@ pub(super) fn tool_get_diff_summary(
     // Parse old file versions using cached registry
     let mut old_files: HashMap<PathBuf, FileIndex> = HashMap::new();
     for path in &changed_paths {
-        if let Ok(Some(old_content)) = diff::get_file_at_ref(&config.root, path, &since_ref) {
+        if let Ok(Some(old_content)) = diff::get_file_at_ref(&workspace.root, path, &since_ref) {
             if let Some(lang) = Language::detect(path) {
                 if let Some(parser) = registry.get_parser(&lang) {
                     if let Ok(fi) = parser.parse_file(path, &old_content) {
@@ -1366,29 +1584,43 @@ pub(super) fn tool_get_diff_summary(
     tool_result(result)
 }
 
-pub(super) fn tool_batch_file_summaries(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_batch_file_summaries(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let paths = args.get("paths").and_then(|v| v.as_array());
     let glob = args.get("glob").and_then(|v| v.as_str());
 
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+
     let files: Vec<&FileIndex> = if let Some(path_arr) = paths {
-        path_arr
-            .iter()
-            .filter_map(|v| v.as_str())
-            .filter_map(|p| find_file(index, p))
-            .collect()
+        let path_strs: Vec<&str> = path_arr.iter().filter_map(|v| v.as_str()).collect();
+        let mut result = Vec::new();
+        for p in &path_strs {
+            for (_member_name, index) in &indices {
+                if let Some(f) = find_file(index, p) {
+                    result.push(f);
+                    break;
+                }
+            }
+        }
+        result
     } else if let Some(pattern) = glob {
         let matcher = compile_glob_matcher(pattern);
-        index
-            .files
-            .iter()
-            .filter(|f| {
+        let mut result = Vec::new();
+        for (_member_name, index) in &indices {
+            for f in &index.files {
                 let fp = f.path.to_string_lossy();
-                match &matcher {
+                let matches = match &matcher {
                     Some(m) => m.is_match(fp.as_ref()),
                     None => fp == pattern || fp.starts_with(&format!("{}/", pattern)),
+                };
+                if matches {
+                    result.push(f);
                 }
-            })
-            .collect()
+            }
+        }
+        result
     } else {
         return tool_error("Provide either 'paths' array or 'glob' pattern");
     };
@@ -1405,7 +1637,7 @@ pub(super) fn tool_batch_file_summaries(index: &CodebaseIndex, args: &Value) -> 
     }))
 }
 
-pub(super) fn tool_get_callers(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_get_callers(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let symbol = match args.get("symbol").and_then(|v| v.as_str()) {
         Some(s) => s,
         None => return tool_error("Missing required parameter: symbol"),
@@ -1415,6 +1647,11 @@ pub(super) fn tool_get_callers(index: &CodebaseIndex, args: &Value) -> Value {
         .and_then(|v| v.as_u64())
         .unwrap_or(20)
         .min(50) as usize;
+
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
 
     let mut references: Vec<Value> = Vec::new();
 
@@ -1440,22 +1677,24 @@ pub(super) fn tool_get_callers(index: &CodebaseIndex, args: &Value) -> Value {
         }
     }
 
-    for file in &index.files {
-        let file_path = file.path.to_string_lossy().to_string();
+    for (_member_name, index) in &indices {
+        for file in &index.files {
+            let file_path = file.path.to_string_lossy().to_string();
 
-        // Check imports (word boundary matching)
-        for imp in &file.imports {
-            if contains_word_boundary(&imp.text, symbol) {
-                references.push(json!({
-                    "file": &file_path,
-                    "match_type": "import",
-                    "import": &imp.text
-                }));
+            // Check imports (word boundary matching)
+            for imp in &file.imports {
+                if contains_word_boundary(&imp.text, symbol) {
+                    references.push(json!({
+                        "file": &file_path,
+                        "match_type": "import",
+                        "import": &imp.text
+                    }));
+                }
             }
-        }
 
-        // Check declaration signatures
-        search_decl_refs(&file.declarations, symbol, &file_path, &mut references);
+            // Check declaration signatures
+            search_decl_refs(&file.declarations, symbol, &file_path, &mut references);
+        }
     }
 
     references.truncate(limit);
@@ -1466,33 +1705,40 @@ pub(super) fn tool_get_callers(index: &CodebaseIndex, args: &Value) -> Value {
     }))
 }
 
-pub(super) fn tool_get_public_api(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_get_public_api(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let path = args.get("path").and_then(|v| v.as_str());
     let limit = args
         .get("limit")
         .and_then(|v| v.as_u64())
         .unwrap_or(100)
         .min(500) as usize;
-    let mut declarations = Vec::new();
 
-    let files: Vec<&FileIndex> = if let Some(p) = path {
-        // Try exact file match first, then directory prefix
-        if let Some(f) = find_file(index, p) {
-            vec![f]
-        } else {
-            index
-                .files
-                .iter()
-                .filter(|f| f.path.to_string_lossy().starts_with(p))
-                .collect()
-        }
-    } else {
-        index.files.iter().collect()
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
     };
 
-    for file in &files {
-        let file_path = file.path.to_string_lossy().to_string();
-        collect_public_decls(&file.declarations, &file_path, &mut declarations);
+    let mut declarations = Vec::new();
+
+    for (_member_name, index) in &indices {
+        let files: Vec<&FileIndex> = if let Some(p) = path {
+            if let Some(f) = find_file(index, p) {
+                vec![f]
+            } else {
+                index
+                    .files
+                    .iter()
+                    .filter(|f| f.path.to_string_lossy().starts_with(p))
+                    .collect()
+            }
+        } else {
+            index.files.iter().collect()
+        };
+
+        for file in &files {
+            let file_path = file.path.to_string_lossy().to_string();
+            collect_public_decls(&file.declarations, &file_path, &mut declarations);
+        }
     }
 
     let total = declarations.len();
@@ -1512,12 +1758,17 @@ pub(super) fn tool_get_public_api(index: &CodebaseIndex, args: &Value) -> Value 
     tool_result(result)
 }
 
-pub(super) fn tool_explain_symbol(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_explain_symbol(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let name = match args.get("name").and_then(|v| v.as_str()) {
         Some(n) => n,
         None => return tool_error("Missing required parameter: name"),
     };
     let name_lower = name.to_lowercase();
+
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
 
     fn find_matching_decls(
         decls: &[Declaration],
@@ -1534,9 +1785,11 @@ pub(super) fn tool_explain_symbol(index: &CodebaseIndex, args: &Value) -> Value 
     }
 
     let mut results = Vec::new();
-    for file in &index.files {
-        let file_path = file.path.to_string_lossy().to_string();
-        find_matching_decls(&file.declarations, &name_lower, &file_path, &mut results);
+    for (_member_name, index) in &indices {
+        for file in &index.files {
+            let file_path = file.path.to_string_lossy().to_string();
+            find_matching_decls(&file.declarations, &name_lower, &file_path, &mut results);
+        }
     }
     results.truncate(10);
 
@@ -1547,7 +1800,7 @@ pub(super) fn tool_explain_symbol(index: &CodebaseIndex, args: &Value) -> Value 
     }))
 }
 
-pub(super) fn tool_get_related_tests(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_get_related_tests(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let symbol = match args.get("symbol").and_then(|v| v.as_str()) {
         Some(s) => s,
         None => return tool_error("Missing required parameter: symbol"),
@@ -1555,54 +1808,65 @@ pub(super) fn tool_get_related_tests(index: &CodebaseIndex, args: &Value) -> Val
     let scope_path = args.get("path").and_then(|v| v.as_str());
     let symbol_lower = symbol.to_lowercase();
 
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+
     let mut results = Vec::new();
 
     // If path scoped, search that file first
     if let Some(p) = scope_path {
-        if let Some(file) = find_file(index, p) {
+        for (_member_name, index) in &indices {
+            if let Some(file) = find_file(index, p) {
+                let file_path = file.path.to_string_lossy().to_string();
+                find_tests_for_symbol(
+                    &file.declarations,
+                    &symbol_lower,
+                    &file_path,
+                    &mut results,
+                    "same_file",
+                );
+                break;
+            }
+        }
+    }
+
+    // Search all files for test declarations matching the symbol
+    for (_member_name, index) in &indices {
+        for file in &index.files {
             let file_path = file.path.to_string_lossy().to_string();
+            let file_path_lower = file_path.to_lowercase();
+
+            // Check if this is a test file
+            let is_test_file = file_path_lower.contains("_test.")
+                || file_path_lower.contains("_spec.")
+                || file_path_lower.contains(".test.")
+                || file_path_lower.contains(".spec.")
+                || file_path_lower.contains("/test_")
+                || file_path_lower.contains("/tests/");
+
+            let reason = if is_test_file {
+                "test_file"
+            } else {
+                "name_convention"
+            };
+
+            // Skip if we already searched this file in scope_path
+            if scope_path.is_some_and(|p| file_path == p || file_path.ends_with(&format!("/{}", p)))
+            {
+                continue;
+            }
+
             find_tests_for_symbol(
                 &file.declarations,
                 &symbol_lower,
                 &file_path,
                 &mut results,
-                "same_file",
+                reason,
             );
         }
-    }
-
-    // Search all files for test declarations matching the symbol
-    for file in &index.files {
-        let file_path = file.path.to_string_lossy().to_string();
-        let file_path_lower = file_path.to_lowercase();
-
-        // Check if this is a test file
-        let is_test_file = file_path_lower.contains("_test.")
-            || file_path_lower.contains("_spec.")
-            || file_path_lower.contains(".test.")
-            || file_path_lower.contains(".spec.")
-            || file_path_lower.contains("/test_")
-            || file_path_lower.contains("/tests/");
-
-        let reason = if is_test_file {
-            "test_file"
-        } else {
-            "name_convention"
-        };
-
-        // Skip if we already searched this file in scope_path
-        if scope_path.is_some_and(|p| file_path == p || file_path.ends_with(&format!("/{}", p))) {
-            continue;
-        }
-
-        find_tests_for_symbol(
-            &file.declarations,
-            &symbol_lower,
-            &file_path,
-            &mut results,
-            reason,
-        );
-    }
+    } // end for indices
 
     results.truncate(20);
     tool_result(json!({
@@ -1616,7 +1880,13 @@ pub(super) fn tool_get_related_tests(index: &CodebaseIndex, args: &Value) -> Val
 // Dependency graph
 // ---------------------------------------------------------------------------
 
-pub(super) fn tool_get_dependency_graph(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_get_dependency_graph(workspace: &WorkspaceIndex, args: &Value) -> Value {
+    // Use first matching member for graph generation
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+    let index = indices[0].1;
     let path = args.get("path").and_then(|v| v.as_str());
     let level = args.get("level").and_then(|v| v.as_str()).unwrap_or("file");
     let format = args
@@ -1662,7 +1932,7 @@ pub(super) fn tool_get_dependency_graph(index: &CodebaseIndex, args: &Value) -> 
 // Complexity hotspots & health
 // ---------------------------------------------------------------------------
 
-pub(super) fn tool_get_hotspots(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_get_hotspots(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let limit = args
         .get("limit")
         .and_then(|v| v.as_u64())
@@ -1678,7 +1948,15 @@ pub(super) fn tool_get_hotspots(index: &CodebaseIndex, args: &Value) -> Value {
         .and_then(|v| v.as_str())
         .unwrap_or("score");
 
-    let mut entries = collect_hotspots(index, path_filter, min_complexity);
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+
+    let mut entries = Vec::new();
+    for (_member_name, index) in &indices {
+        entries.extend(collect_hotspots(index, path_filter, min_complexity));
+    }
     sort_hotspots(&mut entries, sort_by);
 
     let total = entries.len();
@@ -1705,8 +1983,15 @@ pub(super) fn tool_get_hotspots(index: &CodebaseIndex, args: &Value) -> Value {
     tool_result(json!({ "total": total, "hotspots": entries }))
 }
 
-pub(super) fn tool_get_health(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_get_health(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let path_filter = args.get("path").and_then(|v| v.as_str());
+
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+    // Use first member for health computation (aggregate could be future enhancement)
+    let index = indices[0].1;
     let h = compute_health(index, path_filter);
 
     tool_result(json!({
@@ -1731,7 +2016,7 @@ pub(super) fn tool_get_health(index: &CodebaseIndex, args: &Value) -> Value {
     }))
 }
 
-pub(super) fn tool_get_type_flow(index: &CodebaseIndex, args: &Value) -> Value {
+pub(super) fn tool_get_type_flow(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let type_name = match args.get("type_name").and_then(|v| v.as_str()) {
         Some(s) if !s.trim().is_empty() => s.trim(),
         _ => return tool_error("Missing required parameter: type_name"),
@@ -1747,8 +2032,18 @@ pub(super) fn tool_get_type_flow(index: &CodebaseIndex, args: &Value) -> Value {
         .unwrap_or(50)
         .min(200) as usize;
 
-    let (mut producers, mut consumers) =
-        build_type_flow(index, type_name, path_filter, include_fields);
+    let indices = match resolve_indices(workspace, args) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+
+    let mut producers = Vec::new();
+    let mut consumers = Vec::new();
+    for (_member_name, index) in &indices {
+        let (p, c) = build_type_flow(index, type_name, path_filter, include_fields);
+        producers.extend(p);
+        consumers.extend(c);
+    }
 
     let producers_total = producers.len();
     let consumers_total = consumers.len();

@@ -40,12 +40,16 @@ HTTP server implementing MCP Streamable HTTP (spec 2025-03-26) alongside existin
 - File watcher integration broadcasts change notifications over SSE
 - Enables multi-client scenarios
 
-## Planned
-
 ### Multi-root / monorepo support
 Workspace detection and per-member indexing.
 - Detect workspace files (Cargo.toml workspace, package.json workspaces, go.work)
-- Scope MCP tools to a specific workspace member
+- Scope MCP tools to a specific workspace member via optional `member` param
+- CLI: `indxr members` to list detected members, `--member` to scope, `--no-workspace` to disable
+- MCP: `list_workspace_members` tool, all 22 existing tools gain optional `member` param
+- Per-member `CodebaseIndex` with unified `WorkspaceIndex` wrapper
+- Workspace-aware INDEX.md generation with member table
+
+## Planned
 
 ### Semantic code search via embeddings
 Optional embedding-based search using a local model (feature-gated).

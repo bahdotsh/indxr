@@ -16,6 +16,7 @@ mod parser;
 mod utils;
 mod walker;
 mod watch;
+mod workspace;
 
 use std::collections::HashMap;
 use std::fs;
@@ -27,6 +28,7 @@ use clap::Parser;
 use crate::cache::Cache;
 use crate::cli::{Cli, Command, GraphFormat, GraphLevel, OutputFormat};
 use crate::filter::FilterOptions;
+use crate::indexer::WorkspaceConfig;
 use crate::languages::Language;
 use crate::model::declarations::DeclKind;
 use crate::model::{CodebaseIndex, IndexStats};
@@ -47,20 +49,31 @@ fn main() -> Result<()> {
     }) = &cli.command
     {
         let config = index_config_from(opts);
-        let index = indexer::build_index(&config)?;
+        let ws_index = indexer::detect_and_build_workspace(
+            &opts.path,
+            &config,
+            opts.no_workspace,
+            opts.member.as_deref(),
+        )?;
+        let ws_config = WorkspaceConfig {
+            workspace: workspace::detect_workspace(&opts.path)
+                .unwrap_or_else(|_| workspace::single_root_workspace(&opts.path)),
+            template: config,
+        };
 
         if let Some(addr) = http {
             #[cfg(feature = "http")]
             {
                 eprintln!(
-                    "indxr MCP HTTP server starting on {} (indexed {} files)",
+                    "indxr MCP HTTP server starting on {} (indexed {} files across {} member(s))",
                     addr,
-                    index.files.len()
+                    ws_index.stats.total_files,
+                    ws_index.members.len()
                 );
                 let rt = tokio::runtime::Runtime::new()?;
                 return rt.block_on(mcp::http::run_http_server(
-                    index,
-                    config,
+                    ws_index,
+                    ws_config,
                     *enable_watch,
                     *debounce_ms,
                     addr,
@@ -68,7 +81,7 @@ fn main() -> Result<()> {
             }
             #[cfg(not(feature = "http"))]
             {
-                let _ = addr;
+                let _ = (addr, ws_config);
                 anyhow::bail!(
                     "HTTP transport requires the 'http' feature. Rebuild with: \
                      cargo install indxr --features http"
@@ -77,10 +90,11 @@ fn main() -> Result<()> {
         }
 
         eprintln!(
-            "indxr MCP server starting (indexed {} files)",
-            index.files.len()
+            "indxr MCP server starting (indexed {} files across {} member(s))",
+            ws_index.stats.total_files,
+            ws_index.members.len()
         );
-        return mcp::run_mcp_server(index, config, *enable_watch, *debounce_ms);
+        return mcp::run_mcp_server(ws_index, ws_config, *enable_watch, *debounce_ms);
     }
 
     // Handle watch subcommand
@@ -92,9 +106,19 @@ fn main() -> Result<()> {
     }) = &cli.command
     {
         let config = index_config_from(opts);
+        let ws = if opts.no_workspace {
+            workspace::single_root_workspace(&fs::canonicalize(&opts.path)?)
+        } else {
+            workspace::detect_workspace(&opts.path)?
+        };
+        let ws_config = WorkspaceConfig {
+            workspace: ws,
+            template: config,
+        };
 
         let watch_opts = watch::WatchOptions {
-            config,
+            ws_config,
+            member_filter: opts.member.clone(),
             output: output.clone(),
             debounce_ms: *debounce_ms,
             quiet: *quiet,
@@ -136,6 +160,21 @@ fn main() -> Result<()> {
         };
 
         return init::run_init(opts);
+    }
+
+    // Handle members subcommand
+    if let Some(Command::Members { path }) = &cli.command {
+        let ws = workspace::detect_workspace(path)?;
+        println!("Workspace: {} ({})", ws.root.display(), ws.kind.as_str());
+        if ws.members.is_empty() {
+            println!("No members found.");
+        } else {
+            println!("\nMembers:");
+            for member in &ws.members {
+                println!("  {} ({})", member.name, member.relative_path.display());
+            }
+        }
+        return Ok(());
     }
 
     // Handle diff subcommand

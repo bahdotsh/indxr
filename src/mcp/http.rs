@@ -12,8 +12,8 @@ use axum::routing::{get, post};
 use serde_json::{Value, json};
 use tokio::sync::{RwLock as AsyncRwLock, broadcast, watch};
 
-use crate::indexer::{self, IndexConfig};
-use crate::model::CodebaseIndex;
+use crate::indexer::{self, WorkspaceConfig};
+use crate::model::WorkspaceIndex;
 use crate::parser::ParserRegistry;
 
 use super::{JsonRpcRequest, JsonRpcResponse, Transport, err_response, process_jsonrpc_request};
@@ -23,8 +23,8 @@ use super::{JsonRpcRequest, JsonRpcResponse, Transport, err_response, process_js
 // ---------------------------------------------------------------------------
 
 struct AppState {
-    index: RwLock<CodebaseIndex>,
-    config: IndexConfig,
+    index: RwLock<WorkspaceIndex>,
+    config: WorkspaceConfig,
     registry: ParserRegistry,
     /// Broadcast channel for server-initiated SSE notifications (file changes).
     notify_tx: broadcast::Sender<SseEvent>,
@@ -59,8 +59,8 @@ struct SseEvent {
 // ---------------------------------------------------------------------------
 
 pub async fn run_http_server(
-    index: CodebaseIndex,
-    config: IndexConfig,
+    workspace: WorkspaceIndex,
+    config: WorkspaceConfig,
     watch: bool,
     debounce_ms: u64,
     addr: &str,
@@ -68,7 +68,7 @@ pub async fn run_http_server(
     let (notify_tx, _) = broadcast::channel::<SseEvent>(256);
 
     let state = Arc::new(AppState {
-        index: RwLock::new(index),
+        index: RwLock::new(workspace),
         config,
         registry: ParserRegistry::new(),
         notify_tx: notify_tx.clone(),
@@ -473,10 +473,10 @@ async fn handle_delete(State(state): State<Arc<AppState>>, headers: HeaderMap) -
 // ---------------------------------------------------------------------------
 
 fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<()> {
-    let root = std::fs::canonicalize(&state.config.root)?;
+    let root = std::fs::canonicalize(&state.config.workspace.root)?;
     let output_path = root.join("INDEX.md");
-    let cache_dir = std::fs::canonicalize(root.join(&state.config.cache_dir))
-        .unwrap_or_else(|_| root.join(&state.config.cache_dir));
+    let cache_dir = std::fs::canonicalize(root.join(&state.config.template.cache_dir))
+        .unwrap_or_else(|_| root.join(&state.config.template.cache_dir));
 
     let (watch_rx, guard) =
         crate::watch::spawn_watcher(&root, &cache_dir, &output_path, debounce_ms)?;
@@ -491,19 +491,19 @@ fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<
             eprintln!("File change detected, auto-reindexing...");
 
             // Re-index outside the lock, then swap in.
-            let new_index = match indexer::regenerate_index_file(&state.config) {
-                Ok(idx) => idx,
+            let new_ws = match indexer::regenerate_workspace_index(&state.config) {
+                Ok(ws) => ws,
                 Err(e) => {
                     eprintln!("Auto-reindex failed: {e}");
                     continue;
                 }
             };
 
-            let file_count = new_index.files.len();
+            let file_count = new_ws.stats.total_files;
             *state.index.write().unwrap_or_else(|e| {
                 eprintln!("WARNING: index lock was poisoned, recovering");
                 e.into_inner()
-            }) = new_index;
+            }) = new_ws;
             eprintln!("Auto-reindex complete ({file_count} files)");
 
             // Broadcast notification to all SSE listeners
@@ -655,23 +655,30 @@ mod tests {
     use axum::http::Request;
     use tower::ServiceExt;
 
-    fn test_config() -> IndexConfig {
-        IndexConfig {
+    fn test_config() -> WorkspaceConfig {
+        use crate::indexer::IndexConfig;
+        let template = IndexConfig {
             root: std::path::PathBuf::from("."),
             cache_dir: std::path::PathBuf::from(".indxr-cache"),
             max_file_size: 512,
             max_depth: Some(1),
             exclude: vec![],
             no_gitignore: false,
+        };
+        WorkspaceConfig {
+            workspace: crate::workspace::single_root_workspace(
+                &std::fs::canonicalize(".").unwrap(),
+            ),
+            template,
         }
     }
 
     fn test_app() -> (Router, Arc<AppState>) {
         let config = test_config();
-        let index = crate::indexer::build_index(&config).unwrap();
+        let workspace = crate::indexer::build_workspace_index(&config).unwrap();
         let (notify_tx, _) = broadcast::channel::<SseEvent>(16);
         let state = Arc::new(AppState {
-            index: RwLock::new(index),
+            index: RwLock::new(workspace),
             config,
             registry: ParserRegistry::new(),
             notify_tx,
