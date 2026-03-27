@@ -12,6 +12,7 @@ use crate::languages::Language;
 use crate::model::declarations::{DeclKind, Declaration};
 use crate::model::{CodebaseIndex, FileIndex};
 use crate::parser::ParserRegistry;
+use crate::parser::complexity::collect_hotspots;
 
 use super::helpers::*;
 
@@ -1577,73 +1578,6 @@ pub(super) fn tool_get_dependency_graph(index: &CodebaseIndex, args: &Value) -> 
 // Complexity hotspots & health
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
-struct HotspotEntry {
-    file: String,
-    name: String,
-    kind: String,
-    line: usize,
-    cyclomatic: u16,
-    max_nesting: u16,
-    param_count: u16,
-    body_lines: usize,
-    score: f64,
-}
-
-fn hotspot_score(cyclomatic: u16, max_nesting: u16, param_count: u16, body_lines: usize) -> f64 {
-    cyclomatic as f64
-        + max_nesting as f64 * 2.0
-        + param_count as f64 * 0.5
-        + body_lines as f64 / 20.0
-}
-
-fn collect_hotspots(
-    index: &CodebaseIndex,
-    path_filter: Option<&str>,
-    min_complexity: u16,
-) -> Vec<HotspotEntry> {
-    let mut entries = Vec::new();
-
-    for file in &index.files {
-        let file_path = file.path.to_string_lossy();
-        if let Some(filter) = path_filter {
-            if !file_path.contains(filter) && !file_path.ends_with(filter) {
-                continue;
-            }
-        }
-        collect_hotspots_from_decls(&file_path, &file.declarations, min_complexity, &mut entries);
-    }
-
-    entries
-}
-
-fn collect_hotspots_from_decls(
-    file_path: &str,
-    decls: &[Declaration],
-    min_complexity: u16,
-    entries: &mut Vec<HotspotEntry>,
-) {
-    for decl in decls {
-        if let Some(ref cm) = decl.complexity {
-            if cm.cyclomatic >= min_complexity {
-                let body_lines = decl.body_lines.unwrap_or(0);
-                entries.push(HotspotEntry {
-                    file: file_path.to_string(),
-                    name: decl.name.clone(),
-                    kind: decl.kind.to_string(),
-                    line: decl.line,
-                    cyclomatic: cm.cyclomatic,
-                    max_nesting: cm.max_nesting,
-                    param_count: cm.param_count,
-                    body_lines,
-                    score: hotspot_score(cm.cyclomatic, cm.max_nesting, cm.param_count, body_lines),
-                });
-            }
-        }
-        collect_hotspots_from_decls(file_path, &decl.children, min_complexity, entries);
-    }
-}
-
 pub(super) fn tool_get_hotspots(index: &CodebaseIndex, args: &Value) -> Value {
     let limit = args
         .get("limit")
@@ -1674,8 +1608,8 @@ pub(super) fn tool_get_hotspots(index: &CodebaseIndex, args: &Value) -> Value {
         }),
     }
 
-    entries.truncate(limit);
     let total = entries.len();
+    entries.truncate(limit);
 
     if is_compact(args) {
         let compact = serialize_compact(

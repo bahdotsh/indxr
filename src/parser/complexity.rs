@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
+use serde::Serialize;
+
 use crate::languages::Language;
+use crate::model::CodebaseIndex;
 use crate::model::declarations::{ComplexityMetrics, DeclKind, Declaration};
 
 /// Annotate declarations with complexity metrics by walking the tree-sitter AST.
@@ -353,10 +356,92 @@ fn nesting_node_kinds(language: &Language) -> &'static [&'static str] {
 // ---------------------------------------------------------------------------
 
 fn is_function_kind(kind: &DeclKind) -> bool {
-    matches!(
-        kind,
-        DeclKind::Function | DeclKind::Method | DeclKind::ShellFunction
-    )
+    matches!(kind, DeclKind::Function | DeclKind::Method)
+}
+
+// ---------------------------------------------------------------------------
+// Hotspot scoring and collection
+// ---------------------------------------------------------------------------
+
+/// Entry representing a function/method with complexity data, ranked by score.
+#[derive(Serialize)]
+pub struct HotspotEntry {
+    pub file: String,
+    pub name: String,
+    pub kind: String,
+    pub line: usize,
+    pub cyclomatic: u16,
+    pub max_nesting: u16,
+    pub param_count: u16,
+    pub body_lines: usize,
+    pub score: f64,
+}
+
+/// Composite hotspot score combining multiple complexity signals.
+///
+/// Weights:
+/// - cyclomatic: 1x (primary signal)
+/// - nesting: 2x (deep nesting is disproportionately hard to reason about)
+/// - params: 0.5x (more params = harder interface, but less than structural complexity)
+/// - body_lines: 0.05x (longer = harder, but secondary to structural metrics)
+pub fn hotspot_score(
+    cyclomatic: u16,
+    max_nesting: u16,
+    param_count: u16,
+    body_lines: usize,
+) -> f64 {
+    cyclomatic as f64
+        + max_nesting as f64 * 2.0
+        + param_count as f64 * 0.5
+        + body_lines as f64 / 20.0
+}
+
+/// Collect hotspot entries from an index, optionally filtered by path and minimum complexity.
+pub fn collect_hotspots(
+    index: &CodebaseIndex,
+    path_filter: Option<&str>,
+    min_complexity: u16,
+) -> Vec<HotspotEntry> {
+    let mut entries = Vec::new();
+
+    for file in &index.files {
+        let file_path = file.path.to_string_lossy();
+        if let Some(filter) = path_filter {
+            if !file_path.contains(filter) && !file_path.ends_with(filter) {
+                continue;
+            }
+        }
+        collect_hotspots_from_decls(&file_path, &file.declarations, min_complexity, &mut entries);
+    }
+
+    entries
+}
+
+fn collect_hotspots_from_decls(
+    file_path: &str,
+    decls: &[Declaration],
+    min_complexity: u16,
+    entries: &mut Vec<HotspotEntry>,
+) {
+    for decl in decls {
+        if let Some(ref cm) = decl.complexity {
+            if cm.cyclomatic >= min_complexity {
+                let body_lines = decl.body_lines.unwrap_or(0);
+                entries.push(HotspotEntry {
+                    file: file_path.to_string(),
+                    name: decl.name.clone(),
+                    kind: decl.kind.to_string(),
+                    line: decl.line,
+                    cyclomatic: cm.cyclomatic,
+                    max_nesting: cm.max_nesting,
+                    param_count: cm.param_count,
+                    body_lines,
+                    score: hotspot_score(cm.cyclomatic, cm.max_nesting, cm.param_count, body_lines),
+                });
+            }
+        }
+        collect_hotspots_from_decls(file_path, &decl.children, min_complexity, entries);
+    }
 }
 
 #[cfg(test)]
