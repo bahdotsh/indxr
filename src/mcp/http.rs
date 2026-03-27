@@ -3,12 +3,12 @@ use std::convert::Infallible;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::Router;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
@@ -16,9 +16,7 @@ use crate::indexer::{self, IndexConfig};
 use crate::model::CodebaseIndex;
 use crate::parser::ParserRegistry;
 
-use super::{
-    Transport, err_response, process_jsonrpc_message, JsonRpcRequest, JsonRpcResponse,
-};
+use super::{JsonRpcRequest, JsonRpcResponse, Transport, err_response, process_jsonrpc_message};
 
 // ---------------------------------------------------------------------------
 // Shared application state
@@ -35,9 +33,14 @@ struct AppState {
 }
 
 struct SessionInfo {
-    #[allow(dead_code)]
+    /// Used for session TTL enforcement.
     created_at: Instant,
 }
+
+/// Maximum session age before it's considered expired.
+const SESSION_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
+/// Maximum number of concurrent sessions.
+const MAX_SESSIONS: usize = 1000;
 
 #[derive(Clone, Debug)]
 struct SseEvent {
@@ -114,11 +117,23 @@ async fn handle_post(
     // Session enforcement: all requests except `initialize` must include a valid session.
     let session_id = if is_initialize {
         let id = uuid::Uuid::new_v4().to_string();
-        state
-            .sessions
-            .write()
-            .unwrap()
-            .insert(id.clone(), SessionInfo { created_at: Instant::now() });
+        let mut sessions = state.sessions.write().unwrap_or_else(|e| e.into_inner());
+        // Evict expired sessions and enforce max limit
+        evict_expired_sessions(&mut sessions);
+        if sessions.len() >= MAX_SESSIONS {
+            let resp = err_response(
+                request.id.unwrap_or(Value::Null),
+                -32000,
+                "Too many active sessions".to_string(),
+            );
+            return json_response(StatusCode::SERVICE_UNAVAILABLE, &resp, None);
+        }
+        sessions.insert(
+            id.clone(),
+            SessionInfo {
+                created_at: Instant::now(),
+            },
+        );
         Some(id)
     } else {
         match validate_session(&state, &headers) {
@@ -133,48 +148,28 @@ async fn handle_post(
         if let Some(ref sid) = session_id {
             builder = builder.header("Mcp-Session-Id", sid.as_str());
         }
-        return builder.body(axum::body::Body::empty()).unwrap().into_response();
+        return builder
+            .body(axum::body::Body::empty())
+            .unwrap()
+            .into_response();
     }
 
-    // Dispatch the request. Most tool calls only need a read lock; regenerate_index
-    // needs a write lock. We check ahead of time to minimize lock contention.
-    let needs_write = is_initialize
-        || request.method == "initialize"
-        || is_mutating_tool_call(&request);
-
-    let resp = if needs_write {
-        let state2 = Arc::clone(&state);
-        tokio::task::spawn_blocking(move || {
-            let mut index = state2.index.write().unwrap();
-            process_jsonrpc_message(
-                &body,
-                &mut index,
-                &state2.config,
-                &state2.registry,
-                Transport::Http,
-            )
-        })
-        .await
-        .unwrap()
-    } else {
-        let state2 = Arc::clone(&state);
-        tokio::task::spawn_blocking(move || {
-            // Safety: process_jsonrpc_message takes &mut but most tool paths only
-            // read. We still acquire a write lock here because the function signature
-            // requires it. For better concurrency a future refactor could split the
-            // read/write paths.
-            let mut index = state2.index.write().unwrap();
-            process_jsonrpc_message(
-                &body,
-                &mut index,
-                &state2.config,
-                &state2.registry,
-                Transport::Http,
-            )
-        })
-        .await
-        .unwrap()
-    };
+    // Dispatch the request via spawn_blocking to avoid blocking the async runtime.
+    // All paths currently acquire a write lock because process_jsonrpc_message takes
+    // &mut. A future refactor could split read/write paths for better concurrency.
+    let state2 = Arc::clone(&state);
+    let resp = tokio::task::spawn_blocking(move || {
+        let mut index = state2.index.write().unwrap_or_else(|e| e.into_inner());
+        process_jsonrpc_message(
+            &body,
+            &mut index,
+            &state2.config,
+            &state2.registry,
+            Transport::Http,
+        )
+    })
+    .await
+    .unwrap();
 
     let response = match resp {
         Ok(Some(r)) => r,
@@ -184,7 +179,10 @@ async fn handle_post(
             if let Some(ref sid) = session_id {
                 builder = builder.header("Mcp-Session-Id", sid.as_str());
             }
-            return builder.body(axum::body::Body::empty()).unwrap().into_response();
+            return builder
+                .body(axum::body::Body::empty())
+                .unwrap()
+                .into_response();
         }
         Err(r) => r,
     };
@@ -196,10 +194,7 @@ async fn handle_post(
 // GET /mcp — SSE stream for server-to-client notifications
 // ---------------------------------------------------------------------------
 
-async fn handle_get(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Response {
+async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(resp) = validate_session(&state, &headers) {
         return resp;
     }
@@ -234,12 +229,13 @@ async fn handle_get(
 // DELETE /mcp — session termination
 // ---------------------------------------------------------------------------
 
-async fn handle_delete(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> StatusCode {
+async fn handle_delete(State(state): State<Arc<AppState>>, headers: HeaderMap) -> StatusCode {
     if let Some(sid) = headers.get("mcp-session-id").and_then(|v| v.to_str().ok()) {
-        state.sessions.write().unwrap().remove(sid);
+        state
+            .sessions
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(sid);
     }
     StatusCode::OK
 }
@@ -276,7 +272,7 @@ fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<
             };
 
             let file_count = new_index.files.len();
-            *state.index.write().unwrap() = new_index;
+            *state.index.write().unwrap_or_else(|e| e.into_inner()) = new_index;
             eprintln!("Auto-reindex complete ({file_count} files)");
 
             // Broadcast notification to all SSE listeners
@@ -300,7 +296,7 @@ fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Validate that the request includes a valid Mcp-Session-Id header.
+/// Validate that the request includes a valid, non-expired Mcp-Session-Id header.
 fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Response> {
     let sid = headers
         .get("mcp-session-id")
@@ -313,28 +309,20 @@ fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Res
                 .into_response()
         })?;
 
-    let sessions = state.sessions.read().unwrap();
-    if sessions.contains_key(sid) {
-        Ok(sid.to_string())
-    } else {
-        Err((
+    let sessions = state.sessions.read().unwrap_or_else(|e| e.into_inner());
+    match sessions.get(sid) {
+        Some(info) if info.created_at.elapsed() < SESSION_TTL => Ok(sid.to_string()),
+        _ => Err((
             StatusCode::UNAUTHORIZED,
             "Invalid or expired Mcp-Session-Id.",
         )
-            .into_response())
+            .into_response()),
     }
 }
 
-/// Check whether a tools/call request targets a mutating tool (regenerate_index).
-fn is_mutating_tool_call(req: &JsonRpcRequest) -> bool {
-    if req.method != "tools/call" {
-        return false;
-    }
-    req.params
-        .as_ref()
-        .and_then(|p| p.get("name"))
-        .and_then(|v| v.as_str())
-        .is_some_and(|name| name == "regenerate_index")
+/// Remove sessions that have exceeded the TTL.
+fn evict_expired_sessions(sessions: &mut HashMap<String, SessionInfo>) {
+    sessions.retain(|_, info| info.created_at.elapsed() < SESSION_TTL);
 }
 
 /// Build a JSON response with optional Mcp-Session-Id header.
@@ -392,7 +380,11 @@ mod tests {
         (app, state)
     }
 
-    async fn send_post(app: &Router, body: &str, session_id: Option<&str>) -> axum::http::Response<Body> {
+    async fn send_post(
+        app: &Router,
+        body: &str,
+        session_id: Option<&str>,
+    ) -> axum::http::Response<Body> {
         let mut builder = Request::builder()
             .method("POST")
             .uri("/mcp")
@@ -406,7 +398,9 @@ mod tests {
     }
 
     async fn body_json(resp: axum::http::Response<Body>) -> Value {
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice(&bytes).unwrap()
     }
 

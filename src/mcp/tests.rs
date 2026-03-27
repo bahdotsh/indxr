@@ -2081,7 +2081,10 @@ fn test_process_jsonrpc_tools_list() {
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();
     let tools = json["result"]["tools"].as_array().unwrap();
-    assert!(!tools.is_empty(), "tools/list should return tool definitions");
+    assert!(
+        !tools.is_empty(),
+        "tools/list should return tool definitions"
+    );
 }
 
 #[test]
