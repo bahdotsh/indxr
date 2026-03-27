@@ -110,7 +110,9 @@ fn fetch_pr_info(owner: &str, repo: &str, pr_number: u64, token: &str) -> Result
 
     match response {
         Ok(resp) => {
-            let pr: GitHubPullResponse = resp.into_json().context("Failed to parse GitHub API response")?;
+            let pr: GitHubPullResponse = resp
+                .into_json()
+                .context("Failed to parse GitHub API response")?;
             Ok(PrInfo {
                 number: pr.number,
                 title: pr.title,
