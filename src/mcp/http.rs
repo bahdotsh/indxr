@@ -10,7 +10,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde_json::{Value, json};
-use tokio::sync::broadcast;
+use tokio::sync::{RwLock as AsyncRwLock, broadcast};
 
 use crate::indexer::{self, IndexConfig};
 use crate::model::CodebaseIndex;
@@ -28,8 +28,8 @@ struct AppState {
     registry: ParserRegistry,
     /// Broadcast channel for server-initiated SSE notifications (file changes).
     notify_tx: broadcast::Sender<SseEvent>,
-    /// Active sessions.
-    sessions: RwLock<HashMap<String, SessionInfo>>,
+    /// Active sessions (async-safe — accessed from async handlers without spawn_blocking).
+    sessions: AsyncRwLock<HashMap<String, SessionInfo>>,
 }
 
 struct SessionInfo {
@@ -67,7 +67,7 @@ pub async fn run_http_server(
         config,
         registry: ParserRegistry::new(),
         notify_tx: notify_tx.clone(),
-        sessions: RwLock::new(HashMap::new()),
+        sessions: AsyncRwLock::new(HashMap::new()),
     });
 
     // Optionally spawn file watcher
@@ -128,7 +128,7 @@ async fn handle_post(
     // Session enforcement: all requests except `initialize` must include a valid session.
     let session_id = if is_initialize {
         let id = uuid::Uuid::new_v4().to_string();
-        let mut sessions = state.sessions.write().unwrap_or_else(|e| e.into_inner());
+        let mut sessions = state.sessions.write().await;
         // Evict expired sessions and enforce max limit
         evict_expired_sessions(&mut sessions);
         if sessions.len() >= MAX_SESSIONS {
@@ -147,7 +147,7 @@ async fn handle_post(
         );
         Some(id)
     } else {
-        match validate_session(&state, &headers) {
+        match validate_session(&state, &headers).await {
             Ok(id) => Some(id),
             Err(resp) => return *resp,
         }
@@ -214,7 +214,7 @@ async fn handle_post(
 // ---------------------------------------------------------------------------
 
 async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let sid = match validate_session(&state, &headers) {
+    let sid = match validate_session(&state, &headers).await {
         Ok(id) => id,
         Err(resp) => return *resp,
     };
@@ -241,7 +241,7 @@ async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
                 Ok(Err(broadcast::error::RecvError::Closed)) => break,
                 Err(_) => {
                     // Timeout — check if session is still valid
-                    let sessions = state_for_stream.sessions.read().unwrap_or_else(|e| e.into_inner());
+                    let sessions = state_for_stream.sessions.read().await;
                     if !matches!(sessions.get(&sid_for_stream), Some(info) if info.created_at.elapsed() < SESSION_TTL) {
                         break;
                     }
@@ -264,13 +264,9 @@ async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
 // ---------------------------------------------------------------------------
 
 async fn handle_delete(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    match validate_session(&state, &headers) {
+    match validate_session(&state, &headers).await {
         Ok(sid) => {
-            state
-                .sessions
-                .write()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&sid);
+            state.sessions.write().await.remove(&sid);
             StatusCode::OK.into_response()
         }
         Err(resp) => *resp,
@@ -335,7 +331,7 @@ fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<
 
 /// Validate that the request includes a valid, non-expired Mcp-Session-Id header.
 /// Uses a read lock in the happy path; only upgrades to a write lock to evict expired sessions.
-fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Box<Response>> {
+async fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Box<Response>> {
     let sid = headers
         .get("mcp-session-id")
         .and_then(|v| v.to_str().ok())
@@ -351,7 +347,7 @@ fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Box
 
     // Fast path: read lock for valid sessions
     {
-        let sessions = state.sessions.read().unwrap_or_else(|e| e.into_inner());
+        let sessions = state.sessions.read().await;
         match sessions.get(sid) {
             Some(info) if info.created_at.elapsed() < SESSION_TTL => {
                 return Ok(sid.to_string());
@@ -362,7 +358,7 @@ fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Box
 
     // Slow path: write lock to evict expired session (if it exists)
     {
-        let mut sessions = state.sessions.write().unwrap_or_else(|e| e.into_inner());
+        let mut sessions = state.sessions.write().await;
         if matches!(sessions.get(sid), Some(info) if info.created_at.elapsed() >= SESSION_TTL) {
             sessions.remove(sid);
         }
@@ -428,7 +424,7 @@ mod tests {
             config,
             registry: ParserRegistry::new(),
             notify_tx,
-            sessions: RwLock::new(HashMap::new()),
+            sessions: AsyncRwLock::new(HashMap::new()),
         });
         let app = Router::new()
             .route("/mcp", post(handle_post).delete(handle_delete))
@@ -650,7 +646,7 @@ mod tests {
 
         // Fill sessions to the limit
         {
-            let mut sessions = state.sessions.write().unwrap();
+            let mut sessions = state.sessions.write().await;
             for i in 0..MAX_SESSIONS {
                 sessions.insert(
                     format!("fake-session-{i}"),
@@ -681,7 +677,7 @@ mod tests {
         // Insert a session that is already expired
         let expired_sid = "expired-session-id".to_string();
         {
-            let mut sessions = state.sessions.write().unwrap();
+            let mut sessions = state.sessions.write().await;
             sessions.insert(
                 expired_sid.clone(),
                 SessionInfo {
@@ -700,7 +696,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
         // The expired session should have been eagerly removed
-        let sessions = state.sessions.read().unwrap();
+        let sessions = state.sessions.read().await;
         assert!(
             !sessions.contains_key(&expired_sid),
             "Expired session should be evicted on access"
