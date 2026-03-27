@@ -130,7 +130,7 @@ fn main() -> Result<()> {
             base_ref
         } else {
             // Safe to unwrap: clap ArgGroup ensures one of --pr/--since is present
-            since.clone().unwrap()
+            since.as_deref().unwrap().to_string()
         };
 
         let index = indexer::build_index(&config)?;
