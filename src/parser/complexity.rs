@@ -99,7 +99,19 @@ fn count_params(func: tree_sitter::Node<'_>, source: &str, language: &Language) 
                     continue;
                 }
             }
-            count += 1;
+            // Go groups parameters: `func f(a, b int)` has one parameter_declaration
+            // with multiple identifier children. Count the identifiers, not the group.
+            if matches!(language, Language::Go) && child.kind() == "parameter_declaration" {
+                let names = (0..child.named_child_count())
+                    .filter_map(|j| child.named_child(j))
+                    .filter(|n| n.kind() == "identifier")
+                    .count();
+                // A parameter_declaration always has at least one name; fall back to 1
+                // for edge cases like unnamed params in interfaces.
+                count += names.max(1);
+            } else {
+                count += 1;
+            }
         }
     }
     count
@@ -432,11 +444,13 @@ pub struct HotspotEntry {
 
 /// Composite hotspot score combining multiple complexity signals.
 ///
+/// Formula: `cc + nesting*2 + params*0.5 + body_lines/20`
+///
 /// Weights:
 /// - cyclomatic: 1x (primary signal)
 /// - nesting: 2x (deep nesting is disproportionately hard to reason about)
 /// - params: 0.5x (more params = harder interface, but less than structural complexity)
-/// - body_lines: 0.05x (longer = harder, but secondary to structural metrics)
+/// - body_lines: /20 (longer = harder, but secondary to structural metrics)
 pub fn hotspot_score(
     cyclomatic: u16,
     max_nesting: u16,
@@ -447,6 +461,37 @@ pub fn hotspot_score(
         + max_nesting as f64 * 2.0
         + param_count as f64 * 0.5
         + body_lines as f64 / 20.0
+}
+
+/// Sort hotspot entries by the given criterion with a stable file:line tiebreak.
+pub fn sort_hotspots(entries: &mut [HotspotEntry], sort_by: &str) {
+    let tiebreak =
+        |a: &HotspotEntry, b: &HotspotEntry| a.file.cmp(&b.file).then(a.line.cmp(&b.line));
+
+    match sort_by {
+        "complexity" => {
+            entries.sort_by(|a, b| b.cyclomatic.cmp(&a.cyclomatic).then_with(|| tiebreak(a, b)))
+        }
+        "nesting" => entries.sort_by(|a, b| {
+            b.max_nesting
+                .cmp(&a.max_nesting)
+                .then_with(|| tiebreak(a, b))
+        }),
+        "params" => entries.sort_by(|a, b| {
+            b.param_count
+                .cmp(&a.param_count)
+                .then_with(|| tiebreak(a, b))
+        }),
+        "body_lines" => {
+            entries.sort_by(|a, b| b.body_lines.cmp(&a.body_lines).then_with(|| tiebreak(a, b)))
+        }
+        _ => entries.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| tiebreak(a, b))
+        }),
+    }
 }
 
 /// Collect hotspot entries from an index, optionally filtered by path and minimum complexity.
@@ -631,7 +676,15 @@ pub fn compute_health(index: &CodebaseIndex, path_filter: Option<&str>) -> Healt
     let median_cc = if acc.cc_values.is_empty() {
         0
     } else {
-        acc.cc_values[acc.cc_values.len() / 2]
+        let len = acc.cc_values.len();
+        if len % 2 == 1 {
+            acc.cc_values[len / 2]
+        } else {
+            // Average the two middle elements, rounding to nearest u16
+            let lo = acc.cc_values[len / 2 - 1] as u32;
+            let hi = acc.cc_values[len / 2] as u32;
+            (lo + hi).div_ceil(2) as u16
+        }
     };
     let p90_cc = if acc.cc_values.is_empty() {
         0
@@ -1098,5 +1151,18 @@ def classify(x):
         assert_eq!(c.max_nesting, 1, "nesting={}", c.max_nesting);
         // 1 base + if + elif + elif = 4
         assert_eq!(c.cyclomatic, 4, "cyclomatic={}", c.cyclomatic);
+    }
+
+    #[test]
+    fn go_grouped_params() {
+        let src = r#"
+package main
+
+func multi(a, b int, c string) {}
+"#;
+        let decls = parse_and_annotate(src, Language::Go);
+        let c = get_complexity(&decls, "multi").expect("should have complexity");
+        // a and b are grouped under one parameter_declaration — should still count 3
+        assert_eq!(c.param_count, 3);
     }
 }

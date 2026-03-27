@@ -370,12 +370,7 @@ fn handle_git_diff(
 
 fn handle_hotspots(index: &CodebaseIndex, path_filter: Option<&str>) -> Result<()> {
     let mut entries = parser::complexity::collect_hotspots(index, path_filter, 1);
-
-    entries.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    parser::complexity::sort_hotspots(&mut entries, "score");
     entries.truncate(30);
 
     if entries.is_empty() {

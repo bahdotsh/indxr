@@ -1,6 +1,6 @@
-/// Returns true if `file_path` matches the given filter (substring or suffix match).
+/// Returns true if `file_path` matches the given filter (substring match).
 pub fn path_matches_filter(file_path: &str, filter: &str) -> bool {
-    file_path.contains(filter) || file_path.ends_with(filter)
+    file_path.contains(filter)
 }
 
 /// Check if `text` contains `word` at a word boundary (not part of a larger identifier).

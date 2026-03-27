@@ -12,7 +12,7 @@ use crate::languages::Language;
 use crate::model::declarations::{DeclKind, Declaration};
 use crate::model::{CodebaseIndex, FileIndex};
 use crate::parser::ParserRegistry;
-use crate::parser::complexity::{collect_hotspots, compute_health};
+use crate::parser::complexity::{collect_hotspots, compute_health, sort_hotspots};
 
 use super::helpers::*;
 
@@ -1595,36 +1595,7 @@ pub(super) fn tool_get_hotspots(index: &CodebaseIndex, args: &Value) -> Value {
         .unwrap_or("score");
 
     let mut entries = collect_hotspots(index, path_filter, min_complexity);
-
-    let tiebreak = |a: &crate::parser::complexity::HotspotEntry,
-                    b: &crate::parser::complexity::HotspotEntry| {
-        a.file.cmp(&b.file).then(a.line.cmp(&b.line))
-    };
-
-    match sort_by {
-        "complexity" => {
-            entries.sort_by(|a, b| b.cyclomatic.cmp(&a.cyclomatic).then_with(|| tiebreak(a, b)))
-        }
-        "nesting" => entries.sort_by(|a, b| {
-            b.max_nesting
-                .cmp(&a.max_nesting)
-                .then_with(|| tiebreak(a, b))
-        }),
-        "params" => entries.sort_by(|a, b| {
-            b.param_count
-                .cmp(&a.param_count)
-                .then_with(|| tiebreak(a, b))
-        }),
-        "body_lines" => {
-            entries.sort_by(|a, b| b.body_lines.cmp(&a.body_lines).then_with(|| tiebreak(a, b)))
-        }
-        _ => entries.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| tiebreak(a, b))
-        }),
-    }
+    sort_hotspots(&mut entries, sort_by);
 
     let total = entries.len();
     entries.truncate(limit);
