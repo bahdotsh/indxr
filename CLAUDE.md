@@ -154,9 +154,9 @@ indxr --stats                                # print indexing stats to stderr
 5. Extract declarations, metadata, relationships
 6. Annotate complexity metrics (tree-sitter languages only)
 7. Apply filters (path, kind, visibility, symbol)
-7. Apply token budget (progressive truncation)
-8. Format output (Markdown/JSON/YAML)
-9. Update cache
+8. Apply token budget (progressive truncation)
+9. Format output (Markdown/JSON/YAML)
+10. Update cache
 
 Key source files:
 - `src/main.rs` — entry point, CLI dispatch
