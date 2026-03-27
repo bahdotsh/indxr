@@ -33,11 +33,11 @@ struct AppState {
 }
 
 struct SessionInfo {
-    /// Used for session TTL enforcement.
-    created_at: Instant,
+    /// Updated on every valid access — sessions expire after [`SESSION_TTL`] of *inactivity*.
+    last_accessed: Instant,
 }
 
-/// Maximum session age before it's considered expired.
+/// Maximum inactivity before a session is considered expired (sliding window).
 const SESSION_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
 /// Maximum number of concurrent sessions.
 const MAX_SESSIONS: usize = 1000;
@@ -142,7 +142,7 @@ async fn handle_post(
         sessions.insert(
             id.clone(),
             SessionInfo {
-                created_at: Instant::now(),
+                last_accessed: Instant::now(),
             },
         );
         Some(id)
@@ -184,7 +184,13 @@ async fn handle_post(
     {
         Ok(Some(resp)) => resp,
         Ok(None) => {
-            // Should not happen — notifications are handled before dispatch
+            // Should not happen — notifications are handled before dispatch.
+            // Clean up the session created during this initialize to avoid orphans.
+            if is_initialize {
+                if let Some(ref sid) = session_id {
+                    state.sessions.write().await.remove(sid);
+                }
+            }
             let resp = err_response(Value::Null, -32603, "Internal error".to_string());
             return json_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -193,6 +199,12 @@ async fn handle_post(
             );
         }
         Err(_) => {
+            // Handler panicked — clean up the session to avoid orphans.
+            if is_initialize {
+                if let Some(ref sid) = session_id {
+                    state.sessions.write().await.remove(sid);
+                }
+            }
             let resp = err_response(
                 Value::Null,
                 -32603,
@@ -242,7 +254,7 @@ async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
                 Err(_) => {
                     // Timeout — check if session is still valid
                     let sessions = state_for_stream.sessions.read().await;
-                    if !matches!(sessions.get(&sid_for_stream), Some(info) if info.created_at.elapsed() < SESSION_TTL) {
+                    if !matches!(sessions.get(&sid_for_stream), Some(info) if info.last_accessed.elapsed() < SESSION_TTL) {
                         break;
                     }
                 }
@@ -330,7 +342,7 @@ fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<
 // ---------------------------------------------------------------------------
 
 /// Validate that the request includes a valid, non-expired Mcp-Session-Id header.
-/// Uses a read lock in the happy path; only upgrades to a write lock to evict expired sessions.
+/// Refreshes `last_accessed` on every successful validation (sliding-window TTL).
 async fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Box<Response>> {
     let sid = headers
         .get("mcp-session-id")
@@ -345,37 +357,36 @@ async fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<Strin
             )
         })?;
 
-    // Fast path: read lock for valid sessions
-    {
-        let sessions = state.sessions.read().await;
-        match sessions.get(sid) {
-            Some(info) if info.created_at.elapsed() < SESSION_TTL => {
-                return Ok(sid.to_string());
-            }
-            _ => {}
+    let mut sessions = state.sessions.write().await;
+    match sessions.get_mut(sid) {
+        Some(info) if info.last_accessed.elapsed() < SESSION_TTL => {
+            info.last_accessed = Instant::now();
+            Ok(sid.to_string())
         }
-    }
-
-    // Slow path: write lock to evict expired session (if it exists)
-    {
-        let mut sessions = state.sessions.write().await;
-        if matches!(sessions.get(sid), Some(info) if info.created_at.elapsed() >= SESSION_TTL) {
+        Some(_) => {
+            // Expired — evict eagerly
             sessions.remove(sid);
+            Err(Box::new(
+                (
+                    StatusCode::UNAUTHORIZED,
+                    "Invalid or expired Mcp-Session-Id.",
+                )
+                    .into_response(),
+            ))
         }
+        None => Err(Box::new(
+            (
+                StatusCode::UNAUTHORIZED,
+                "Invalid or expired Mcp-Session-Id.",
+            )
+                .into_response(),
+        )),
     }
-
-    Err(Box::new(
-        (
-            StatusCode::UNAUTHORIZED,
-            "Invalid or expired Mcp-Session-Id.",
-        )
-            .into_response(),
-    ))
 }
 
-/// Remove sessions that have exceeded the TTL.
+/// Remove sessions that have exceeded the TTL (no activity within the window).
 fn evict_expired_sessions(sessions: &mut HashMap<String, SessionInfo>) {
-    sessions.retain(|_, info| info.created_at.elapsed() < SESSION_TTL);
+    sessions.retain(|_, info| info.last_accessed.elapsed() < SESSION_TTL);
 }
 
 /// Build a JSON response with optional Mcp-Session-Id header.
@@ -651,7 +662,7 @@ mod tests {
                 sessions.insert(
                     format!("fake-session-{i}"),
                     SessionInfo {
-                        created_at: Instant::now(),
+                        last_accessed: Instant::now(),
                     },
                 );
             }
@@ -681,7 +692,7 @@ mod tests {
             sessions.insert(
                 expired_sid.clone(),
                 SessionInfo {
-                    created_at: Instant::now() - SESSION_TTL - std::time::Duration::from_secs(1),
+                    last_accessed: Instant::now() - SESSION_TTL - std::time::Duration::from_secs(1),
                 },
             );
         }

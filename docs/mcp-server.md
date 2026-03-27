@@ -33,7 +33,7 @@ The HTTP transport implements the MCP Streamable HTTP specification (2025-03-26)
 - **GET /mcp** — open an SSE stream for server-initiated notifications (file change events)
 - **DELETE /mcp** — terminate a session
 
-Sessions are enforced: the first request must be `initialize`, which returns an `Mcp-Session-Id` header. All subsequent requests must include this header.
+Sessions are enforced: the first request must be `initialize`, which returns an `Mcp-Session-Id` header. All subsequent requests must include this header. Sessions use a **sliding-window TTL** (1 hour of inactivity) — each valid request refreshes the timer, so active sessions do not expire. Up to 1000 concurrent sessions are supported; expired sessions are evicted lazily.
 
 ### Server Options
 
