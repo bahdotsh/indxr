@@ -321,6 +321,7 @@ An MCP server called `indxr` is available. **Always use indxr tools before the R
 | `get_diff_summary` | ~200-500 | Structural changes since a git ref (vs reading raw diffs) |
 | `get_hotspots` | ~200-500 | Most complex functions ranked by composite score |
 | `get_health` | ~200-400 | Codebase health summary with aggregate complexity metrics |
+| `get_type_flow` | ~200-500 | Track which functions produce/consume a type across the codebase |
 | `read_source` (symbol) | ~50-300 | Read one function/struct. Supports `symbols` array and `collapse`. |
 | `get_token_estimate` | ~100 | Check cost before reading. Supports `directory`/`glob`. |
 | `Read` (full file) | **500-10000+** | ONLY when editing or need exact formatting |
@@ -345,7 +346,8 @@ An MCP server called `indxr` is available. **Always use indxr tools before the R
 16. `get_diff_summary` — get structural changes since a git ref.
 17. `get_hotspots` — get the most complex functions ranked by composite score.
 18. `get_health` — get codebase health summary: aggregate complexity, documentation coverage, test ratio.
-19. `regenerate_index` — re-index after code changes.
+19. `get_type_flow` — track where a type flows across function boundaries. Shows producers and consumers.
+20. `regenerate_index` — re-index after code changes.
 
 ### When to use the Read tool instead
 - You need to **edit** a file (Read is required before Edit)

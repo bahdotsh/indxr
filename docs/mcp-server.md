@@ -542,6 +542,46 @@ Get a codebase health summary with aggregate complexity metrics, documentation c
 - `test_count` — number of test functions
 - `hottest_files` — top 5 files by average complexity (min 2 functions)
 
+### `get_type_flow`
+
+Track where a type flows across function boundaries. Shows which functions produce (return) and consume (accept as parameters) a given type. Useful for understanding data flow, finding related code, and tracing how data moves through the system. Supports 10+ languages: Rust, Go, TypeScript, JavaScript, Python, Java, Kotlin, Swift, C, C++, and C#.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `type_name` | string | yes | Type name to track (e.g., `FileIndex`, `Declaration`, `Cache`) |
+| `path` | string | no | File or directory path filter to scope the search |
+| `include_fields` | boolean | no | If true, also include struct/class fields that hold this type (default: false) |
+| `limit` | number | no | Maximum results per role (default: 50, max: 200) |
+| `compact` | boolean | no | Return columnar format (saves ~30% tokens) |
+
+**Example:**
+```json
+{
+  "params": {
+    "name": "get_type_flow",
+    "arguments": { "type_name": "FileIndex", "path": "src/parser" }
+  }
+}
+```
+
+**Example response:**
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "{\"type_name\":\"FileIndex\",\"producers_count\":3,\"consumers_count\":5,\"producers\":[{\"file\":\"src/parser/mod.rs\",\"name\":\"parse_file\",\"kind\":\"function\",\"signature\":\"pub fn parse_file(path: &Path) -> Result<FileIndex>\",\"line\":42,\"role\":\"producer\"}],\"consumers\":[{\"file\":\"src/indexer.rs\",\"name\":\"merge_index\",\"kind\":\"function\",\"signature\":\"pub fn merge_index(files: Vec<FileIndex>) -> CodebaseIndex\",\"line\":15,\"role\":\"consumer\"}]}"
+  }]
+}
+```
+
+**Fields:**
+- `type_name` — the type that was searched for
+- `producers_count` / `consumers_count` — total matches (before `limit` truncation)
+- `producers` — functions that return this type
+- `consumers` — functions that accept this type as a parameter (and fields, if `include_fields` is true)
+
 ## Configuration for AI Tools
 
 > **Tip:** `indxr init` can create all these configuration files automatically. See `indxr init --help` or the [Agent Integration Guide](agent-integration.md#quick-setup).

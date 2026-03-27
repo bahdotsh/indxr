@@ -17,7 +17,7 @@ AI coding agents waste thousands of tokens reading entire source files just to u
 ## Features
 
 - **27 languages** — tree-sitter AST parsing for 8 languages, regex extraction for 19 more
-- **20-tool MCP server** — live codebase queries over JSON-RPC: symbol lookup, file summaries, caller tracing, signature search, complexity hotspots, and more
+- **22-tool MCP server** — live codebase queries over JSON-RPC: symbol lookup, file summaries, caller tracing, signature search, complexity hotspots, type flow tracking, and more
 - **Token-aware** — progressive truncation to fit context windows, ~5x reduction vs reading full files
 - **Git structural diffing** — declaration-level diffs (`+` added, `-` removed, `~` changed) against any git ref or GitHub PR
 - **Dependency graphs** — file and symbol dependency visualization as DOT, Mermaid, or JSON
@@ -25,6 +25,7 @@ AI coding agents waste thousands of tokens reading entire source files just to u
 - **One-command agent setup** — `indxr init` configures Claude Code, Cursor, and Windsurf with MCP, instruction files, and hooks
 - **Incremental caching** — mtime + xxh3 content hashing, sub-20ms indexing for most projects
 - **Complexity hotspots** — per-function cyclomatic complexity, nesting depth, and parameter count via tree-sitter AST analysis; codebase health reports
+- **Type flow tracking** — cross-file analysis showing which functions produce (return) and consume (accept) a given type
 - **Composable filters** — by path, kind, symbol name, visibility, and language
 - **Three output formats** — Markdown (default), JSON, YAML at three detail levels
 
@@ -73,7 +74,7 @@ Agents don't always pick MCP tools over file reads on their own. `indxr init` se
 
 ## MCP Server
 
-JSON-RPC 2.0 over stdin/stdout, 20 tools:
+JSON-RPC 2.0 over stdin/stdout, 22 tools:
 
 | Tool | Description |
 |---|---|
@@ -96,6 +97,8 @@ JSON-RPC 2.0 over stdin/stdout, 20 tools:
 | `get_diff_summary` | Structural changes since a git ref or GitHub PR |
 | `get_hotspots` | Most complex functions ranked by composite score |
 | `get_health` | Codebase health summary with aggregate complexity metrics |
+| `get_type_flow` | Track which functions produce/consume a given type across the codebase |
+| `get_dependency_graph` | File and symbol dependency graph (DOT, Mermaid, JSON) |
 | `regenerate_index` | Re-index and update INDEX.md |
 
 List tools support `compact` mode for ~30% token savings. See [MCP Server docs](docs/mcp-server.md) for full parameter details.
@@ -173,7 +176,7 @@ indxr --hotspots --filter-path src/parser    # scoped to a directory
 
 Shows cyclomatic complexity, max nesting depth, parameter count, body lines, and a composite score for each function. Only tree-sitter parsed languages are analyzed.
 
-MCP tools: `get_hotspots` (ranked list with filtering and sorting), `get_health` (aggregate metrics, documentation coverage, test ratio, hottest files).
+MCP tools: `get_hotspots` (ranked list with filtering and sorting), `get_health` (aggregate metrics, documentation coverage, test ratio, hottest files), `get_type_flow` (cross-file type flow tracking — producers and consumers of any type).
 
 ## Dependency Graph
 

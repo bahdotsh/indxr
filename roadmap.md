@@ -25,13 +25,12 @@ Structural diff for GitHub PRs — shows added/removed/modified declarations wit
 - CLI: `indxr diff --pr 42` (also supports `indxr diff --since <ref>`)
 - MCP: `get_diff_summary` extended with optional `pr` param (resolves base branch via GitHub API)
 
-## Planned
-
 ### Cross-file type flow tracking
 Track where types flow across function boundaries.
-- Extract return types and parameter types from signatures
-- Build type-to-functions index (producers and consumers)
+- Language-aware signature parsing for 10+ languages (Rust, Go, TypeScript, Python, Java, Kotlin, Swift, C, C++, C#)
+- Extract return types (producers) and parameter types (consumers) from function signatures
 - MCP tool: `get_type_flow` — given a type name, show who produces and consumes it
+- Supports path filtering, field inclusion, compact mode, and result limiting
 
 ### HTTP+SSE MCP transport
 HTTP server with SSE transport alongside existing stdin/stdout JSON-RPC.

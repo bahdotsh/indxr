@@ -1,7 +1,7 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-27 07:25:58 UTC | Files: 53 | Lines: 23500
-> Languages: Markdown (14), Python (1), Rust (36), Shell (1), TOML (1)
+> Generated: 2026-03-27 16:59:43 UTC | Files: 56 | Lines: 26978
+> Languages: Markdown (14), Python (1), Rust (39), Shell (1), TOML (1)
 
 ## Directory Structure
 
@@ -34,6 +34,7 @@ indxr/
     diff.rs
     error.rs
     filter.rs
+    github.rs
     indexer.rs
     init.rs
     languages.rs
@@ -43,6 +44,7 @@ indxr/
       mod.rs
       tests.rs
       tools.rs
+      type_flow.rs
     model/
       declarations.rs
       mod.rs
@@ -51,6 +53,7 @@ indxr/
       mod.rs
       yaml.rs
     parser/
+      complexity.rs
       mod.rs
       queries/
         c.rs
@@ -81,12 +84,14 @@ indxr/
 - `# Detail levels: summary | signatures (default) | full`
 - `# Filtering`
 - `# Git structural diffing`
+- `# PR-aware structural diffs`
 - `# Token budget`
 - `# Output control`
 - `# Caching`
 - `# MCP server`
 - `# File watching`
 - `# Agent setup`
+- `# Complexity hotspots`
 - `# Dependency graph`
 - `# Other`
 
@@ -128,6 +133,7 @@ indxr/
 - `# Generate a scoped index for the area you're working in`
 - `# Show structural changes since the last release`
 - `# Show what changed on this branch`
+- `# Show structural changes for a GitHub PR`
 - `# Public API only, compact`
 - `# Summary for high-level overview`
 - `# Full signatures for detailed reference`
@@ -140,6 +146,10 @@ indxr/
 
 **docs/cli-reference.md**
 - `# CLI Reference`
+- `# Structural diff for PR #42`
+- `# JSON output`
+- `# Diff against a git ref (same as --since flag)`
+- `# Diff a specific project`
 - `# Index current directory`
 - `# Index a specific project`
 - `# Write to file`
@@ -157,6 +167,7 @@ indxr/
 - `# Changes in last 5 commits`
 - `# Changes since a commit hash`
 - `# JSON diff output`
+- `# PR-aware structural diff (via diff subcommand)`
 - `# Fit in 4000 tokens`
 - `# Compact public API within budget`
 - `# Budget with JSON output`
@@ -177,6 +188,13 @@ indxr/
 - `# Skip PreToolUse hooks`
 - `# Overwrite existing files`
 - `# Re-run after initial setup (skips existing files)`
+- `# Show top 30 most complex functions`
+- `# Scoped to a directory`
+- `# Example output:`
+- `# Score   CC  Nest Params  Lines  Function`
+- `# ------------------------------------------------------------------------------`
+- `# 18.5   12     4      1     20  src/parser.rs:10  parse_file`
+- `# 5.3    2     1      1      5  src/utils.rs:35   internal_helper`
 - `# File-level DOT graph (for Graphviz)`
 - `# File-level Mermaid diagram`
 - `# JSON graph for programmatic use`
@@ -221,6 +239,9 @@ indxr/
 - `# Since a tag`
 - `# Since a relative commit`
 - `# Since a specific commit`
+- `# Structural diff for PR #42`
+- `# JSON output`
+- `# The diff subcommand also supports --since`
 - `# Structural Changes (since main)`
 - `# Only show structural changes in Rust files`
 - `# Only changes in a specific directory`
@@ -307,6 +328,10 @@ indxr/
 - `pub struct FilterOptions`
 - `pub fn apply_filters(index: &mut CodebaseIndex, opts: &FilterOptions)`
 
+**src/github.rs**
+- `pub struct PrInfo`
+- `pub fn resolve_pr_base(root: &Path, pr_number: u64) -> Result<(String, PrInfo)>`
+
 **src/indexer.rs**
 - `pub struct IndexConfig`
 - `pub struct ParseResult`
@@ -378,9 +403,19 @@ indxr/
 - `pub(super) fn tool_explain_symbol(index: &CodebaseIndex, args: &Value) -> Value`
 - `pub(super) fn tool_get_related_tests(index: &CodebaseIndex, args: &Value) -> Value`
 - `pub(super) fn tool_get_dependency_graph(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_hotspots(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_health(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_type_flow(index: &CodebaseIndex, args: &Value) -> Value`
+
+**src/mcp/type_flow.rs**
+- `pub(super) struct TypeInfo`
+- `pub(super) struct TypeFlowEntry`
+- `pub(super) fn extract_types_from_signature(signature: &str, language: &Language) -> TypeInfo`
+- `pub(super) fn build_type_flow( index: &CodebaseIndex, type_name: &str, path_filter: Option<&str>, include_fields: bool, ) -> (Vec<TypeFlowEntry>, Vec<TypeFlowEntry>)`
 
 **src/model/declarations.rs**
 - `pub struct Declaration`
+- `pub struct ComplexityMetrics`
 - `pub struct Relationship`
 - `pub enum RelKind`
 - `pub enum DeclKind`
@@ -407,7 +442,18 @@ indxr/
 **src/output/yaml.rs**
 - `pub struct YamlFormatter`
 
+**src/parser/complexity.rs**
+- `pub fn annotate_complexity( declarations: &mut [Declaration], root: tree_sitter::Node<'_>, source: &str, language: &Language, )`
+- `pub struct HotspotEntry`
+- `pub fn hotspot_score( cyclomatic: u16, max_nesting: u16, param_count: u16, body_lines: usize, ) -> f64`
+- `pub fn sort_hotspots(entries: &mut [HotspotEntry], sort_by: &str)`
+- `pub fn collect_hotspots( index: &CodebaseIndex, path_filter: Option<&str>, min_complexity: u16, ) -> Vec<HotspotEntry>`
+- `pub struct HottestFile`
+- `pub struct HealthReport`
+- `pub fn compute_health(index: &CodebaseIndex, path_filter: Option<&str>) -> HealthReport`
+
 **src/parser/mod.rs**
+- `pub mod complexity`
 - `pub mod queries`
 - `pub mod regex_parser`
 - `pub mod tree_sitter_parser`
@@ -457,6 +503,7 @@ indxr/
 - `pub struct TreeSitterParser`
 
 **src/utils.rs**
+- `pub fn path_matches_filter(file_path: &str, filter: &str) -> bool`
 - `pub fn contains_word_boundary(text: &str, word: &str) -> bool`
 
 **src/walker/mod.rs**
@@ -479,7 +526,7 @@ indxr/
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 10.1 KB | **Lines:** 171
+**Language:** Markdown | **Size:** 11.6 KB | **Lines:** 189
 
 **Declarations:**
 
@@ -487,7 +534,7 @@ indxr/
 
 ## Cargo.toml
 
-**Language:** TOML | **Size:** 999 B | **Lines:** 41
+**Language:** TOML | **Size:** 1.0 KB | **Lines:** 42
 
 **Imports:**
 - `anyhow`
@@ -500,7 +547,7 @@ indxr/
 - `regex`
 - `serde`
 - `serde_json`
-- *... and 15 more imports*
+- *... and 16 more imports*
 
 **Declarations:**
 
@@ -508,7 +555,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 53.1 KB | **Lines:** 2032
+**Language:** Markdown | **Size:** 52.7 KB | **Lines:** 2008
 
 **Declarations:**
 
@@ -516,7 +563,7 @@ indxr/
 
 ## README.md
 
-**Language:** Markdown | **Size:** 8.4 KB | **Lines:** 229
+**Language:** Markdown | **Size:** 9.7 KB | **Lines:** 247
 
 **Declarations:**
 
@@ -532,7 +579,7 @@ indxr/
 
 ## docs/agent-integration.md
 
-**Language:** Markdown | **Size:** 15.7 KB | **Lines:** 465
+**Language:** Markdown | **Size:** 15.9 KB | **Lines:** 468
 
 **Declarations:**
 
@@ -548,7 +595,7 @@ indxr/
 
 ## docs/cli-reference.md
 
-**Language:** Markdown | **Size:** 8.2 KB | **Lines:** 324
+**Language:** Markdown | **Size:** 10.1 KB | **Lines:** 391
 
 **Declarations:**
 
@@ -572,7 +619,7 @@ indxr/
 
 ## docs/git-diffing.md
 
-**Language:** Markdown | **Size:** 3.3 KB | **Lines:** 154
+**Language:** Markdown | **Size:** 4.1 KB | **Lines:** 194
 
 **Declarations:**
 
@@ -588,7 +635,7 @@ indxr/
 
 ## docs/mcp-server.md
 
-**Language:** Markdown | **Size:** 14.6 KB | **Lines:** 553
+**Language:** Markdown | **Size:** 20.1 KB | **Lines:** 695
 
 **Declarations:**
 
@@ -612,7 +659,7 @@ indxr/
 
 ## roadmap.md
 
-**Language:** Markdown | **Size:** 2.0 KB | **Lines:** 50
+**Language:** Markdown | **Size:** 2.2 KB | **Lines:** 49
 
 **Declarations:**
 
@@ -674,7 +721,7 @@ indxr/
 
 **Declarations:**
 
-`const CACHE_VERSION: u32 = 2`
+`const CACHE_VERSION: u32 = 3`
 
 `const CACHE_FILENAME: &str = "cache.bin"`
 
@@ -706,7 +753,7 @@ indxr/
 
 ## src/cli.rs
 
-**Language:** Rust | **Size:** 6.1 KB | **Lines:** 239
+**Language:** Rust | **Size:** 9.0 KB | **Lines:** 335
 
 **Imports:**
 - `std::path::PathBuf`
@@ -714,6 +761,8 @@ indxr/
 - `crate::model::DetailLevel`
 
 **Declarations:**
+
+`mod tests`
 
 ---
 
@@ -829,6 +878,42 @@ indxr/
 
 ---
 
+## src/github.rs
+
+**Language:** Rust | **Size:** 6.7 KB | **Lines:** 224
+
+**Imports:**
+- `std::path::Path`
+- `std::process::Command`
+- `std::sync::LazyLock`
+- `std::time::Duration`
+- `anyhow::{Context, Result, bail}`
+- `serde::Deserialize`
+
+**Declarations:**
+
+`struct GitHubPullResponse`
+> Fields: `number: u64`, `title: String`, `base: GitHubRef`, `head: GitHubRef`
+
+`struct GitHubRef`
+> Fields: `ref_name: String`
+
+`fn get_github_token() -> Result<String>`
+
+`fn detect_github_repo(root: &Path) -> Result<(String, String)>`
+
+`static GITHUB_URL_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"github\.com[:/]([^/]+)/([^/.]+)").unwrap())`
+
+`fn parse_github_url(url: &str) -> Result<(String, String)>`
+
+`fn fetch_pr_info(owner: &str, repo: &str, pr_number: u64, token: &str) -> Result<PrInfo>`
+
+`fn resolve_base_ref(root: &Path, base_branch: &str) -> Result<String>`
+
+`mod tests`
+
+---
+
 ## src/indexer.rs
 
 **Language:** Rust | **Size:** 5.3 KB | **Lines:** 176
@@ -851,7 +936,7 @@ indxr/
 
 ## src/init.rs
 
-**Language:** Rust | **Size:** 24.9 KB | **Lines:** 705
+**Language:** Rust | **Size:** 25.4 KB | **Lines:** 711
 
 **Imports:**
 - `std::fs`
@@ -931,7 +1016,7 @@ indxr/
 
 ## src/main.rs
 
-**Language:** Rust | **Size:** 10.2 KB | **Lines:** 364
+**Language:** Rust | **Size:** 12.1 KB | **Lines:** 433
 
 **Imports:**
 - `std::collections::HashMap`
@@ -962,6 +1047,8 @@ indxr/
 
 `mod filter`
 
+`mod github`
+
 `mod indexer`
 
 `mod init`
@@ -986,7 +1073,9 @@ indxr/
 
 `fn index_config_from(opts: &cli::IndexOpts) -> indexer::IndexConfig`
 
-`fn handle_git_diff( root: &std::path::Path, since_ref: &str, current_files: &[model::FileIndex], registry: &ParserRegistry, cli: &Cli, ) -> Result<()>`
+`fn handle_git_diff( root: &std::path::Path, since_ref: &str, current_files: &[model::FileIndex], registry: &ParserRegistry, format: &OutputFormat, ) -> Result<()>`
+
+`fn handle_hotspots(index: &CodebaseIndex, path_filter: Option<&str>) -> Result<()>`
 
 ---
 
@@ -1010,7 +1099,7 @@ indxr/
 
 ## src/mcp/mod.rs
 
-**Language:** Rust | **Size:** 13.0 KB | **Lines:** 406
+**Language:** Rust | **Size:** 13.0 KB | **Lines:** 407
 
 **Imports:**
 - `std::io::{self, BufRead, Write}`
@@ -1031,6 +1120,8 @@ indxr/
 `mod helpers`
 
 `mod tools`
+
+`mod type_flow`
 
 `mod tests`
 
@@ -1064,17 +1155,20 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 45.7 KB | **Lines:** 1313
+**Language:** Rust | **Size:** 70.0 KB | **Lines:** 2010
 
 **Imports:**
 - `std::collections::HashMap`
 - `std::path::PathBuf`
 - `serde_json::{Value, json}`
 - `crate::languages::Language`
-- `crate::model::declarations::{DeclKind, Declaration, RelKind, Relationship, Visibility}`
+- `crate::model::declarations::{
+    ComplexityMetrics, DeclKind, Declaration, RelKind, Relationship, Visibility,
+}`
 - `crate::model::{CodebaseIndex, FileIndex, Import, IndexStats}`
 - `super::helpers::*`
 - `super::tools::*`
+- `super::type_flow::*`
 
 **Declarations:**
 
@@ -1232,11 +1326,107 @@ indxr/
 
 `fn test_tool_dependency_graph_defaults_to_mermaid()`
 
+`fn test_tool_get_hotspots_default()`
+
+`fn test_tool_get_hotspots_min_complexity_filter()`
+
+`fn test_tool_get_hotspots_path_filter()`
+
+`fn test_tool_get_hotspots_sort_by_complexity()`
+
+`fn test_tool_get_hotspots_compact()`
+
+`fn test_tool_get_hotspots_total_before_truncate()`
+
+`fn test_tool_get_health_default()`
+
+`fn test_tool_get_health_path_filter()`
+
+`fn test_tool_get_health_empty_codebase()`
+
+`fn make_diff_test_fixtures() -> ( CodebaseIndex, crate::indexer::IndexConfig, crate::parser::ParserRegistry, )`
+
+`fn test_tool_get_diff_summary_both_params_error()`
+
+`fn test_tool_get_diff_summary_neither_param_error()`
+
+`fn test_tool_get_diff_summary_invalid_pr_zero()`
+
+`fn test_tool_get_diff_summary_invalid_pr_negative()`
+
+`fn test_tool_get_diff_summary_invalid_pr_string()`
+
+`fn test_tool_get_diff_summary_empty_since_ref()`
+
+`fn test_tool_get_diff_summary_whitespace_since_ref()`
+
+`fn test_extract_types_rust_function()`
+
+`fn test_extract_types_rust_method()`
+
+`fn test_extract_types_rust_no_return()`
+
+`fn test_extract_types_go_function()`
+
+`fn test_extract_types_go_method()`
+
+`fn test_extract_types_typescript()`
+
+`fn test_extract_types_typescript_promise()`
+
+`fn test_extract_types_python()`
+
+`fn test_extract_types_python_optional()`
+
+`fn test_extract_types_java()`
+
+`fn test_extract_types_kotlin()`
+
+`fn test_extract_types_swift()`
+
+`fn test_extract_types_empty_signature()`
+
+`fn test_extract_types_ruby_no_types()`
+
+`fn test_tool_get_type_flow_producers()`
+
+`fn test_tool_get_type_flow_consumers()`
+
+`fn test_tool_get_type_flow_not_found()`
+
+`fn test_tool_get_type_flow_case_insensitive()`
+
+`fn test_tool_get_type_flow_compact()`
+
+`fn test_tool_get_type_flow_path_filter()`
+
+`fn test_tool_get_type_flow_missing_param()`
+
+`fn test_tool_get_type_flow_whitespace_only_param()`
+
+`fn test_tool_get_type_flow_with_limit()`
+
+`fn test_tool_get_type_flow_include_fields()`
+
+`fn test_extract_types_c_function()`
+
+`fn test_extract_types_c_struct_return()`
+
+`fn test_extract_types_cpp_method()`
+
+`fn test_extract_types_go_no_receiver_multi_return()`
+
+`fn test_extract_types_go_receiver_with_multi_return()`
+
+`fn test_extract_types_rust_nested_generics()`
+
+`fn test_tool_get_type_flow_producer_and_consumer()`
+
 ---
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 55.5 KB | **Lines:** 1529
+**Language:** Rust | **Size:** 65.3 KB | **Lines:** 1778
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1246,18 +1436,60 @@ indxr/
 - `crate::budget::estimate_tokens`
 - `crate::dep_graph`
 - `crate::diff`
+- `crate::github`
 - `crate::indexer::{self, IndexConfig}`
 - `crate::languages::Language`
-- `crate::model::declarations::{DeclKind, Declaration}`
-- *... and 3 more imports*
+- *... and 6 more imports*
 
 **Declarations:**
 
 ---
 
+## src/mcp/type_flow.rs
+
+**Language:** Rust | **Size:** 23.1 KB | **Lines:** 683
+
+**Imports:**
+- `serde::Serialize`
+- `crate::languages::Language`
+- `crate::model::CodebaseIndex`
+- `crate::model::declarations::{DeclKind, Declaration}`
+
+**Declarations:**
+
+`const PRIMITIVE_TYPES: &[&str] = &[ "str", "string", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "int", "float", "double", "long", "short", "byte", "void", "undefined", "null", "none", "any", "object", "number", "boolean", "self", "error", ]`
+
+`fn is_primitive(name: &str) -> bool`
+
+`fn normalize_type_names(raw: &str) -> Vec<String>`
+
+`fn find_matching_close(s: &str, open: char, close: char) -> Option<usize>`
+
+`fn extract_types_rust_c(sig: &str) -> TypeInfo`
+
+`fn extract_types_go(sig: &str) -> TypeInfo`
+
+`fn extract_types_ts(sig: &str) -> TypeInfo`
+
+`fn extract_types_python(sig: &str) -> TypeInfo`
+
+`fn extract_types_java_like(sig: &str) -> TypeInfo`
+
+`fn extract_types_kotlin(sig: &str) -> TypeInfo`
+
+`fn extract_types_swift(sig: &str) -> TypeInfo`
+
+`fn extract_types_ruby(_sig: &str) -> TypeInfo`
+
+`fn split_respecting_nesting(s: &str, delim: char) -> Vec<&str>`
+
+`fn scan_decls_for_type_flow( decls: &[Declaration], file_path: &str, language: &Language, type_lower: &str, include_fields: bool, producers: &mut Vec<TypeFlowEntry>, consumers: &mut Vec<TypeFlowEntry>, )`
+
+---
+
 ## src/model/declarations.rs
 
-**Language:** Rust | **Size:** 5.1 KB | **Lines:** 177
+**Language:** Rust | **Size:** 5.5 KB | **Lines:** 189
 
 **Imports:**
 - `std::fmt`
@@ -1366,9 +1598,66 @@ indxr/
 
 ---
 
+## src/parser/complexity.rs
+
+**Language:** Rust | **Size:** 36.1 KB | **Lines:** 1168
+
+**Imports:**
+- `std::collections::HashMap`
+- `serde::Serialize`
+- `crate::languages::Language`
+- `crate::model::CodebaseIndex`
+- `crate::model::declarations::{ComplexityMetrics, DeclKind, Declaration, Visibility}`
+- `crate::utils::path_matches_filter`
+
+**Declarations:**
+
+`fn collect_from_ast( node: tree_sitter::Node<'_>, source: &str, language: &Language, func_kinds: &[&str], metrics: &mut HashMap<usize, ComplexityMetrics>, )`
+
+`fn apply_metrics(decls: &mut [Declaration], metrics: &HashMap<usize, ComplexityMetrics>)`
+
+`fn count_params(func: tree_sitter::Node<'_>, source: &str, language: &Language) -> usize`
+
+`fn get_params_node<'a>( func: tree_sitter::Node<'a>, language: &Language, ) -> Option<tree_sitter::Node<'a>>`
+
+`fn find_params_in_declarator(node: tree_sitter::Node<'_>) -> Option<tree_sitter::Node<'_>>`
+
+`fn count_branches(node: tree_sitter::Node<'_>, language: &Language, func_kinds: &[&str]) -> usize`
+
+`fn is_logical_binary(node: tree_sitter::Node<'_>, language: &Language) -> bool`
+
+`fn compute_max_nesting( node: tree_sitter::Node<'_>, language: &Language, func_kinds: &[&str], depth: usize, is_else_if: bool, ) -> usize`
+
+`fn is_else_alternative(node: tree_sitter::Node<'_>) -> bool`
+
+`fn function_node_kinds(language: &Language) -> &'static [&'static str]`
+
+`fn branch_node_kinds(language: &Language) -> &'static [&'static str]`
+
+`fn nesting_node_kinds(language: &Language) -> &'static [&'static str]`
+
+`fn is_ts_function_kind(kind: &DeclKind) -> bool`
+
+`fn collect_hotspots_from_decls( file_path: &str, decls: &[Declaration], min_complexity: u16, entries: &mut Vec<HotspotEntry>, )`
+
+`struct HealthAccumulator`
+> Fields: `total_functions: usize`, `analyzed: usize`, `cc_values: Vec<u16>`, `nesting_sum: f64`, `params_sum: f64`, `body_lines_sum: f64`, `high_complexity: usize`, `documented: usize`, `test_count: usize`, `deprecated_count: usize`, `public_api_count: usize`, `file_stats: HashMap<String, (Vec<u16>, u16)>`
+
+**`impl HealthAccumulator`**
+  `fn new() -> Self`
+
+  `fn collect(&mut self, file_path: &str, decls: &[Declaration])`
+
+
+`fn round1(v: f64) -> f64`
+
+`mod tests`
+
+---
+
 ## src/parser/mod.rs
 
-**Language:** Rust | **Size:** 2.0 KB | **Lines:** 80
+**Language:** Rust | **Size:** 2.0 KB | **Lines:** 81
 
 **Imports:**
 - `std::path::Path`
@@ -1920,7 +2209,7 @@ indxr/
 
 ## src/parser/tree_sitter_parser.rs
 
-**Language:** Rust | **Size:** 2.3 KB | **Lines:** 73
+**Language:** Rust | **Size:** 2.4 KB | **Lines:** 76
 
 **Imports:**
 - `std::path::Path`
@@ -1928,6 +2217,7 @@ indxr/
 - `crate::languages::Language`
 - `crate::model::FileIndex`
 - `super::LanguageParser`
+- `super::complexity`
 - `super::queries`
 
 **Declarations:**
@@ -1948,7 +2238,7 @@ indxr/
 
 ## src/utils.rs
 
-**Language:** Rust | **Size:** 1.1 KB | **Lines:** 32
+**Language:** Rust | **Size:** 1.3 KB | **Lines:** 37
 
 **Declarations:**
 
