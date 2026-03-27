@@ -19,7 +19,7 @@ AI coding agents waste thousands of tokens reading entire source files just to u
 - **27 languages** — tree-sitter AST parsing for 8 languages, regex extraction for 19 more
 - **20-tool MCP server** — live codebase queries over JSON-RPC: symbol lookup, file summaries, caller tracing, signature search, complexity hotspots, and more
 - **Token-aware** — progressive truncation to fit context windows, ~5x reduction vs reading full files
-- **Git structural diffing** — declaration-level diffs (`+` added, `-` removed, `~` changed) against any git ref
+- **Git structural diffing** — declaration-level diffs (`+` added, `-` removed, `~` changed) against any git ref or GitHub PR
 - **Dependency graphs** — file and symbol dependency visualization as DOT, Mermaid, or JSON
 - **File watching** — continuous re-indexing as you edit, via `indxr watch` or `indxr serve --watch`
 - **One-command agent setup** — `indxr init` configures Claude Code, Cursor, and Windsurf with MCP, instruction files, and hooks
@@ -93,7 +93,7 @@ JSON-RPC 2.0 over stdin/stdout, 20 tools:
 | `get_tree` | Directory/file tree |
 | `get_imports` | Import statements for a file |
 | `get_stats` | File count, line count, language breakdown |
-| `get_diff_summary` | Structural changes since a git ref |
+| `get_diff_summary` | Structural changes since a git ref or GitHub PR |
 | `get_hotspots` | Most complex functions ranked by composite score |
 | `get_health` | Codebase health summary with aggregate complexity metrics |
 | `regenerate_index` | Re-index and update INDEX.md |
@@ -150,6 +150,7 @@ All filters compose. `--kind` accepts: `function`, `struct`, `class`, `trait`, `
 indxr --since main
 indxr --since v1.0.0
 indxr --since HEAD~5
+indxr diff --pr 42                           # diff against a GitHub PR's base branch
 ```
 
 ```
@@ -228,7 +229,7 @@ Parallel parsing via rayon. Incremental caching via mtime + xxh3.
 | [Output Formats](docs/output-formats.md) | Format and detail level reference |
 | [Filtering](docs/filtering.md) | Path, kind, symbol, visibility filters |
 | [Dependency Graph](docs/dep-graph.md) | File and symbol dependency visualization |
-| [Git Diffing](docs/git-diffing.md) | Structural diff since any git ref |
+| [Git Diffing](docs/git-diffing.md) | Structural diff since any git ref or GitHub PR |
 | [Token Budget](docs/token-budget.md) | Truncation strategy and scoring |
 | [Caching](docs/caching.md) | Cache format and invalidation |
 | [MCP Server](docs/mcp-server.md) | MCP tools, protocol, and client setup |

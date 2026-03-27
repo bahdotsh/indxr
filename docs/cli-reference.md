@@ -56,6 +56,44 @@ indxr watch [PATH] [OPTIONS]
 - Only triggers re-index for files with recognized language extensions
 - Blocks indefinitely until Ctrl+C
 
+### `diff`
+
+Show structural changes for a GitHub PR or git ref. Requires either `--pr` or `--since` (not both).
+
+```bash
+indxr diff --pr <NUMBER> [PATH] [OPTIONS]
+indxr diff --since <REF> [PATH] [OPTIONS]
+```
+
+**Options:**
+- `--pr <NUMBER>` — GitHub PR number to diff against its base branch (resolves via GitHub API)
+- `--since <REF>` — Git ref to diff against (branch, tag, or commit)
+- `-f, --format <FORMAT>` — Output format: `markdown` (default) or `json`
+
+**Authentication (for `--pr`):**
+
+The PR option requires a GitHub token. Looks for (in order):
+1. `GITHUB_TOKEN` environment variable
+2. `GH_TOKEN` environment variable
+3. `gh auth token` (GitHub CLI)
+
+The base branch must be available locally. Run `git fetch origin <base>` if needed.
+
+**Examples:**
+```bash
+# Structural diff for PR #42
+indxr diff --pr 42
+
+# JSON output
+indxr diff --pr 42 -f json
+
+# Diff against a git ref (same as --since flag)
+indxr diff --since main
+
+# Diff a specific project
+indxr diff /path/to/project --since v1.0
+```
+
 ### `serve`
 
 Start an MCP server for AI agent integration. See [MCP Server](mcp-server.md) for full details.
@@ -214,6 +252,11 @@ indxr --since abc1234
 
 # JSON diff output
 indxr --since main -f json
+
+# PR-aware structural diff (via diff subcommand)
+indxr diff --pr 42
+indxr diff --pr 42 -f json
+indxr diff --since main
 ```
 
 ### Token Budget

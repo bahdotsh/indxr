@@ -364,9 +364,12 @@ indxr --since v1.2.0
 
 # Show what changed on this branch
 indxr --since main
+
+# Show structural changes for a GitHub PR
+indxr diff --pr 42
 ```
 
-The agent sees exactly which declarations were added, removed, or modified — without reading full diffs.
+The agent sees exactly which declarations were added, removed, or modified — without reading full diffs. The MCP `get_diff_summary` tool also supports a `pr` parameter for PR-aware diffs.
 
 ### Pattern 3: API Surface for Library Work
 

@@ -1,8 +1,10 @@
 # Git-Aware Structural Diffing
 
-indxr can show what changed structurally since any git ref — not line-level diffs, but declaration-level changes: which functions, structs, classes, and methods were added, removed, or had their signatures modified.
+indxr can show what changed structurally since any git ref or GitHub PR — not line-level diffs, but declaration-level changes: which functions, structs, classes, and methods were added, removed, or had their signatures modified.
 
 ## Usage
+
+### By git ref
 
 ```bash
 indxr --since <REF>
@@ -26,6 +28,38 @@ indxr --since HEAD~10
 # Since a specific commit
 indxr --since abc1234
 ```
+
+### By GitHub PR
+
+The `diff` subcommand can resolve a PR's base branch automatically via the GitHub API:
+
+```bash
+# Structural diff for PR #42
+indxr diff --pr 42
+
+# JSON output
+indxr diff --pr 42 -f json
+
+# The diff subcommand also supports --since
+indxr diff --since main
+```
+
+**Authentication:** Requires a GitHub token via `GITHUB_TOKEN` env var, `GH_TOKEN` env var, or `gh auth token` (GitHub CLI). The PR's base branch must be available locally — run `git fetch origin <base>` if needed.
+
+### MCP tool
+
+The `get_diff_summary` MCP tool also supports PR-aware diffs:
+
+```json
+{
+  "params": {
+    "name": "get_diff_summary",
+    "arguments": { "pr": 42 }
+  }
+}
+```
+
+Provide either `since_ref` or `pr`, not both. When using `pr`, the response includes PR metadata (number, title, base/head branches).
 
 ## Output Format
 
@@ -125,6 +159,12 @@ Before reviewing a branch, see what changed structurally:
 
 ```bash
 indxr --since main --public-only
+```
+
+Or review a specific PR:
+
+```bash
+indxr diff --pr 42
 ```
 
 This shows API surface changes without the noise of implementation details.

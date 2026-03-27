@@ -422,21 +422,48 @@ Find test functions for a symbol by naming convention and file association.
 
 ### `get_diff_summary`
 
-Get structural changes (added/removed/modified declarations) since a git ref. Much cheaper than reading raw diffs.
+Get structural changes (added/removed/modified declarations) since a git ref or for a GitHub PR. Requires either `since_ref` or `pr` (not both). Much cheaper than reading raw diffs.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `since_ref` | string | yes | Git ref to diff against (branch name, tag, or commit like `HEAD~3`) |
+| `since_ref` | string | no | Git ref to diff against (branch name, tag, or commit like `HEAD~3`) |
+| `pr` | integer | no | GitHub PR number — resolves the PR's base branch automatically (alternative to `since_ref`) |
 
-**Example:**
+One of `since_ref` or `pr` must be provided.
+
+**Authentication (for `pr`):** Requires a GitHub token via `GITHUB_TOKEN` env var, `GH_TOKEN` env var, or `gh auth token` (GitHub CLI). The PR's base branch must be available locally.
+
+**Example (git ref):**
 ```json
 {
   "params": {
     "name": "get_diff_summary",
     "arguments": { "since_ref": "main" }
   }
+}
+```
+
+**Example (PR):**
+```json
+{
+  "params": {
+    "name": "get_diff_summary",
+    "arguments": { "pr": 42 }
+  }
+}
+```
+
+When using `pr`, the response includes a `pr` field with metadata:
+```json
+{
+  "since_ref": "origin/main",
+  "pr": { "number": 42, "title": "Add caching layer", "base": "main", "head": "feat/cache" },
+  "changes": 3,
+  "files_added": [...],
+  "files_removed": [...],
+  "files_modified": [...]
 }
 ```
 
