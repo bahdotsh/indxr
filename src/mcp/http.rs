@@ -114,6 +114,16 @@ async fn handle_post(
     let is_initialize = request.method == "initialize";
     let is_notification = request.id.is_none();
 
+    // Guard: `initialize` must be a request (with an id), not a notification.
+    if is_initialize && is_notification {
+        let resp = err_response(
+            Value::Null,
+            -32600,
+            "initialize must be a request with an id, not a notification".to_string(),
+        );
+        return json_response(StatusCode::OK, &resp, None);
+    }
+
     // Session enforcement: all requests except `initialize` must include a valid session.
     let session_id = if is_initialize {
         let id = uuid::Uuid::new_v4().to_string();
@@ -138,7 +148,7 @@ async fn handle_post(
     } else {
         match validate_session(&state, &headers) {
             Ok(id) => Some(id),
-            Err(resp) => return resp,
+            Err(resp) => return *resp,
         }
     };
 
@@ -169,7 +179,7 @@ async fn handle_post(
         )
     })
     .await
-    .unwrap();
+    .expect("JSON-RPC handler panicked");
 
     let response = match resp {
         Ok(Some(r)) => r,
@@ -196,7 +206,7 @@ async fn handle_post(
 
 async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(resp) = validate_session(&state, &headers) {
-        return resp;
+        return *resp;
     }
 
     let mut rx = state.notify_tx.subscribe();
@@ -297,26 +307,30 @@ fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<
 // ---------------------------------------------------------------------------
 
 /// Validate that the request includes a valid, non-expired Mcp-Session-Id header.
-fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Response> {
+fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Box<Response>> {
     let sid = headers
         .get("mcp-session-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                "Missing Mcp-Session-Id header. Send an initialize request first.",
+            Box::new(
+                (
+                    StatusCode::UNAUTHORIZED,
+                    "Missing Mcp-Session-Id header. Send an initialize request first.",
+                )
+                    .into_response(),
             )
-                .into_response()
         })?;
 
     let sessions = state.sessions.read().unwrap_or_else(|e| e.into_inner());
     match sessions.get(sid) {
         Some(info) if info.created_at.elapsed() < SESSION_TTL => Ok(sid.to_string()),
-        _ => Err((
-            StatusCode::UNAUTHORIZED,
-            "Invalid or expired Mcp-Session-Id.",
-        )
-            .into_response()),
+        _ => Err(Box::new(
+            (
+                StatusCode::UNAUTHORIZED,
+                "Invalid or expired Mcp-Session-Id.",
+            )
+                .into_response(),
+        )),
     }
 }
 
