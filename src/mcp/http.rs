@@ -169,7 +169,7 @@ async fn handle_post(
     // process_jsonrpc_request takes &mut. A future refactor could split
     // read/write paths for better concurrency.
     let state2 = Arc::clone(&state);
-    let response = tokio::task::spawn_blocking(move || {
+    let response = match tokio::task::spawn_blocking(move || {
         let mut index = state2.index.write().unwrap_or_else(|e| e.into_inner());
         // Safe to unwrap: we already verified request.id is Some (not a notification).
         process_jsonrpc_request(
@@ -182,7 +182,21 @@ async fn handle_post(
         .expect("request with id always produces a response")
     })
     .await
-    .expect("JSON-RPC handler panicked");
+    {
+        Ok(resp) => resp,
+        Err(_) => {
+            let resp = err_response(
+                Value::Null,
+                -32603,
+                "Internal error: handler panicked".to_string(),
+            );
+            return json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &resp,
+                session_id.as_deref(),
+            );
+        }
+    };
 
     json_response(StatusCode::OK, &response, session_id.as_deref())
 }
@@ -297,6 +311,7 @@ fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<
 // ---------------------------------------------------------------------------
 
 /// Validate that the request includes a valid, non-expired Mcp-Session-Id header.
+/// Expired sessions are removed on access to prevent slow memory accumulation.
 fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Box<Response>> {
     let sid = headers
         .get("mcp-session-id")
@@ -311,10 +326,21 @@ fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Box
             )
         })?;
 
-    let sessions = state.sessions.read().unwrap_or_else(|e| e.into_inner());
+    let mut sessions = state.sessions.write().unwrap_or_else(|e| e.into_inner());
     match sessions.get(sid) {
         Some(info) if info.created_at.elapsed() < SESSION_TTL => Ok(sid.to_string()),
-        _ => Err(Box::new(
+        Some(_) => {
+            // Expired — remove it eagerly.
+            sessions.remove(sid);
+            Err(Box::new(
+                (
+                    StatusCode::UNAUTHORIZED,
+                    "Invalid or expired Mcp-Session-Id.",
+                )
+                    .into_response(),
+            ))
+        }
+        None => Err(Box::new(
             (
                 StatusCode::UNAUTHORIZED,
                 "Invalid or expired Mcp-Session-Id.",
@@ -572,5 +598,120 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn initialize_as_notification_rejected() {
+        let (app, _) = test_app();
+        // initialize without an id is a notification — should be rejected
+        let resp = send_post(
+            &app,
+            r#"{"jsonrpc":"2.0","method":"initialize","params":{}}"#,
+            None,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(!resp.headers().contains_key("mcp-session-id"));
+
+        let body = body_json(resp).await;
+        assert_eq!(body["error"]["code"], -32600);
+    }
+
+    #[tokio::test]
+    async fn max_sessions_returns_503() {
+        let (app, state) = test_app();
+
+        // Fill sessions to the limit
+        {
+            let mut sessions = state.sessions.write().unwrap();
+            for i in 0..MAX_SESSIONS {
+                sessions.insert(
+                    format!("fake-session-{i}"),
+                    SessionInfo {
+                        created_at: Instant::now(),
+                    },
+                );
+            }
+        }
+
+        // Next initialize should be rejected with 503
+        let resp = send_post(
+            &app,
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+            None,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let body = body_json(resp).await;
+        assert_eq!(body["error"]["code"], -32000);
+    }
+
+    #[tokio::test]
+    async fn expired_session_rejected_and_evicted() {
+        let (app, state) = test_app();
+
+        // Insert a session that is already expired
+        let expired_sid = "expired-session-id".to_string();
+        {
+            let mut sessions = state.sessions.write().unwrap();
+            sessions.insert(
+                expired_sid.clone(),
+                SessionInfo {
+                    created_at: Instant::now() - SESSION_TTL - std::time::Duration::from_secs(1),
+                },
+            );
+        }
+
+        // Request with expired session should be rejected
+        let resp = send_post(
+            &app,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#,
+            Some(&expired_sid),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // The expired session should have been eagerly removed
+        let sessions = state.sessions.read().unwrap();
+        assert!(
+            !sessions.contains_key(&expired_sid),
+            "Expired session should be evicted on access"
+        );
+    }
+
+    #[tokio::test]
+    async fn sse_get_requires_session() {
+        let (app, _) = test_app();
+        let req = Request::builder()
+            .method("GET")
+            .uri("/mcp")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn sse_get_with_valid_session_returns_stream() {
+        let (app, _) = test_app();
+        let sid = do_initialize(&app).await;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/mcp")
+            .header("Mcp-Session-Id", &sid)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "text/event-stream"
+        );
     }
 }

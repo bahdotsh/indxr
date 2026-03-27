@@ -26,7 +26,7 @@ indxr serve --http :8080              # shorthand for 0.0.0.0:8080 (all interfac
 indxr serve --http :8080 --watch      # with auto-reindex on file changes
 ```
 
-> **Security note:** The `:PORT` shorthand binds to `0.0.0.0`, exposing the server to all network interfaces. For local development, use `127.0.0.1:PORT` to restrict access to your machine. The HTTP transport has no authentication beyond session IDs.
+> **Security note:** The HTTP transport is intended for **local or trusted-network use only**. It does not provide TLS (connections are plaintext), CORS headers, or authentication beyond session IDs. The `:PORT` shorthand binds to `0.0.0.0`, exposing the server to all network interfaces. For local development, always use `127.0.0.1:PORT` to restrict access to your machine. Do not expose the server to the public internet.
 
 The HTTP transport implements the MCP Streamable HTTP specification (2025-03-26) with a single `/mcp` endpoint:
 - **POST /mcp** — send JSON-RPC requests, receive JSON responses
