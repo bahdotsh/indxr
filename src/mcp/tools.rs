@@ -589,6 +589,54 @@ fn merge_indices(indices: &[(&str, &CodebaseIndex)]) -> CodebaseIndex {
     merged
 }
 
+/// Merged structural diff result across workspace members.
+struct MergedStructuralDiff {
+    files_added: Vec<PathBuf>,
+    files_removed: Vec<PathBuf>,
+    files_modified: Vec<diff::FileDiff>,
+}
+
+/// Compute structural diffs across all workspace members and merge/dedup results.
+///
+/// Each member is diffed independently against `old_files`, then the results are
+/// merged. `files_added` and `files_removed` are deduplicated by path equality.
+/// `files_modified` is deduplicated by path — if two members produce a `FileDiff`
+/// for the same path, only the first is kept (in practice this shouldn't happen
+/// since each file belongs to exactly one member).
+fn merge_member_diffs(
+    workspace: &WorkspaceIndex,
+    old_files: &HashMap<PathBuf, FileIndex>,
+    changed_paths: &[PathBuf],
+) -> MergedStructuralDiff {
+    let mut files_added = Vec::new();
+    let mut files_removed = Vec::new();
+    let mut files_modified = Vec::new();
+
+    for member in &workspace.members {
+        let sd = diff::compute_structural_diff(&member.index, old_files, changed_paths);
+        files_added.extend(sd.files_added);
+        files_removed.extend(sd.files_removed);
+        files_modified.extend(sd.files_modified);
+    }
+
+    // Deduplicate by path
+    files_added.sort();
+    files_added.dedup();
+    files_removed.sort();
+    files_removed.dedup();
+    // FileDiff doesn't impl Ord, so dedup by path manually
+    {
+        let mut seen = std::collections::HashSet::new();
+        files_modified.retain(|fd| seen.insert(fd.path.clone()));
+    }
+
+    MergedStructuralDiff {
+        files_added,
+        files_removed,
+        files_modified,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tool dispatch
 // ---------------------------------------------------------------------------
@@ -645,7 +693,7 @@ pub(super) fn tool_regenerate_index(
             let line_count = new_ws.stats.total_lines;
             let output_path = new_ws.root.join("INDEX.md");
 
-            // Compute delta across all members
+            // Collect all paths (old + new) for structural diff
             let mut all_paths: Vec<PathBuf> = old_files.keys().cloned().collect();
             for member in &new_ws.members {
                 for f in &member.index.files {
@@ -655,24 +703,10 @@ pub(super) fn tool_regenerate_index(
                 }
             }
 
-            // Compute structural diff per member and merge results
-            let mut files_added = Vec::new();
-            let mut files_removed = Vec::new();
-            let mut files_modified = Vec::new();
-            for member in &new_ws.members {
-                let sd = diff::compute_structural_diff(&member.index, &old_files, &all_paths);
-                files_added.extend(sd.files_added);
-                files_removed.extend(sd.files_removed);
-                files_modified.extend(sd.files_modified);
-            }
-            // Deduplicate (paths may appear in multiple member diffs)
-            files_added.sort();
-            files_added.dedup();
-            files_removed.sort();
-            files_removed.dedup();
-
-            let has_changes =
-                !files_added.is_empty() || !files_removed.is_empty() || !files_modified.is_empty();
+            let merged = merge_member_diffs(&new_ws, &old_files, &all_paths);
+            let has_changes = !merged.files_added.is_empty()
+                || !merged.files_removed.is_empty()
+                || !merged.files_modified.is_empty();
 
             let mut result = json!({
                 "status": "ok",
@@ -687,9 +721,9 @@ pub(super) fn tool_regenerate_index(
 
             if has_changes {
                 result["changes"] = json!({
-                    "files_added": files_added.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-                    "files_removed": files_removed.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-                    "files_modified": files_modified.iter().map(|fd| json!({
+                    "files_added": merged.files_added.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                    "files_removed": merged.files_removed.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                    "files_modified": merged.files_modified.iter().map(|fd| json!({
                         "path": fd.path.to_string_lossy().to_string(),
                         "added": fd.declarations_added.len(),
                         "removed": fd.declarations_removed.len(),
@@ -1590,29 +1624,17 @@ pub(super) fn tool_get_diff_summary(
         }
     }
 
-    // Compute structural diff across all members
-    let mut files_added = Vec::new();
-    let mut files_removed = Vec::new();
-    let mut files_modified = Vec::new();
-    for member in &workspace.members {
-        let sd = diff::compute_structural_diff(&member.index, &old_files, &changed_paths);
-        files_added.extend(sd.files_added);
-        files_removed.extend(sd.files_removed);
-        files_modified.extend(sd.files_modified);
-    }
-    files_added.sort();
-    files_added.dedup();
-    files_removed.sort();
-    files_removed.dedup();
+    let merged = merge_member_diffs(workspace, &old_files, &changed_paths);
 
-    let total_changes = files_added.len() + files_removed.len() + files_modified.len();
+    let total_changes =
+        merged.files_added.len() + merged.files_removed.len() + merged.files_modified.len();
 
     let mut result = json!({
         "since_ref": since_ref,
         "changes": total_changes,
-        "files_added": files_added.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-        "files_removed": files_removed.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-        "files_modified": files_modified.iter().map(|fd| json!({
+        "files_added": merged.files_added.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "files_removed": merged.files_removed.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "files_modified": merged.files_modified.iter().map(|fd| json!({
             "path": fd.path.to_string_lossy().to_string(),
             "added": fd.declarations_added.iter().map(|d| json!({"kind": format!("{}", d.kind), "name": &d.name, "signature": &d.signature})).collect::<Vec<_>>(),
             "removed": fd.declarations_removed.iter().map(|d| json!({"kind": format!("{}", d.kind), "name": &d.name, "signature": &d.signature})).collect::<Vec<_>>(),

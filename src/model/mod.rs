@@ -92,17 +92,47 @@ impl WorkspaceIndex {
     }
 
     /// Find the member that contains a given file path.
-    /// Tries exact match within each member's file list.
+    ///
+    /// Matching strategy (in priority order):
+    /// 1. Exact match: `file_path == path`
+    /// 2. Suffix match: `file_path` ends with `path` (e.g. query `"src/lib.rs"` matches
+    ///    `"crates/alpha/src/lib.rs"`)
+    /// 3. Reverse suffix: `path` ends with `file_path`
+    ///
+    /// When multiple members match via suffix, the one with the longest matching
+    /// file path wins (most specific match). This avoids ambiguity when several
+    /// members contain files with the same basename (e.g. `lib.rs`).
     pub fn find_member_by_path(&self, path: &str) -> Option<&MemberIndex> {
+        let mut best: Option<(&MemberIndex, usize)> = None; // (member, match_specificity)
+
         for member in &self.members {
             for file in &member.index.files {
                 let file_path = file.path.to_string_lossy();
-                if file_path == path || path.ends_with(&*file_path) || file_path.ends_with(path) {
+
+                if file_path == path {
+                    // Exact match — return immediately
                     return Some(member);
+                }
+
+                let specificity = if file_path.ends_with(path) {
+                    // Query is a suffix of the indexed path — specificity is the
+                    // full indexed path length (longer = more specific context).
+                    Some(file_path.len())
+                } else if path.ends_with(&*file_path) {
+                    Some(file_path.len())
+                } else {
+                    None
+                };
+
+                if let Some(s) = specificity {
+                    if best.as_ref().is_none_or(|(_, prev)| s > *prev) {
+                        best = Some((member, s));
+                    }
                 }
             }
         }
-        None
+
+        best.map(|(m, _)| m)
     }
 
     /// Returns true if this is a single-member "none" workspace (non-monorepo).
