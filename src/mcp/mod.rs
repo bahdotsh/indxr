@@ -238,20 +238,26 @@ fn handle_stdin_line(
 ) -> anyhow::Result<()> {
     eprintln!("< {}", line);
 
-    let response =
-        match process_jsonrpc_message(line, workspace, config, registry, Transport::Stdio, all_tools) {
-            Ok(Some(resp)) => resp,
-            Ok(None) => {
-                if !line.trim().is_empty() {
-                    eprintln!("Notification (no response)");
-                }
-                return Ok(());
+    let response = match process_jsonrpc_message(
+        line,
+        workspace,
+        config,
+        registry,
+        Transport::Stdio,
+        all_tools,
+    ) {
+        Ok(Some(resp)) => resp,
+        Ok(None) => {
+            if !line.trim().is_empty() {
+                eprintln!("Notification (no response)");
             }
-            Err(resp) => {
-                eprintln!("Failed to parse JSON-RPC request");
-                resp
-            }
-        };
+            return Ok(());
+        }
+        Err(resp) => {
+            eprintln!("Failed to parse JSON-RPC request");
+            resp
+        }
+    };
 
     let out = serde_json::to_string(&response)?;
     eprintln!("> {}", out);
@@ -379,7 +385,14 @@ pub fn run_mcp_server(
                 }
             }
             ServerEvent::StdinLine(line) => {
-                handle_stdin_line(&line, &mut workspace, &config, &registry, &mut writer, all_tools)?;
+                handle_stdin_line(
+                    &line,
+                    &mut workspace,
+                    &config,
+                    &registry,
+                    &mut writer,
+                    all_tools,
+                )?;
             }
         }
     }
