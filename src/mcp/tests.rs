@@ -263,6 +263,36 @@ fn test_tool_definitions_member_param_only_in_workspace() {
 }
 
 // -----------------------------------------------------------------------
+// Extended tools remain callable even when not listed (all_tools=false)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_extended_tools_callable_when_hidden() {
+    // Even with all_tools=false, calling an extended tool should succeed (not
+    // return "unknown tool").  The filtering only affects tools/list, not
+    // tools/call dispatch.
+    let (ws_config, _config) = make_test_config();
+    let registry = ParserRegistry::new();
+    let mut ws = wrap_workspace(make_test_index());
+
+    for tool_name in &["get_hotspots", "get_health", "get_token_estimate", "regenerate_index"] {
+        let msg = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{}","arguments":{{}}}}}}"#,
+            tool_name
+        );
+        let result = process_jsonrpc_message(&msg, &mut ws, &ws_config, &registry, Transport::Stdio, false);
+        let resp = result.unwrap().unwrap();
+        let json = serde_json::to_value(&resp).unwrap();
+        // Should NOT be a "method not found" or "unknown tool" error
+        assert!(
+            json.get("error").is_none(),
+            "{tool_name} should be callable even when all_tools=false, got error: {}",
+            json
+        );
+    }
+}
+
+// -----------------------------------------------------------------------
 // handle_tool_call: unknown tool
 // -----------------------------------------------------------------------
 

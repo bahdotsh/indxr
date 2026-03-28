@@ -22,10 +22,9 @@ use super::type_flow::*;
 // Tool definitions for tools/list
 // ---------------------------------------------------------------------------
 
-/// Tools that are only advertised when `--all-tools` is set (or the server
-/// detects a workspace with multiple members for workspace-specific tools).
+/// Tools that are only advertised when `--all-tools` is set.
 /// They still *work* if called — they just aren't listed by default, which
-/// saves ~1,200 tokens of schema overhead per API round.
+/// saves ~2,400 tokens of schema overhead per API round (~65% reduction).
 const EXTENDED_TOOLS: &[&str] = &[
     "get_hotspots",
     "get_health",
