@@ -121,7 +121,8 @@ indxr --no-cache                             # bypass cache
 indxr --cache-dir /tmp/cache                 # custom cache location
 
 # MCP server (stdio transport — default)
-indxr serve ./project                        # start MCP server (stdin/stdout JSON-RPC 2.0)
+indxr serve ./project                        # start MCP server (15 core tools)
+indxr serve ./project --all-tools            # expose all 23 tools (including extended)
 indxr serve ./project --watch                # MCP server with auto-reindex on file changes
 indxr serve --watch --debounce-ms 500        # custom debounce timeout
 
@@ -190,7 +191,7 @@ Key source files:
 - `src/cli.rs` — clap argument definitions
 - `src/indexer.rs` — core indexing orchestration
 - `src/mcp/mod.rs` — MCP server loop, JSON-RPC protocol handling
-- `src/mcp/tools.rs` — tool definitions, dispatch, and 23 tool implementations
+- `src/mcp/tools.rs` — tool definitions, dispatch, and 23 tool implementations (15 default, 8 extended via `--all-tools`)
 - `src/mcp/http.rs` — Streamable HTTP transport (axum, feature-gated behind `http`)
 - `src/mcp/helpers.rs` — shared structs, search/scoring/glob/string helpers
 - `src/mcp/tests.rs` — MCP module tests

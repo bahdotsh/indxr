@@ -1,7 +1,7 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-28 04:32:26 UTC | Files: 58 | Lines: 31661
-> Languages: Markdown (14), Python (1), Rust (41), Shell (1), TOML (1)
+> Generated: 2026-03-28 18:50:11 UTC | Files: 72 | Lines: 35920
+> Languages: JSON (3), Markdown (15), Python (11), Rust (41), Shell (1), TOML (1)
 
 ## Directory Structure
 
@@ -11,7 +11,23 @@ indxr/
   Cargo.toml
   INDEX.md
   README.md
+  accuracy_bench.py
+  accuracy_questions.json
+  bench/
+    __init__.py
+    __main__.py
+    agent.py
+    output.py
+    runner.py
+    scoring.py
+    stats.py
+    tools_baseline.py
+    tools_indxr.py
+  bench_questions/
+    indxr.json
+  benchmark.md
   benchmark.sh
+  benchmark_results.json
   docs/
     agent-integration.md
     caching.md
@@ -94,6 +110,7 @@ indxr/
 - `# MCP server (Streamable HTTP transport — requires --features http)`
 - `# File watching`
 - `# Agent setup`
+- `# Workspace / monorepo`
 - `# Complexity hotspots`
 - `# Dependency graph`
 - `# Other`
@@ -111,22 +128,137 @@ indxr/
 - `# indxr`
 - `# Codebase Index: my-project`
 
+**accuracy_bench.py**
+- `DEFAULT_MODEL = "claude-sonnet-4-6"`
+- `DEFAULT_QUESTIONS = "accuracy_questions.json"`
+- `DEFAULT_OUTPUT = "benchmark_results.json"`
+- `API_DELAY = 0.5`
+- `SYSTEM_PROMPT = ( "You are answering a question about a codebase. " "Answer concisely and precisely. Be specific — include file paths, " "function names, types, and other concrete details. " "Do not hedge or speculate. If the provided context does not contain " "enough information to answer, say so." )`
+- `class IndxrMCP`
+- `def build_baseline_context(question: dict, repo_path: Path) -> str`
+- `def build_indxr_context(question: dict, mcp: IndxrMCP) -> str`
+- `def score_answer(question: dict, answer: str) -> float`
+- `def ask_claude(client, model: str, context: str, question: str) -> tuple`
+- `@dataclass class QuestionResult`
+- `def print_results(results: list, model: str)`
+- `def write_json_results(results: list, metadata: dict, output_path: str)`
+- `def dry_run(questions: list, repo_path: Path, mcp: IndxrMCP)`
+- `def main()`
+
+**accuracy_questions.json**
+- `"version": 1`
+- `"description": "indxr accuracy benchmark: measures LLM answer quality with full-file context vs indxr structural context"`
+- `"questions": [`
+
+**bench/agent.py**
+- `API_DELAY = 0.3`
+- `@dataclass class ToolCall`
+- `@dataclass class AgentResult`
+- `SYSTEM_PROMPT = ( "You are answering a question about a codebase. " "Use the provided tools to explore the code and find the answer. " "Be thorough but efficient — use the minimum tools needed to answer confidently. " "When you have enough information, stop calling tools and give your final answer. " "Answer concisely and precisely. Include file paths, function names, " "types, and other concrete details. Do not hedge or speculate. " "If you cannot determine the answer from the available tools, say so clearly." )`
+- `def run_agent(
+    client,
+    model: str,
+    tools: list[dict],
+    execute_tool: Callable[[str, dict], str],
+    question: str,
+    max_rounds: int = 10,
+    max_input_tokens: int = 50_000,
+) -> AgentResult`
+
+**bench/output.py**
+- `def print_results(question_stats, summary, model: str, verbose: bool = False)`
+- `def write_json(question_stats, summary, all_runs, metadata, output_path: str)`
+
+**bench/runner.py**
+- `DEFAULT_MODEL = "claude-sonnet-4-6"`
+- `DEFAULT_QUESTIONS = "bench_questions/indxr.json"`
+- `DEFAULT_OUTPUT = "benchmark_results_v2.json"`
+- `def main()`
+
+**bench/scoring.py**
+- `@dataclass class ScoreResult`
+- `def score_answer(question: dict, answer: str) -> ScoreResult`
+
+**bench/stats.py**
+- `@dataclass class QuestionStats`
+- `@dataclass class SummaryStats`
+- `def compute_question_stats(
+    question_id: str, category: str, runs: list[dict]
+) -> QuestionStats`
+- `def compute_summary(
+    question_stats: list[QuestionStats], n_runs: int
+) -> SummaryStats`
+- `def bootstrap_ci(
+    data: list[float],
+    n_bootstrap: int = 10_000,
+    ci: float = 0.95,
+) -> tuple[float, float]`
+
+**bench/tools_baseline.py**
+- `def make_baseline_tools() -> list[dict]`
+- `class BaselineToolkit`
+
+**bench/tools_indxr.py**
+- `class IndxrToolkit`
+
+**bench_questions/indxr.json**
+- `"version": 2`
+- `"description": "indxr accuracy benchmark v2: agent-loop comparison on indxr's own codebase"`
+- `"repo": "self"`
+- `"questions": [`
+
+**benchmark.md**
+- `# Benchmarks`
+- `# Python environment (first time only)`
+- `# Benchmark the current project (defaults to cwd)`
+- `# Benchmark specific projects`
+- `# With Claude token counts (set your key first)`
+- `# Set your API key`
+- `# Full benchmark (3 runs, ~$15-25)`
+- `# Quick single run (~$5-8)`
+- `# Dry run — show tools and questions without API calls (free)`
+- `# Run one category`
+- `# Run one question`
+- `# Verbose — show agent tool traces and answers`
+- `# External repo`
+- `# Different model`
+- `# One-time setup`
+- `# Token efficiency (no API key needed if tiktoken is installed)`
+- `# Accuracy v2 — quick single run (~$5-8)`
+- `# Accuracy v2 — full with statistical rigor (~$15-25)`
+
 **benchmark.sh**
+- `show_help()`
 - `count_tokens_openai()`
 - `count_tokens_claude()`
 - `_fallback_count()`
+- `compute_stats()`
+- `fmt_stats()`
+- `stat_field()`
 - `fmt_num()`
 - `pct()`
 - `ratio()`
 - `sep()`
 - `section()`
-- `run_indxr()`
-- `run_indxr_cold()`
-- `run_indxr_warm()`
+- `progress_dot()`
+- `progress_done()`
+- `_time_indxr()`
+- `run_indxr_multi()`
+- `run_indxr_cold_multi()`
+- `run_indxr_warm_multi()`
 - `mcp_query()`
 - `fmt_tok()`
-- `fmt_ratio()`
+- `detect_environment()`
+- `json_add_project()`
 - `benchmark_project()`
+- `print()`
+- `print()`
+- `print()`
+
+**benchmark_results.json**
+- `"metadata": {`
+- `"results": [`
+- `"summary": {`
 
 **docs/agent-integration.md**
 - `# Agent Integration Guide`
@@ -140,6 +272,11 @@ indxr/
 - `# Summary for high-level overview`
 - `# Full signatures for detailed reference`
 - `# .github/workflows/index.yml`
+- `# List detected workspace members`
+- `# Serve only a specific member`
+- `# MCP: scope any tool to a member`
+- `# get_file_summary(path: "src/lib.rs", member: "core")`
+- `# lookup_symbol(name: "Config", member: "cli")`
 - `# Only the Rust backend`
 - `# Only the TypeScript frontend`
 
@@ -152,6 +289,11 @@ indxr/
 - `# JSON output`
 - `# Diff against a git ref (same as --since flag)`
 - `# Diff a specific project`
+- `# Output:`
+- `# Workspace: cargo (3 members)`
+- `# core        packages/core`
+- `# cli         packages/cli`
+- `# web         packages/web`
 - `# Index current directory`
 - `# Index a specific project`
 - `# Write to file`
@@ -237,6 +379,8 @@ indxr/
 - `# Skip imports section`
 - `# Skip directory tree`
 - `# Both — just declarations`
+- `# Native workspace support (auto-detects Cargo/npm/Go workspaces)`
+- `# Or use path filtering for non-workspace layouts`
 
 **docs/git-diffing.md**
 - `# Git-Aware Structural Diffing`
@@ -396,14 +540,14 @@ indxr/
 - `pub(super) const APPROX_SUMMARY_TOKENS: usize = 300`
 
 **src/mcp/http.rs**
-- `pub async fn run_http_server( workspace: WorkspaceIndex, config: WorkspaceConfig, watch: bool, debounce_ms: u64, addr: &str, ) -> anyhow::Result<()>`
+- `pub async fn run_http_server( workspace: WorkspaceIndex, config: WorkspaceConfig, watch: bool, debounce_ms: u64, addr: &str, all_tools: bool, ) -> anyhow::Result<()>`
 
 **src/mcp/mod.rs**
 - `pub mod http`
-- `pub fn run_mcp_server( mut workspace: WorkspaceIndex, config: WorkspaceConfig, watch: bool, debounce_ms: u64, ) -> anyhow::Result<()>`
+- `pub fn run_mcp_server( mut workspace: WorkspaceIndex, config: WorkspaceConfig, watch: bool, debounce_ms: u64, all_tools: bool, ) -> anyhow::Result<()>`
 
 **src/mcp/tools.rs**
-- `pub(super) fn tool_definitions() -> Value`
+- `pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value`
 - `pub(super) fn handle_tool_call(workspace: &WorkspaceIndex, name: &str, args: &Value) -> Value`
 - `pub(super) fn tool_regenerate_index( workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, ) -> Value`
 - `pub(super) fn tool_lookup_symbol(workspace: &WorkspaceIndex, args: &Value) -> Value`
@@ -557,7 +701,7 @@ indxr/
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 12.2 KB | **Lines:** 197
+**Language:** Markdown | **Size:** 13.4 KB | **Lines:** 212
 
 **Declarations:**
 
@@ -586,7 +730,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 70.6 KB | **Lines:** 2552
+**Language:** Markdown | **Size:** 78.9 KB | **Lines:** 2885
 
 **Declarations:**
 
@@ -594,7 +738,176 @@ indxr/
 
 ## README.md
 
-**Language:** Markdown | **Size:** 10.1 KB | **Lines:** 251
+**Language:** Markdown | **Size:** 11.0 KB | **Lines:** 264
+
+**Declarations:**
+
+---
+
+## accuracy_bench.py
+
+**Language:** Python | **Size:** 17.8 KB | **Lines:** 502
+
+**Imports:**
+- `import argparse`
+- `import json`
+- `import os`
+- `import subprocess`
+- `import sys`
+- `import time`
+- `from dataclasses import dataclass, field, asdict`
+- `from pathlib import Path`
+
+**Declarations:**
+
+`def _find_indxr() -> str`
+
+---
+
+## accuracy_questions.json
+
+**Language:** JSON | **Size:** 12.5 KB | **Lines:** 267
+
+**Declarations:**
+
+---
+
+## bench/__init__.py
+
+**Language:** Python | **Size:** 58 B | **Lines:** 1
+
+---
+
+## bench/__main__.py
+
+**Language:** Python | **Size:** 73 B | **Lines:** 4
+
+**Imports:**
+- `from .runner import main`
+
+---
+
+## bench/agent.py
+
+**Language:** Python | **Size:** 5.8 KB | **Lines:** 188
+
+**Imports:**
+- `import time`
+- `from dataclasses import dataclass, field`
+- `from typing import Callable`
+
+**Declarations:**
+
+`def _extract_text(content) -> str`
+
+---
+
+## bench/output.py
+
+**Language:** Python | **Size:** 5.8 KB | **Lines:** 162
+
+**Imports:**
+- `import json`
+- `import time`
+
+**Declarations:**
+
+`def _print_stat(label: str, value: float, ci=None)`
+
+`def _mean(data) -> float`
+
+---
+
+## bench/runner.py
+
+**Language:** Python | **Size:** 10.2 KB | **Lines:** 292
+
+**Imports:**
+- `import argparse`
+- `import json`
+- `import os`
+- `import sys`
+- `import time`
+- `from dataclasses import asdict`
+- `from pathlib import Path`
+- `from .agent import run_agent`
+- `from .tools_baseline import make_baseline_tools, BaselineToolkit`
+- `from .tools_indxr import IndxrToolkit`
+- *... and 3 more imports*
+
+**Declarations:**
+
+`def _dry_run(questions, baseline_tools, indxr_tools)`
+
+---
+
+## bench/scoring.py
+
+**Language:** Python | **Size:** 3.0 KB | **Lines:** 88
+
+**Imports:**
+- `import re`
+- `from dataclasses import dataclass`
+
+**Declarations:**
+
+---
+
+## bench/stats.py
+
+**Language:** Python | **Size:** 4.4 KB | **Lines:** 146
+
+**Imports:**
+- `import random`
+- `from dataclasses import dataclass, field`
+
+**Declarations:**
+
+`def _mean(data) -> float`
+
+---
+
+## bench/tools_baseline.py
+
+**Language:** Python | **Size:** 7.7 KB | **Lines:** 228
+
+**Imports:**
+- `import os`
+- `import subprocess`
+- `from pathlib import Path`
+
+**Declarations:**
+
+---
+
+## bench/tools_indxr.py
+
+**Language:** Python | **Size:** 4.1 KB | **Lines:** 134
+
+**Imports:**
+- `import json`
+- `import os`
+- `import subprocess`
+- `import sys`
+- `from pathlib import Path`
+
+**Declarations:**
+
+`def _find_indxr() -> str`
+
+---
+
+## bench_questions/indxr.json
+
+**Language:** JSON | **Size:** 21.6 KB | **Lines:** 407
+
+**Declarations:**
+
+---
+
+## benchmark.md
+
+**Language:** Markdown | **Size:** 10.1 KB | **Lines:** 260
 
 **Declarations:**
 
@@ -602,7 +915,15 @@ indxr/
 
 ## benchmark.sh
 
-**Language:** Shell | **Size:** 24.9 KB | **Lines:** 620
+**Language:** Shell | **Size:** 39.5 KB | **Lines:** 1065
+
+**Declarations:**
+
+---
+
+## benchmark_results.json
+
+**Language:** JSON | **Size:** 26.4 KB | **Lines:** 321
 
 **Declarations:**
 
@@ -610,7 +931,7 @@ indxr/
 
 ## docs/agent-integration.md
 
-**Language:** Markdown | **Size:** 17.2 KB | **Lines:** 474
+**Language:** Markdown | **Size:** 18.1 KB | **Lines:** 505
 
 **Declarations:**
 
@@ -626,7 +947,7 @@ indxr/
 
 ## docs/cli-reference.md
 
-**Language:** Markdown | **Size:** 11.1 KB | **Lines:** 409
+**Language:** Markdown | **Size:** 12.4 KB | **Lines:** 439
 
 **Declarations:**
 
@@ -634,7 +955,7 @@ indxr/
 
 ## docs/dep-graph.md
 
-**Language:** Markdown | **Size:** 2.5 KB | **Lines:** 125
+**Language:** Markdown | **Size:** 2.9 KB | **Lines:** 140
 
 **Declarations:**
 
@@ -642,7 +963,7 @@ indxr/
 
 ## docs/filtering.md
 
-**Language:** Markdown | **Size:** 3.3 KB | **Lines:** 166
+**Language:** Markdown | **Size:** 3.5 KB | **Lines:** 171
 
 **Declarations:**
 
@@ -666,7 +987,7 @@ indxr/
 
 ## docs/mcp-server.md
 
-**Language:** Markdown | **Size:** 23.4 KB | **Lines:** 766
+**Language:** Markdown | **Size:** 26.7 KB | **Lines:** 847
 
 **Declarations:**
 
@@ -784,7 +1105,7 @@ indxr/
 
 ## src/cli.rs
 
-**Language:** Rust | **Size:** 10.0 KB | **Lines:** 364
+**Language:** Rust | **Size:** 10.3 KB | **Lines:** 371
 
 **Imports:**
 - `std::path::PathBuf`
@@ -970,7 +1291,7 @@ indxr/
 
 ## src/init.rs
 
-**Language:** Rust | **Size:** 49.2 KB | **Lines:** 1365
+**Language:** Rust | **Size:** 53.3 KB | **Lines:** 1489
 
 **Imports:**
 - `std::fs`
@@ -981,6 +1302,7 @@ indxr/
 - `crate::model::DetailLevel`
 - `crate::output::OutputFormatter`
 - `crate::output::markdown::{MarkdownFormatter, MarkdownOptions}`
+- `crate::workspace::{self, WorkspaceKind}`
 
 **Declarations:**
 
@@ -1005,13 +1327,13 @@ indxr/
 
 `fn merge_mcp_server_toml(path: &Path, force: bool) -> Result<WriteResult>`
 
-`fn setup_claude( root: &Path, force: bool, include_hooks: bool, include_rtk: bool, ) -> Result<Vec<WriteResult>>`
+`fn setup_claude( root: &Path, force: bool, include_hooks: bool, include_rtk: bool, is_workspace: bool, ) -> Result<Vec<WriteResult>>`
 
-`fn setup_cursor(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>>`
+`fn setup_cursor( root: &Path, force: bool, include_rtk: bool, is_workspace: bool, ) -> Result<Vec<WriteResult>>`
 
-`fn setup_windsurf(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>>`
+`fn setup_windsurf( root: &Path, force: bool, include_rtk: bool, is_workspace: bool, ) -> Result<Vec<WriteResult>>`
 
-`fn setup_codex(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>>`
+`fn setup_codex( root: &Path, force: bool, include_rtk: bool, is_workspace: bool, ) -> Result<Vec<WriteResult>>`
 
 `fn detect_rtk() -> bool`
 
@@ -1031,7 +1353,7 @@ indxr/
 
 `fn generate_index(root: &Path, max_file_size: u64) -> Result<WriteResult>`
 
-`fn mcp_json_content() -> String`
+`fn mcp_json_content(all_tools: bool) -> String`
 
 `fn claude_md_content(root: &Path, include_rtk: bool) -> String`
 
@@ -1047,7 +1369,7 @@ indxr/
 
 `fn global_windsurf_rules_content(include_rtk: bool) -> String`
 
-`fn codex_config_toml_content() -> String`
+`fn codex_config_toml_content(all_tools: bool) -> String`
 
 `fn agents_md_content(include_rtk: bool) -> String`
 
@@ -1084,7 +1406,7 @@ indxr/
 
 ## src/main.rs
 
-**Language:** Rust | **Size:** 14.1 KB | **Lines:** 495
+**Language:** Rust | **Size:** 14.2 KB | **Lines:** 497
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1169,7 +1491,7 @@ indxr/
 
 ## src/mcp/http.rs
 
-**Language:** Rust | **Size:** 39.0 KB | **Lines:** 1148
+**Language:** Rust | **Size:** 39.2 KB | **Lines:** 1154
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1187,7 +1509,7 @@ indxr/
 **Declarations:**
 
 `struct AppState`
-> Fields: `index: RwLock<WorkspaceIndex>`, `config: WorkspaceConfig`, `registry: ParserRegistry`, `notify_tx: broadcast::Sender<SseEvent>`, `sessions: AsyncRwLock<HashMap<String, SessionInfo>>`
+> Fields: `index: RwLock<WorkspaceIndex>`, `config: WorkspaceConfig`, `registry: ParserRegistry`, `notify_tx: broadcast::Sender<SseEvent>`, `sessions: AsyncRwLock<HashMap<String, SessionInfo>>`, `all_tools: bool`
 
 `struct SessionInfo`
 > Fields: `last_accessed: Instant`, `close_tx: watch::Sender<bool>`
@@ -1231,7 +1553,7 @@ indxr/
 
 ## src/mcp/mod.rs
 
-**Language:** Rust | **Size:** 15.3 KB | **Lines:** 476
+**Language:** Rust | **Size:** 15.7 KB | **Lines:** 499
 
 **Imports:**
 - `std::io::{self, BufRead, Write}`
@@ -1275,18 +1597,18 @@ indxr/
 
 `pub(crate) fn handle_initialize(id: Value, transport: Transport) -> JsonRpcResponse`
 
-`pub(crate) fn handle_tools_list(id: Value) -> JsonRpcResponse`
+`pub(crate) fn handle_tools_list( id: Value, workspace: &WorkspaceIndex, all_tools: bool, ) -> JsonRpcResponse`
 
 `pub(crate) fn handle_tools_call( id: Value, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, params: &Value, ) -> JsonRpcResponse`
 
 `enum ServerEvent`
 > Variants: `StdinLine`, `StdinClosed`, `FileChanged`
 
-`pub(crate) fn process_jsonrpc_request( request: JsonRpcRequest, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, ) -> Option<JsonRpcResponse>`
+`pub(crate) fn process_jsonrpc_request( request: JsonRpcRequest, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, all_tools: bool, ) -> Option<JsonRpcResponse>`
 
-`pub(crate) fn process_jsonrpc_message( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse>`
+`pub(crate) fn process_jsonrpc_message( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, all_tools: bool, ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse>`
 
-`fn handle_stdin_line( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, writer: &mut impl Write, ) -> anyhow::Result<()>`
+`fn handle_stdin_line( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, writer: &mut impl Write, all_tools: bool, ) -> anyhow::Result<()>`
 
 `mod coalesce_tests`
 
@@ -1294,7 +1616,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 91.3 KB | **Lines:** 2626
+**Language:** Rust | **Size:** 94.9 KB | **Lines:** 2732
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1335,7 +1657,13 @@ indxr/
 
 `fn test_simple_glob_match()`
 
-`fn test_tool_definitions_include_new_tools()`
+`fn test_tool_definitions_all_tools()`
+
+`fn test_tool_definitions_default_excludes_extended()`
+
+`fn test_tool_definitions_member_param_only_in_workspace()`
+
+`fn test_extended_tools_callable_when_hidden()`
 
 `fn test_handle_tool_call_unknown_tool()`
 
@@ -1619,7 +1947,7 @@ indxr/
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 77.9 KB | **Lines:** 2143
+**Language:** Rust | **Size:** 74.9 KB | **Lines:** 2166
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1635,6 +1963,8 @@ indxr/
 - *... and 6 more imports*
 
 **Declarations:**
+
+`const EXTENDED_TOOLS: &[&str] = &[ "get_hotspots", "get_health", "get_type_flow", "get_dependency_graph", "get_diff_summary", "get_token_estimate", "list_workspace_members", "regenerate_index", ]`
 
 `fn member_property() -> Value`
 

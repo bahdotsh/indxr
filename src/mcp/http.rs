@@ -30,6 +30,8 @@ struct AppState {
     notify_tx: broadcast::Sender<SseEvent>,
     /// Active sessions (async-safe — accessed from async handlers without spawn_blocking).
     sessions: AsyncRwLock<HashMap<String, SessionInfo>>,
+    /// Whether to expose all tools (including extended/specialized ones).
+    all_tools: bool,
 }
 
 struct SessionInfo {
@@ -64,6 +66,7 @@ pub async fn run_http_server(
     watch: bool,
     debounce_ms: u64,
     addr: &str,
+    all_tools: bool,
 ) -> anyhow::Result<()> {
     let (notify_tx, _) = broadcast::channel::<SseEvent>(256);
 
@@ -73,6 +76,7 @@ pub async fn run_http_server(
         registry: ParserRegistry::new(),
         notify_tx: notify_tx.clone(),
         sessions: AsyncRwLock::new(HashMap::new()),
+        all_tools,
     });
 
     // Optionally spawn file watcher
@@ -225,6 +229,7 @@ async fn handle_single(state: Arc<AppState>, headers: &HeaderMap, value: Value) 
             &state2.config,
             &state2.registry,
             Transport::Http,
+            state2.all_tools,
         )
     })
     .await
@@ -329,6 +334,7 @@ async fn handle_batch(state: Arc<AppState>, headers: &HeaderMap, items: Vec<Valu
                     &state2.config,
                     &state2.registry,
                     Transport::Http,
+                    state2.all_tools,
                 ),
             })
             .collect::<Vec<_>>()

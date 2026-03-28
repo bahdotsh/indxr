@@ -99,7 +99,20 @@ Or use the CLI to add it:
 claude mcp add indxr -- indxr serve .
 ```
 
-Claude Code will automatically discover all 23 MCP tools — `search_relevant`, `explain_symbol`, `get_callers`, `batch_file_summaries`, `get_public_api`, `get_diff_summary`, `get_hotspots`, `get_health`, `get_type_flow`, `list_workspace_members`, and more — during conversations.
+Claude Code will automatically discover the 15 default MCP tools — `search_relevant`, `explain_symbol`, `get_callers`, `batch_file_summaries`, `get_public_api`, and more — during conversations. To expose all 23 tools (including extended tools like `get_hotspots`, `get_health`, `get_type_flow`, `get_diff_summary`), use `--all-tools`:
+
+```json
+{
+  "mcpServers": {
+    "indxr": {
+      "command": "indxr",
+      "args": ["serve", ".", "--all-tools"]
+    }
+  }
+}
+```
+
+> Extended tools are always callable even when not listed — `--all-tools` only controls whether they appear in `tools/list`.
 
 **Reinforcing MCP usage with PreToolUse hooks:**
 

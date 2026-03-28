@@ -8,6 +8,7 @@ use crate::indexer::{self, IndexConfig};
 use crate::model::DetailLevel;
 use crate::output::OutputFormatter;
 use crate::output::markdown::{MarkdownFormatter, MarkdownOptions};
+use crate::workspace::{self, WorkspaceKind};
 
 pub struct InitOptions {
     pub path: PathBuf,
@@ -81,24 +82,38 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
         let root = fs::canonicalize(&opts.path)
             .map_err(|e| anyhow::anyhow!("cannot resolve path '{}': {}", opts.path.display(), e))?;
 
+        // Detect workspace to decide whether to add --all-tools to MCP configs
+        let is_workspace = workspace::detect_workspace(&root)
+            .map(|ws| ws.kind != WorkspaceKind::None)
+            .unwrap_or(false);
+        if is_workspace {
+            eprintln!("  Workspace detected — MCP configs will include --all-tools");
+        }
+
         if opts.claude {
             results.extend(setup_claude(
                 &root,
                 opts.force,
                 opts.include_hooks,
                 rtk_detected,
+                is_workspace,
             )?);
         }
         if opts.cursor {
-            results.extend(setup_cursor(&root, opts.force, rtk_detected)?);
+            results.extend(setup_cursor(&root, opts.force, rtk_detected, is_workspace)?);
             warn_deprecated(&root, ".cursorrules", ".cursor/rules/indxr.mdc");
         }
         if opts.windsurf {
-            results.extend(setup_windsurf(&root, opts.force, rtk_detected)?);
+            results.extend(setup_windsurf(
+                &root,
+                opts.force,
+                rtk_detected,
+                is_workspace,
+            )?);
             warn_deprecated(&root, ".windsurfrules", ".windsurf/rules/indxr.md");
         }
         if opts.codex {
-            results.extend(setup_codex(&root, opts.force, rtk_detected)?);
+            results.extend(setup_codex(&root, opts.force, rtk_detected, is_workspace)?);
         }
 
         results.push(setup_gitignore(&root)?);
@@ -335,11 +350,12 @@ fn setup_claude(
     force: bool,
     include_hooks: bool,
     include_rtk: bool,
+    is_workspace: bool,
 ) -> Result<Vec<WriteResult>> {
     let mut results = Vec::new();
     results.push(write_file_safe(
         &root.join(".mcp.json"),
-        &mcp_json_content(),
+        &mcp_json_content(is_workspace),
         force,
     )?);
     results.push(write_file_safe(
@@ -360,9 +376,18 @@ fn setup_claude(
     Ok(results)
 }
 
-fn setup_cursor(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>> {
+fn setup_cursor(
+    root: &Path,
+    force: bool,
+    include_rtk: bool,
+    is_workspace: bool,
+) -> Result<Vec<WriteResult>> {
     let results = vec![
-        write_file_safe(&root.join(".cursor/mcp.json"), &mcp_json_content(), force)?,
+        write_file_safe(
+            &root.join(".cursor/mcp.json"),
+            &mcp_json_content(is_workspace),
+            force,
+        )?,
         write_file_safe(
             &root.join(".cursor/rules/indxr.mdc"),
             &cursor_mdc_content(include_rtk),
@@ -372,9 +397,18 @@ fn setup_cursor(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<Write
     Ok(results)
 }
 
-fn setup_windsurf(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>> {
+fn setup_windsurf(
+    root: &Path,
+    force: bool,
+    include_rtk: bool,
+    is_workspace: bool,
+) -> Result<Vec<WriteResult>> {
     let results = vec![
-        write_file_safe(&root.join(".windsurf/mcp.json"), &mcp_json_content(), force)?,
+        write_file_safe(
+            &root.join(".windsurf/mcp.json"),
+            &mcp_json_content(is_workspace),
+            force,
+        )?,
         write_file_safe(
             &root.join(".windsurf/rules/indxr.md"),
             &windsurf_rule_content(include_rtk),
@@ -384,11 +418,16 @@ fn setup_windsurf(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<Wri
     Ok(results)
 }
 
-fn setup_codex(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>> {
+fn setup_codex(
+    root: &Path,
+    force: bool,
+    include_rtk: bool,
+    is_workspace: bool,
+) -> Result<Vec<WriteResult>> {
     let results = vec![
         write_file_safe(
             &root.join(".codex/config.toml"),
-            &codex_config_toml_content(),
+            &codex_config_toml_content(is_workspace),
             force,
         )?,
         write_file_safe(
@@ -564,8 +603,20 @@ fn generate_index(root: &Path, max_file_size: u64) -> Result<WriteResult> {
 
 // --- Template content ---
 
-fn mcp_json_content() -> String {
-    r#"{
+fn mcp_json_content(all_tools: bool) -> String {
+    if all_tools {
+        r#"{
+  "mcpServers": {
+    "indxr": {
+      "command": "indxr",
+      "args": ["serve", ".", "--all-tools"]
+    }
+  }
+}
+"#
+        .to_string()
+    } else {
+        r#"{
   "mcpServers": {
     "indxr": {
       "command": "indxr",
@@ -574,7 +625,8 @@ fn mcp_json_content() -> String {
   }
 }
 "#
-    .to_string()
+        .to_string()
+    }
 }
 
 fn claude_md_content(root: &Path, include_rtk: bool) -> String {
@@ -789,12 +841,20 @@ fn global_windsurf_rules_content(include_rtk: bool) -> String {
 }
 
 /// Project-level .codex/config.toml — MCP server config in TOML format.
-fn codex_config_toml_content() -> String {
-    r#"[mcp_servers.indxr]
+fn codex_config_toml_content(all_tools: bool) -> String {
+    if all_tools {
+        r#"[mcp_servers.indxr]
+command = "indxr"
+args = ["serve", ".", "--all-tools"]
+"#
+        .to_string()
+    } else {
+        r#"[mcp_servers.indxr]
 command = "indxr"
 args = ["serve", "."]
 "#
-    .to_string()
+        .to_string()
+    }
 }
 
 /// AGENTS.md content for Codex CLI — analogous to CLAUDE.md.
@@ -809,10 +869,20 @@ mod tests {
 
     #[test]
     fn test_mcp_json_is_valid() {
-        let content = mcp_json_content();
+        let content = mcp_json_content(false);
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert!(parsed["mcpServers"]["indxr"]["command"].is_string());
         assert_eq!(parsed["mcpServers"]["indxr"]["command"], "indxr");
+        let args = parsed["mcpServers"]["indxr"]["args"].as_array().unwrap();
+        assert!(!args.iter().any(|a| a == "--all-tools"));
+    }
+
+    #[test]
+    fn test_mcp_json_workspace_includes_all_tools() {
+        let content = mcp_json_content(true);
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let args = parsed["mcpServers"]["indxr"]["args"].as_array().unwrap();
+        assert!(args.iter().any(|a| a == "--all-tools"));
     }
 
     #[test]
@@ -964,7 +1034,7 @@ mod tests {
     #[test]
     fn test_setup_claude_creates_files() {
         let dir = TempDir::new().unwrap();
-        let results = setup_claude(dir.path(), false, true, false).unwrap();
+        let results = setup_claude(dir.path(), false, true, false, false).unwrap();
         assert_eq!(results.len(), 3);
         assert!(dir.path().join(".mcp.json").exists());
         assert!(dir.path().join("CLAUDE.md").exists());
@@ -972,9 +1042,17 @@ mod tests {
     }
 
     #[test]
+    fn test_setup_claude_workspace_adds_all_tools() {
+        let dir = TempDir::new().unwrap();
+        let _results = setup_claude(dir.path(), false, false, false, true).unwrap();
+        let content = fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
+        assert!(content.contains("--all-tools"));
+    }
+
+    #[test]
     fn test_setup_claude_with_rtk_creates_hook() {
         let dir = TempDir::new().unwrap();
-        let results = setup_claude(dir.path(), false, true, true).unwrap();
+        let results = setup_claude(dir.path(), false, true, true, false).unwrap();
         // 3 base files + 1 rtk hook script
         assert_eq!(results.len(), 4);
         assert!(dir.path().join(".claude/hooks/rtk-rewrite.sh").exists());
@@ -997,7 +1075,7 @@ mod tests {
     #[test]
     fn test_setup_claude_without_hooks() {
         let dir = TempDir::new().unwrap();
-        let results = setup_claude(dir.path(), false, false, false).unwrap();
+        let results = setup_claude(dir.path(), false, false, false, false).unwrap();
         assert_eq!(results.len(), 2);
         assert!(dir.path().join(".mcp.json").exists());
         assert!(dir.path().join("CLAUDE.md").exists());
@@ -1008,7 +1086,7 @@ mod tests {
     fn test_setup_claude_rtk_without_hooks_skips_rtk() {
         let dir = TempDir::new().unwrap();
         // include_rtk=true but include_hooks=false — rtk hook should not be created
-        let results = setup_claude(dir.path(), false, false, true).unwrap();
+        let results = setup_claude(dir.path(), false, false, true, false).unwrap();
         assert_eq!(results.len(), 2);
         assert!(!dir.path().join(".claude/hooks/rtk-rewrite.sh").exists());
     }
@@ -1016,7 +1094,7 @@ mod tests {
     #[test]
     fn test_setup_cursor_creates_files() {
         let dir = TempDir::new().unwrap();
-        let results = setup_cursor(dir.path(), false, false).unwrap();
+        let results = setup_cursor(dir.path(), false, false, false).unwrap();
         assert_eq!(results.len(), 2);
         assert!(dir.path().join(".cursor/mcp.json").exists());
         assert!(dir.path().join(".cursor/rules/indxr.mdc").exists());
@@ -1029,7 +1107,7 @@ mod tests {
     #[test]
     fn test_setup_windsurf_creates_files() {
         let dir = TempDir::new().unwrap();
-        let results = setup_windsurf(dir.path(), false, false).unwrap();
+        let results = setup_windsurf(dir.path(), false, false, false).unwrap();
         assert_eq!(results.len(), 2);
         assert!(dir.path().join(".windsurf/mcp.json").exists());
         assert!(dir.path().join(".windsurf/rules/indxr.md").exists());
@@ -1359,7 +1437,7 @@ mod tests {
     #[test]
     fn test_setup_codex_creates_files() {
         let dir = TempDir::new().unwrap();
-        let results = setup_codex(dir.path(), false, false).unwrap();
+        let results = setup_codex(dir.path(), false, false, false).unwrap();
         assert_eq!(results.len(), 2);
         assert!(dir.path().join(".codex/config.toml").exists());
         assert!(dir.path().join("AGENTS.md").exists());
@@ -1387,7 +1465,7 @@ mod tests {
 
     #[test]
     fn test_codex_config_toml_is_valid() {
-        let content = codex_config_toml_content();
+        let content = codex_config_toml_content(false);
         let doc: toml::Table = content.parse().unwrap();
         let servers = doc["mcp_servers"].as_table().unwrap();
         let indxr = servers["indxr"].as_table().unwrap();
@@ -1395,6 +1473,17 @@ mod tests {
         let args = indxr["args"].as_array().unwrap();
         assert_eq!(args[0].as_str().unwrap(), "serve");
         assert_eq!(args[1].as_str().unwrap(), ".");
+        assert!(!args.iter().any(|a| a.as_str() == Some("--all-tools")));
+    }
+
+    #[test]
+    fn test_codex_config_toml_workspace_includes_all_tools() {
+        let content = codex_config_toml_content(true);
+        let doc: toml::Table = content.parse().unwrap();
+        let servers = doc["mcp_servers"].as_table().unwrap();
+        let indxr = servers["indxr"].as_table().unwrap();
+        let args = indxr["args"].as_array().unwrap();
+        assert!(args.iter().any(|a| a.as_str() == Some("--all-tools")));
     }
 
     #[test]
