@@ -98,15 +98,14 @@ impl WorkspaceIndex {
     /// 1. Exact match: `file_path == path`
     /// 2. Suffix match: `file_path` ends with `path` (e.g. query `"src/lib.rs"` matches
     ///    `"crates/alpha/src/lib.rs"`)
-    /// 3. Reverse suffix: `path` ends with `file_path`
     ///
     /// When multiple members match via suffix at the same specificity level,
     /// returns `None` to avoid silently picking the wrong member.
     pub fn find_member_by_path(&self, path: &str) -> Option<&MemberIndex> {
-        let mut best: Option<(&MemberIndex, usize)> = None; // (member, match_specificity)
-        let mut ambiguous = false;
+        let mut matched: Option<&MemberIndex> = None;
 
         for member in &self.members {
+            let mut member_matches = false;
             for file in &member.index.files {
                 let file_path = file.path.to_string_lossy();
 
@@ -115,34 +114,22 @@ impl WorkspaceIndex {
                     return Some(member);
                 }
 
-                let matches = file_path.ends_with(path) || path.ends_with(&*file_path);
-
-                if matches {
-                    let s = file_path.len();
-                    match best {
-                        Some((prev_member, prev_s)) if s == prev_s => {
-                            // Same specificity but different member → ambiguous
-                            if !std::ptr::eq(prev_member, member) {
-                                ambiguous = true;
-                            }
-                        }
-                        Some((_, prev_s)) if s > prev_s => {
-                            best = Some((member, s));
-                            ambiguous = false;
-                        }
-                        None => {
-                            best = Some((member, s));
-                        }
-                        _ => {} // lower specificity, ignore
-                    }
+                if file_path.ends_with(path) {
+                    member_matches = true;
+                    break;
                 }
+            }
+
+            if member_matches {
+                if matched.is_some() {
+                    // Multiple members have suffix matches — ambiguous
+                    return None;
+                }
+                matched = Some(member);
             }
         }
 
-        if ambiguous {
-            return None;
-        }
-        best.map(|(m, _)| m)
+        matched
     }
 
     /// Returns true if this is a single-member "none" workspace (non-monorepo).

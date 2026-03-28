@@ -2479,6 +2479,81 @@ fn test_find_member_by_path() {
 }
 
 #[test]
+fn test_find_member_by_path_ambiguous() {
+    // Build a workspace where two members both have files whose full paths end with
+    // "src/lib.rs" but with different prefixes. A suffix query for "src/lib.rs" should
+    // return None because it's ambiguous (matches both members).
+    let make_member = |name: &str, root: &str| {
+        let file = FileIndex {
+            path: PathBuf::from(format!("crates/{}/src/lib.rs", name)),
+            language: Language::Rust,
+            size: 100,
+            lines: 10,
+            imports: vec![],
+            declarations: vec![],
+        };
+        MemberIndex {
+            name: name.to_string(),
+            relative_path: PathBuf::from(format!("crates/{}", name)),
+            index: CodebaseIndex {
+                root: PathBuf::from(root),
+                root_name: name.to_string(),
+                generated_at: "2026-01-01T00:00:00Z".to_string(),
+                stats: IndexStats {
+                    total_files: 1,
+                    total_lines: 10,
+                    languages: HashMap::from([("Rust".to_string(), 1)]),
+                    duration_ms: 1,
+                },
+                tree: vec![],
+                files: vec![file],
+            },
+        }
+    };
+
+    let ws = WorkspaceIndex {
+        root: PathBuf::from("/tmp/ambiguous"),
+        root_name: "ambiguous".to_string(),
+        workspace_kind: WorkspaceKind::Cargo,
+        generated_at: "2026-01-01T00:00:00Z".to_string(),
+        stats: IndexStats {
+            total_files: 2,
+            total_lines: 20,
+            languages: HashMap::from([("Rust".to_string(), 2)]),
+            duration_ms: 2,
+        },
+        members: vec![
+            make_member("alpha", "/tmp/ambiguous/crates/alpha"),
+            make_member("beta", "/tmp/ambiguous/crates/beta"),
+        ],
+    };
+
+    // Both members have a file ending with "src/lib.rs" — should be ambiguous
+    let m = ws.find_member_by_path("src/lib.rs");
+    assert!(
+        m.is_none(),
+        "expected None for ambiguous path, got {:?}",
+        m.map(|m| &m.name)
+    );
+
+    // Shorter suffix also ambiguous
+    let m = ws.find_member_by_path("lib.rs");
+    assert!(
+        m.is_none(),
+        "expected None for ambiguous suffix, got {:?}",
+        m.map(|m| &m.name)
+    );
+
+    // Exact full path resolves unambiguously
+    let m = ws.find_member_by_path("crates/alpha/src/lib.rs");
+    assert_eq!(m.unwrap().name, "alpha");
+
+    // Member-specific prefix resolves unambiguously (longer file_path wins)
+    let m = ws.find_member_by_path("beta/src/lib.rs");
+    assert_eq!(m.unwrap().name, "beta");
+}
+
+#[test]
 fn test_find_member_by_name() {
     let ws = make_multi_member_workspace();
     assert!(ws.find_member("frontend").is_some());
