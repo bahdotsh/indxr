@@ -1,0 +1,267 @@
+{
+  "version": 1,
+  "description": "indxr accuracy benchmark: measures LLM answer quality with full-file context vs indxr structural context",
+  "questions": [
+    {
+      "id": "sym-001",
+      "category": "symbol_lookup",
+      "question": "In which file is the function `estimate_tokens` defined? Give the relative path from the project root.",
+      "ground_truth": "src/budget.rs",
+      "scoring": "substring",
+      "scoring_targets": ["src/budget.rs"],
+      "baseline_files": ["src/budget.rs", "src/mcp/tools.rs", "src/indexer.rs"],
+      "indxr_tool_calls": [
+        {"tool": "lookup_symbol", "args": {"name": "estimate_tokens"}}
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "sym-002",
+      "category": "symbol_lookup",
+      "question": "What is the full function signature of `handle_tool_call`? Include all parameters and return type.",
+      "ground_truth": "pub(super) fn handle_tool_call(workspace: &WorkspaceIndex, name: &str, args: &Value) -> Value",
+      "scoring": "all_of",
+      "scoring_targets": ["handle_tool_call", "WorkspaceIndex", "name: &str", "args: &Value", "-> Value"],
+      "baseline_files": ["src/mcp/tools.rs"],
+      "indxr_tool_calls": [
+        {"tool": "explain_symbol", "args": {"name": "handle_tool_call"}}
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "sym-003",
+      "category": "symbol_lookup",
+      "question": "What struct represents a single file in the codebase index? Give the struct name and the file where it's defined.",
+      "ground_truth": "FileIndex, defined in src/model/mod.rs",
+      "scoring": "all_of",
+      "scoring_targets": ["FileIndex", "src/model"],
+      "baseline_files": ["src/model/mod.rs", "src/model/declarations.rs", "src/indexer.rs"],
+      "indxr_tool_calls": [
+        {"tool": "search_relevant", "args": {"query": "file index struct", "kind": "struct"}}
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "sym-004",
+      "category": "symbol_lookup",
+      "question": "What are all the variants of the `DeclKind` enum?",
+      "ground_truth": "Function, Struct, Enum, Trait, Impl, Constant, Static, TypeAlias, Module, Class, Field, Variant, Method, Interface, Namespace, Macro, ConfigKey, Property, Other",
+      "scoring": "set_match",
+      "scoring_targets": ["Function", "Struct", "Enum", "Trait", "Impl", "Constant", "Static", "TypeAlias", "Module", "Class", "Field", "Variant", "Method", "Interface", "Namespace"],
+      "baseline_files": ["src/model/declarations.rs", "src/model/mod.rs"],
+      "indxr_tool_calls": [
+        {"tool": "read_source", "args": {"path": "src/model/declarations.rs", "symbol": "DeclKind"}}
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "xfile-001",
+      "category": "cross_file",
+      "question": "Which files import from `src/mcp/helpers.rs`? List the relative file paths.",
+      "ground_truth": "src/mcp/tools.rs, src/mcp/tests.rs",
+      "scoring": "set_match",
+      "scoring_targets": ["src/mcp/tools.rs", "src/mcp/tests.rs"],
+      "baseline_files": ["src/mcp/tools.rs", "src/mcp/tests.rs", "src/mcp/type_flow.rs", "src/mcp/mod.rs", "src/mcp/helpers.rs", "src/mcp/http.rs"],
+      "indxr_tool_calls": [
+        {"tool": "get_file_context", "args": {"path": "src/mcp/helpers.rs"}}
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "xfile-002",
+      "category": "cross_file",
+      "question": "What are the import statements in `src/indexer.rs`? List the crate-level imports (starting with `crate::`).",
+      "ground_truth": "crate::cache::Cache, crate::model::*, crate::output::*, crate::parser::ParserRegistry, crate::walker, crate::workspace",
+      "scoring": "set_match",
+      "scoring_targets": ["crate::cache", "crate::model", "crate::output", "crate::parser", "crate::walker", "crate::workspace"],
+      "baseline_files": ["src/indexer.rs"],
+      "indxr_tool_calls": [
+        {"tool": "get_imports", "args": {"path": "src/indexer.rs"}}
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "xfile-003",
+      "category": "cross_file",
+      "question": "Which files import the `Declaration` type? List the relative file paths.",
+      "ground_truth": "Files that import Declaration include src/mcp/tools.rs, src/mcp/helpers.rs, src/filter.rs, src/budget.rs, src/diff.rs, src/dep_graph.rs",
+      "scoring": "set_match",
+      "scoring_targets": ["src/mcp/helpers.rs", "src/filter.rs", "src/diff.rs", "src/budget.rs"],
+      "baseline_files": ["src/model/declarations.rs", "src/mcp/tools.rs", "src/mcp/helpers.rs", "src/filter.rs", "src/indexer.rs", "src/budget.rs", "src/diff.rs"],
+      "indxr_tool_calls": [
+        {"tool": "get_callers", "args": {"symbol": "Declaration"}}
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "behav-001",
+      "category": "function_behavior",
+      "question": "What does the `tool_error` function do? Describe its input, output, and purpose.",
+      "ground_truth": "Takes a string message, returns a JSON Value with isError: true and a text content block containing the error message",
+      "scoring": "all_of",
+      "scoring_targets": ["isError", "true", "text"],
+      "baseline_files": ["src/mcp/helpers.rs", "src/mcp/tools.rs"],
+      "indxr_tool_calls": [
+        {"tool": "read_source", "args": {"path": "src/mcp/helpers.rs", "symbol": "tool_error"}}
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "behav-002",
+      "category": "function_behavior",
+      "question": "What is the token estimation formula used by `estimate_tokens`? How does it convert characters to tokens?",
+      "ground_truth": "Divides character count by 4 (text.len().div_ceil(4)), approximating 1 token as 4 characters",
+      "scoring": "all_of",
+      "scoring_targets": ["4", "character"],
+      "baseline_files": ["src/budget.rs", "src/mcp/tools.rs"],
+      "indxr_tool_calls": [
+        {"tool": "read_source", "args": {"path": "src/budget.rs", "symbol": "estimate_tokens"}}
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "behav-003",
+      "category": "function_behavior",
+      "question": "In the `apply_token_budget` function, what are the progressive truncation stages in order? List each stage briefly.",
+      "ground_truth": "1) Truncate long doc comments to first line, 2) Strip all doc comments, 3) Remove private declarations, 4) Remove children from declarations, 5) Drop least-important files",
+      "scoring": "set_match",
+      "scoring_targets": ["doc comment", "private", "children", "drop"],
+      "baseline_files": ["src/budget.rs"],
+      "indxr_tool_calls": [
+        {"tool": "read_source", "args": {"path": "src/budget.rs", "symbol": "apply_token_budget"}}
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "count-001",
+      "category": "structural_counting",
+      "question": "How many public functions are defined in `src/mcp/tools.rs`?",
+      "ground_truth": "Around 24 public symbols",
+      "scoring": "number_range",
+      "scoring_targets": ["22", "26"],
+      "baseline_files": ["src/mcp/tools.rs"],
+      "indxr_tool_calls": [
+        {"tool": "get_file_summary", "args": {"path": "src/mcp/tools.rs"}}
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "count-002",
+      "category": "structural_counting",
+      "question": "How many files are in the `src/parser/queries/` directory? List their names.",
+      "ground_truth": "9 files: mod.rs, rust.rs, python.rs, javascript.rs, typescript.rs, go.rs, java.rs, c.rs, cpp.rs",
+      "scoring": "set_match",
+      "scoring_targets": ["rust.rs", "python.rs", "javascript.rs", "typescript.rs", "go.rs", "java.rs", "c.rs", "cpp.rs", "mod.rs"],
+      "baseline_files": ["src/parser/queries/mod.rs", "src/parser/queries/rust.rs", "src/parser/queries/python.rs"],
+      "indxr_tool_calls": [
+        {"tool": "get_tree", "args": {}}
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "count-003",
+      "category": "structural_counting",
+      "question": "How many struct declarations are in `src/mcp/helpers.rs`?",
+      "ground_truth": "4 structs: SymbolMatch, SignatureMatch, ShallowDeclaration, RelevanceMatch",
+      "scoring": "set_match",
+      "scoring_targets": ["SymbolMatch", "SignatureMatch", "ShallowDeclaration", "RelevanceMatch"],
+      "baseline_files": ["src/mcp/helpers.rs"],
+      "indxr_tool_calls": [
+        {"tool": "list_declarations", "args": {"path": "src/mcp/helpers.rs", "kind": "struct"}}
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "caller-001",
+      "category": "caller_tracing",
+      "question": "Which functions reference `estimate_tokens` in their signature or body? List the function names and their files.",
+      "ground_truth": "Functions that call estimate_tokens",
+      "scoring": "set_match",
+      "scoring_targets": ["budget", "tools.rs"],
+      "baseline_files": ["src/budget.rs", "src/mcp/tools.rs", "src/output/markdown.rs"],
+      "indxr_tool_calls": [
+        {"tool": "get_callers", "args": {"symbol": "estimate_tokens"}}
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "caller-002",
+      "category": "caller_tracing",
+      "question": "Which functions produce (return) a `WorkspaceIndex`? List function names and files.",
+      "ground_truth": "Functions that return WorkspaceIndex",
+      "scoring": "set_match",
+      "scoring_targets": ["build_workspace_index", "detect_and_build_workspace", "regenerate_workspace_index"],
+      "baseline_files": ["src/indexer.rs", "src/model/mod.rs", "src/main.rs", "src/workspace.rs"],
+      "indxr_tool_calls": [
+        {"tool": "get_type_flow", "args": {"type_name": "WorkspaceIndex"}}
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "arch-001",
+      "category": "architecture",
+      "question": "What are the top-level modules inside `src/`? List the directory names and standalone .rs files (excluding main.rs).",
+      "ground_truth": "cache/, model/, mcp/, output/, parser/, walker/, and standalone files: cli.rs, indexer.rs, budget.rs, filter.rs, diff.rs, github.rs, languages.rs, watch.rs, workspace.rs, init.rs, error.rs, utils.rs, dep_graph.rs",
+      "scoring": "set_match",
+      "scoring_targets": ["cache", "model", "mcp", "output", "parser", "walker", "cli.rs", "indexer.rs", "budget.rs", "filter.rs", "diff.rs"],
+      "baseline_files": ["src/main.rs", "src/indexer.rs", "src/cli.rs"],
+      "indxr_tool_calls": [
+        {"tool": "get_tree", "args": {}}
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "arch-002",
+      "category": "architecture",
+      "question": "What output formats does indxr support? List them.",
+      "ground_truth": "Markdown, JSON, YAML",
+      "scoring": "set_match",
+      "scoring_targets": ["Markdown", "JSON", "YAML"],
+      "baseline_files": ["src/output/mod.rs", "src/output/markdown.rs", "src/output/yaml.rs", "src/cli.rs"],
+      "indxr_tool_calls": [
+        {"tool": "search_relevant", "args": {"query": "output format"}}
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "arch-003",
+      "category": "architecture",
+      "question": "What caching mechanism does indxr use? Describe the cache key strategy.",
+      "ground_truth": "Binary cache using mtime + xxh3 hash as cache key/fingerprint",
+      "scoring": "all_of",
+      "scoring_targets": ["hash", "mtime"],
+      "baseline_files": ["src/cache/mod.rs", "src/cache/fingerprint.rs"],
+      "indxr_tool_calls": [
+        {"tool": "get_file_summary", "args": {"path": "src/cache/mod.rs"}},
+        {"tool": "get_file_summary", "args": {"path": "src/cache/fingerprint.rs"}}
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "api-001",
+      "category": "public_api",
+      "question": "What are the public functions exported from `src/budget.rs`? List their names and signatures.",
+      "ground_truth": "estimate_tokens(text: &str) -> usize, apply_token_budget(index: &mut CodebaseIndex, max_tokens: usize)",
+      "scoring": "set_match",
+      "scoring_targets": ["estimate_tokens", "apply_token_budget"],
+      "baseline_files": ["src/budget.rs"],
+      "indxr_tool_calls": [
+        {"tool": "get_public_api", "args": {"path": "src/budget.rs"}}
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "api-002",
+      "category": "public_api",
+      "question": "What fields does the `IndexConfig` struct have? List them with their types.",
+      "ground_truth": "root: PathBuf, config: Config, exclude: Vec<String>, languages: Vec<String>, no_gitignore: bool, max_file_size: u64",
+      "scoring": "set_match",
+      "scoring_targets": ["root", "config", "exclude", "languages", "no_gitignore", "max_file_size"],
+      "baseline_files": ["src/indexer.rs", "src/model/mod.rs"],
+      "indxr_tool_calls": [
+        {"tool": "read_source", "args": {"path": "src/indexer.rs", "symbol": "IndexConfig"}}
+      ],
+      "difficulty": "medium"
+    }
+  ]
+}
