@@ -78,7 +78,7 @@ The sections below describe what each file does and how to set things up manuall
 
 ### Claude Code
 
-**Automated setup:** `indxr init --claude` creates `.mcp.json`, `CLAUDE.md`, and `.claude/settings.json` automatically.
+**Automated setup:** `indxr init --claude` creates `.mcp.json`, `CLAUDE.md`, and `.claude/settings.json` automatically. Use `indxr init --global --claude` to install globally at `~/.claude.json` (MCP) and `~/.claude/CLAUDE.md` (instructions).
 
 **Manual setup:** Claude Code supports MCP servers natively. Add indxr to your project's `.mcp.json`:
 
@@ -199,7 +199,7 @@ Restart Claude Desktop after updating the config. The indxr tools will appear in
 
 ### Cursor
 
-**Automated setup:** `indxr init --cursor` creates `.cursor/mcp.json` and `.cursor/rules/indxr.mdc` automatically. Use `indxr init --global --cursor` to install globally at `~/.cursor/mcp.json`.
+**Automated setup:** `indxr init --cursor` creates `.cursor/mcp.json` and `.cursor/rules/indxr.mdc` automatically. Use `indxr init --global --cursor` to install globally at `~/.cursor/mcp.json`. If upgrading from a previous setup, indxr will warn about the deprecated `.cursorrules` file — you can safely remove it.
 
 **Manual setup:** Cursor supports MCP servers. Add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
 
@@ -233,9 +233,9 @@ of all files, functions, classes, and imports.
 
 ### Windsurf
 
-**Automated setup:** `indxr init --windsurf` creates `.windsurf/mcp.json` and `.windsurf/rules/indxr.md` automatically. Use `indxr init --global --windsurf` to install globally at `~/.codeium/windsurf/mcp_config.json`.
+**Automated setup:** `indxr init --windsurf` creates `.windsurf/mcp.json` and `.windsurf/rules/indxr.md` automatically. Use `indxr init --global --windsurf` to install globally at `~/.codeium/windsurf/mcp_config.json` and `~/.codeium/windsurf/memories/global_rules.md`. If upgrading from a previous setup, indxr will warn about the deprecated `.windsurfrules` file — you can safely remove it.
 
-**Manual setup:** Windsurf supports MCP servers. Add to `~/.codeium/windsurf/mcp_config.json`:
+**Manual setup:** Windsurf supports MCP servers. Add to `.windsurf/mcp.json` (project) or `~/.codeium/windsurf/mcp_config.json` (global):
 
 ```json
 {

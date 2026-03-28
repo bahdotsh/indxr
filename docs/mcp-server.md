@@ -655,7 +655,7 @@ claude mcp add indxr -- indxr serve .
 
 ### Cursor
 
-Add in Cursor's MCP server settings (or run `indxr init --cursor`):
+Add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global), or run `indxr init --cursor` (`indxr init --global --cursor` for global):
 
 ```json
 {
@@ -670,17 +670,27 @@ Add in Cursor's MCP server settings (or run `indxr init --cursor`):
 
 ### Windsurf
 
-Add to Windsurf's MCP configuration (or run `indxr init --windsurf`):
+Add to `.windsurf/mcp.json` (project) or `~/.codeium/windsurf/mcp_config.json` (global), or run `indxr init --windsurf` (`indxr init --global --windsurf` for global):
 
 ```json
 {
   "mcpServers": {
     "indxr": {
       "command": "indxr",
-      "args": ["serve", "/path/to/project"]
+      "args": ["serve", "."]
     }
   }
 }
+```
+
+### Codex CLI
+
+Add to `.codex/config.toml` (project) or `~/.codex/config.toml` (global), or run `indxr init --codex` (`indxr init --global --codex` for global):
+
+```toml
+[mcp_servers.indxr]
+command = "indxr"
+args = ["serve", "."]
 ```
 
 ### Custom Integration

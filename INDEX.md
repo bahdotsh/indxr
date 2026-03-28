@@ -1,6 +1,6 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-28 04:19:44 UTC | Files: 58 | Lines: 31661
+> Generated: 2026-03-28 04:32:26 UTC | Files: 58 | Lines: 31661
 > Languages: Markdown (14), Python (1), Rust (41), Shell (1), TOML (1)
 
 ## Directory Structure
@@ -183,7 +183,7 @@ indxr/
 - `# Slower debounce for high-frequency saves`
 - `# Quiet mode (no progress output)`
 - `# MCP server with auto-reindex`
-- `# Set up for all agents (Claude Code, Cursor, Windsurf)`
+- `# Set up for all agents (Claude Code, Cursor, Windsurf, Codex CLI)`
 - `# Claude Code only`
 - `# Cursor and Windsurf only`
 - `# OpenAI Codex CLI only`
@@ -586,7 +586,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 69.4 KB | **Lines:** 2517
+**Language:** Markdown | **Size:** 70.6 KB | **Lines:** 2552
 
 **Declarations:**
 
@@ -610,7 +610,7 @@ indxr/
 
 ## docs/agent-integration.md
 
-**Language:** Markdown | **Size:** 16.8 KB | **Lines:** 474
+**Language:** Markdown | **Size:** 17.2 KB | **Lines:** 474
 
 **Declarations:**
 
@@ -626,7 +626,7 @@ indxr/
 
 ## docs/cli-reference.md
 
-**Language:** Markdown | **Size:** 10.9 KB | **Lines:** 408
+**Language:** Markdown | **Size:** 11.1 KB | **Lines:** 409
 
 **Declarations:**
 
@@ -666,7 +666,7 @@ indxr/
 
 ## docs/mcp-server.md
 
-**Language:** Markdown | **Size:** 23.0 KB | **Lines:** 756
+**Language:** Markdown | **Size:** 23.4 KB | **Lines:** 766
 
 **Declarations:**
 
@@ -970,7 +970,7 @@ indxr/
 
 ## src/init.rs
 
-**Language:** Rust | **Size:** 50.0 KB | **Lines:** 1411
+**Language:** Rust | **Size:** 49.2 KB | **Lines:** 1365
 
 **Imports:**
 - `std::fs`
@@ -993,11 +993,15 @@ indxr/
 
 `fn home_dir() -> Result<PathBuf>`
 
+`fn print_summary(results: &[WriteResult], display: impl Fn(&Path) -> String)`
+
+`fn warn_deprecated(root: &Path, old_file: &str, new_file: &str)`
+
 `fn write_file_safe(path: &Path, content: &str, force: bool) -> Result<WriteResult>`
 
 `fn merge_mcp_server(path: &Path, force: bool) -> Result<WriteResult>`
 
-`fn append_or_create_instructions( path: &Path, content: &str, marker: &str, ) -> Result<WriteResult>`
+`fn append_or_create_instructions(path: &Path, content: &str, marker: &str) -> Result<WriteResult>`
 
 `fn merge_mcp_server_toml(path: &Path, force: bool) -> Result<WriteResult>`
 
@@ -1013,13 +1017,13 @@ indxr/
 
 `fn setup_rtk_claude(root: &Path, force: bool) -> Result<Vec<WriteResult>>`
 
-`fn setup_claude_global( home: &Path, force: bool, include_rtk: bool, ) -> Result<Vec<WriteResult>>`
+`fn setup_claude_global(home: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>>`
 
-`fn setup_cursor_global( home: &Path, force: bool, _include_rtk: bool, ) -> Result<Vec<WriteResult>>`
+`fn setup_cursor_global(home: &Path, force: bool, _include_rtk: bool) -> Result<Vec<WriteResult>>`
 
-`fn setup_windsurf_global( home: &Path, force: bool, include_rtk: bool, ) -> Result<Vec<WriteResult>>`
+`fn setup_windsurf_global(home: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>>`
 
-`fn setup_codex_global( home: &Path, force: bool, include_rtk: bool, ) -> Result<Vec<WriteResult>>`
+`fn setup_codex_global(home: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>>`
 
 `const RTK_HOOK_SCRIPT: &str = r#"#!/bin/bash # RTK rewrite hook for Claude Code — installed by indxr init # Intercepts Bash commands and rewrites them through rtk for token compression # Skip silently if rtk or jq is not installed command -v rtk >/dev/null 2>&1 || exit 0 command -v jq >/dev/null 2>&1 || exit 0 # Extract the command from tool input COMMAND=$(printf '%s' "$TOOL_INPUT" | jq -r '.command // empty') [ -z "$COMMAND" ] && exit 0 # Ask rtk to rewrite the command REWRITTEN=$(rtk rewrite "$COMMAND" 2>/dev/null) EXIT_CODE=$? case $EXIT_CODE in 0) # Rewrite successful — auto-allow with rewritten command ESCAPED=$(printf '%s' "$REWRITTEN" | jq -Rs .) echo "`
 

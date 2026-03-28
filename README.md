@@ -22,7 +22,7 @@ AI coding agents waste thousands of tokens reading entire source files just to u
 - **Git structural diffing** — declaration-level diffs (`+` added, `-` removed, `~` changed) against any git ref or GitHub PR
 - **Dependency graphs** — file and symbol dependency visualization as DOT, Mermaid, or JSON
 - **File watching** — continuous re-indexing as you edit, via `indxr watch` or `indxr serve --watch`
-- **One-command agent setup** — `indxr init` configures Claude Code, Cursor, and Windsurf with MCP, instruction files, and hooks
+- **One-command agent setup** — `indxr init` configures Claude Code, Cursor, Windsurf, and Codex CLI with MCP, instruction files, and hooks
 - **Incremental caching** — mtime + xxh3 content hashing, sub-20ms indexing for most projects
 - **Complexity hotspots** — per-function cyclomatic complexity, nesting depth, and parameter count via tree-sitter AST analysis; codebase health reports
 - **Type flow tracking** — cross-file analysis showing which functions produce (return) and consume (accept) a given type

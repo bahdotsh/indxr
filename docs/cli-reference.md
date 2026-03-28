@@ -40,6 +40,7 @@ indxr init [PATH] [OPTIONS]
   - Windsurf: `~/.codeium/windsurf/mcp_config.json` (MCP), `~/.codeium/windsurf/memories/global_rules.md` (rules)
   - Codex CLI: `~/.codex/config.toml` (MCP), `~/.codex/AGENTS.md` (instructions)
 - `--global` merges MCP/TOML server entries into existing config files (preserves other servers)
+- Detects deprecated `.cursorrules` and `.windsurfrules` files and suggests removal (rules have moved to `.cursor/rules/indxr.mdc` and `.windsurf/rules/indxr.md`)
 
 ### `watch`
 
@@ -322,7 +323,7 @@ indxr serve --watch --debounce-ms 500
 ### Agent Setup
 
 ```bash
-# Set up for all agents (Claude Code, Cursor, Windsurf)
+# Set up for all agents (Claude Code, Cursor, Windsurf, Codex CLI)
 indxr init
 
 # Claude Code only

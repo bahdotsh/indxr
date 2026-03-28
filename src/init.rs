@@ -56,16 +56,6 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
     let mut results = Vec::new();
 
     if opts.global {
-        if opts.generate_index {
-            eprintln!(
-                "  Note: INDEX.md generation is project-specific and has no effect in global mode."
-            );
-        }
-        if opts.include_hooks {
-            eprintln!(
-                "  Note: PreToolUse hooks are project-specific and have no effect in global mode."
-            );
-        }
         if opts.path != Path::new(".") {
             eprintln!(
                 "  Note: PATH argument is ignored in global mode (writes to home directory)."
@@ -86,23 +76,7 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
             results.extend(setup_codex_global(&home, opts.force, rtk_detected)?);
         }
 
-        // Print summary with ~ prefix
-        for result in &results {
-            match result {
-                WriteResult::Created(path) => {
-                    eprintln!("  Created  {}", display_home(path, &home));
-                }
-                WriteResult::Updated(path) => {
-                    eprintln!("  Updated  {}", display_home(path, &home));
-                }
-                WriteResult::Skipped(path, reason) => {
-                    eprintln!("  Skipped  {} ({})", display_home(path, &home), reason);
-                }
-                WriteResult::Appended(path) => {
-                    eprintln!("  Appended {}", display_home(path, &home));
-                }
-            }
-        }
+        print_summary(&results, |path| display_home(path, &home));
     } else {
         let root = fs::canonicalize(&opts.path)
             .map_err(|e| anyhow::anyhow!("cannot resolve path '{}': {}", opts.path.display(), e))?;
@@ -117,9 +91,11 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
         }
         if opts.cursor {
             results.extend(setup_cursor(&root, opts.force, rtk_detected)?);
+            warn_deprecated(&root, ".cursorrules", ".cursor/rules/indxr.mdc");
         }
         if opts.windsurf {
             results.extend(setup_windsurf(&root, opts.force, rtk_detected)?);
+            warn_deprecated(&root, ".windsurfrules", ".windsurf/rules/indxr.md");
         }
         if opts.codex {
             results.extend(setup_codex(&root, opts.force, rtk_detected)?);
@@ -131,23 +107,7 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
             results.push(generate_index(&root, opts.max_file_size)?);
         }
 
-        // Print summary
-        for result in &results {
-            match result {
-                WriteResult::Created(path) => {
-                    eprintln!("  Created  {}", display_relative(path, &root));
-                }
-                WriteResult::Updated(path) => {
-                    eprintln!("  Updated  {}", display_relative(path, &root));
-                }
-                WriteResult::Skipped(path, reason) => {
-                    eprintln!("  Skipped  {} ({})", display_relative(path, &root), reason);
-                }
-                WriteResult::Appended(path) => {
-                    eprintln!("  Appended {}", display_relative(path, &root));
-                }
-            }
-        }
+        print_summary(&results, |path| display_relative(path, &root));
     }
 
     eprintln!();
@@ -175,6 +135,35 @@ fn home_dir() -> Result<PathBuf> {
         .or_else(|_| std::env::var("USERPROFILE"))
         .map(PathBuf::from)
         .map_err(|_| anyhow::anyhow!("cannot determine home directory (HOME not set)"))
+}
+
+fn print_summary(results: &[WriteResult], display: impl Fn(&Path) -> String) {
+    for result in results {
+        match result {
+            WriteResult::Created(path) => {
+                eprintln!("  Created  {}", display(path));
+            }
+            WriteResult::Updated(path) => {
+                eprintln!("  Updated  {}", display(path));
+            }
+            WriteResult::Skipped(path, reason) => {
+                eprintln!("  Skipped  {} ({})", display(path), reason);
+            }
+            WriteResult::Appended(path) => {
+                eprintln!("  Appended {}", display(path));
+            }
+        }
+    }
+}
+
+fn warn_deprecated(root: &Path, old_file: &str, new_file: &str) {
+    let old_path = root.join(old_file);
+    if old_path.exists() {
+        eprintln!(
+            "  Note: deprecated {} found — rules have moved to {}. Consider removing the old file.",
+            old_file, new_file
+        );
+    }
 }
 
 fn write_file_safe(path: &Path, content: &str, force: bool) -> Result<WriteResult> {
