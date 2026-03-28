@@ -127,6 +127,7 @@ indxr serve [PATH] [OPTIONS]
 - `--watch` — Watch for file changes and auto-reindex the in-memory index
 - `--debounce-ms <MS>` — Debounce timeout in milliseconds, requires `--watch` (default: 300)
 - `--http <ADDR>` — Start Streamable HTTP server instead of stdio (e.g., `127.0.0.1:8080` or `:8080`; requires `--features http`)
+- `--all-tools` — Expose all 23 tools including extended ones (`get_hotspots`, `get_health`, `get_type_flow`, `get_dependency_graph`, `get_diff_summary`, `get_token_estimate`, `list_workspace_members`, `regenerate_index`). By default only the 15 core tools are listed to reduce per-request token overhead
 
 ### `members`
 

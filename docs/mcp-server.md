@@ -56,6 +56,7 @@ Options:
   --watch                    Watch for file changes and auto-reindex
   --debounce-ms <MS>         Debounce timeout in milliseconds [default: 300]
   --http <ADDR>              Start Streamable HTTP server (requires 'http' feature)
+  --all-tools                Expose all 23 tools (default: 15 core tools)
 ```
 
 ### Auto-Reindexing with `--watch`
@@ -84,9 +85,19 @@ The MCP server implements JSON-RPC 2.0 over stdin/stdout, following the MCP spec
 
 ## Available Tools
 
-> **Workspace support:** In monorepo/workspace projects (Cargo, npm, Go), most tools accept an optional `member` parameter (string) to scope the query to a specific workspace member by name. If omitted, all members are searched.
+By default, the MCP server lists **15 core tools** to minimize per-request token overhead (~64% reduction vs listing all 23). Pass `--all-tools` to the `serve` command to list all 23 tools. Extended tools are always **callable** regardless of this flag — `--all-tools` only controls whether they appear in the `tools/list` response.
+
+> **Workspace support:** In monorepo/workspace projects (Cargo, npm, Go), most tools automatically gain an optional `member` parameter (string) to scope the query to a specific workspace member by name. In single-project mode, the `member` parameter is not included to save tokens. If omitted, all members are searched.
+
+**Default tools (15):** `lookup_symbol`, `list_declarations`, `search_signatures`, `get_tree`, `get_imports`, `get_stats`, `get_file_summary`, `read_source`, `get_file_context`, `search_relevant`, `explain_symbol`, `batch_file_summaries`, `get_public_api`, `get_callers`, `get_related_tests`
+
+**Extended tools (8 — requires `--all-tools`):** `get_hotspots`, `get_health`, `get_type_flow`, `get_dependency_graph`, `get_diff_summary`, `get_token_estimate`, `list_workspace_members`, `regenerate_index`
+
+---
 
 ### `list_workspace_members`
+
+> *Extended tool — only listed with `--all-tools`, but always callable.*
 
 List workspace members (monorepo packages/crates). Returns member names, paths, and workspace type. In single-project mode, returns one member.
 
@@ -269,6 +280,8 @@ Get a file's summary plus its dependency context: which files import it (reverse
 
 ### `get_token_estimate`
 
+> *Extended tool — only listed with `--all-tools`, but always callable.*
+
 Estimate how many tokens a file or symbol would consume if read in full. Helps agents decide whether to use `read_source` (targeted, cheap) or `Read` (full file, expensive). Supports bulk estimation via `directory` or `glob`.
 
 **Parameters:**
@@ -354,6 +367,8 @@ Multi-signal relevance search across file paths, symbol names, signatures, and d
 ```
 
 ### `regenerate_index`
+
+> *Extended tool — only listed with `--all-tools`, but always callable.*
 
 Re-scan the codebase, rebuild the index, and write an updated INDEX.md to the project root. Also refreshes the in-memory index used by all other tools. No parameters required.
 
@@ -485,6 +500,8 @@ Find test functions for a symbol by naming convention and file association.
 
 ### `get_dependency_graph`
 
+> *Extended tool — only listed with `--all-tools`, but always callable.*
+
 Get file-level or symbol-level dependency graph. Shows import relationships between files or extends/implements relationships between symbols. Output in DOT (Graphviz), Mermaid, or JSON format.
 
 **Parameters:**
@@ -507,6 +524,8 @@ Get file-level or symbol-level dependency graph. Shows import relationships betw
 ```
 
 ### `get_diff_summary`
+
+> *Extended tool — only listed with `--all-tools`, but always callable.*
 
 Get structural changes (added/removed/modified declarations) since a git ref or for a GitHub PR. Requires either `since_ref` or `pr` (not both). Much cheaper than reading raw diffs.
 
@@ -555,6 +574,8 @@ When using `pr`, the response includes a `pr` field with metadata:
 
 ### `get_hotspots`
 
+> *Extended tool — only listed with `--all-tools`, but always callable.*
+
 Get the most complex functions/methods in the codebase, ranked by a composite complexity score. Useful for identifying refactoring targets and understanding where technical debt concentrates. Only includes tree-sitter parsed languages (Rust, Python, TS, JS, Go, Java, C, C++).
 
 **Parameters:**
@@ -590,6 +611,8 @@ Get the most complex functions/methods in the codebase, ranked by a composite co
 **Score formula:** `cyclomatic + nesting*2 + params*0.5 + body_lines/20`
 
 ### `get_health`
+
+> *Extended tool — only listed with `--all-tools`, but always callable.*
 
 Get a codebase health summary with aggregate complexity metrics, documentation coverage, test ratio, and quality indicators. Only complexity data from tree-sitter parsed languages is included.
 
@@ -629,6 +652,8 @@ Get a codebase health summary with aggregate complexity metrics, documentation c
 - `hottest_files` — top 5 files by average complexity (min 2 functions)
 
 ### `get_type_flow`
+
+> *Extended tool — only listed with `--all-tools`, but always callable.*
 
 Track where a type flows across function boundaries. Shows which functions produce (return) and consume (accept as parameters) a given type. Useful for understanding data flow, finding related code, and tracing how data moves through the system. Supports 10+ languages: Rust, Go, TypeScript, JavaScript, Python, Java, Kotlin, Swift, C, C++, and C#.
 

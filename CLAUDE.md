@@ -121,7 +121,8 @@ indxr --no-cache                             # bypass cache
 indxr --cache-dir /tmp/cache                 # custom cache location
 
 # MCP server (stdio transport — default)
-indxr serve ./project                        # start MCP server (stdin/stdout JSON-RPC 2.0)
+indxr serve ./project                        # start MCP server (15 core tools)
+indxr serve ./project --all-tools            # expose all 23 tools (including extended)
 indxr serve ./project --watch                # MCP server with auto-reindex on file changes
 indxr serve --watch --debounce-ms 500        # custom debounce timeout
 
