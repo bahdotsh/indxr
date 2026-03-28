@@ -23,8 +23,8 @@ use super::type_flow::*;
 // ---------------------------------------------------------------------------
 
 /// Tools that are only advertised when `--all-tools` is set.
-/// They still *work* if called — they just aren't listed by default, which
-/// saves ~2,400 tokens of schema overhead per API round (~65% reduction).
+/// They still *work* if called — they just aren't listed by default,
+/// reducing per-request schema overhead. See `benchmark.md` for measurements.
 const EXTENDED_TOOLS: &[&str] = &[
     "get_hotspots",
     "get_health",
