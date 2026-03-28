@@ -228,17 +228,22 @@ pub enum Command {
         #[arg(long)]
         claude: bool,
 
-        /// Set up for Cursor (.cursor/mcp.json, .cursorrules)
+        /// Set up for Cursor (.cursor/mcp.json, .cursor/rules/indxr.mdc)
         #[arg(long)]
         cursor: bool,
 
-        /// Set up for Windsurf (.windsurf/mcp.json, .windsurfrules)
+        /// Set up for Windsurf (.windsurf/mcp.json, .windsurf/rules/indxr.md)
         #[arg(long)]
         windsurf: bool,
 
         /// Set up for all supported agents
         #[arg(long, conflicts_with_all = ["claude", "cursor", "windsurf"])]
         all: bool,
+
+        /// Install to global/user-level config (~/.claude.json, ~/.cursor/, ~/.codeium/)
+        /// so indxr is available for all projects
+        #[arg(long)]
+        global: bool,
 
         /// Skip generating INDEX.md
         #[arg(long)]

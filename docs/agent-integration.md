@@ -63,9 +63,13 @@ indxr init                    # all agents (Claude Code, Cursor, Windsurf)
 indxr init --claude           # Claude Code only
 indxr init --cursor           # Cursor only
 indxr init --windsurf         # Windsurf only
+indxr init --global           # install globally for all projects
+indxr init --global --cursor  # global Cursor only
 ```
 
 This creates all configuration files, agent instruction files, PreToolUse hooks, and an initial INDEX.md in one command. Use `--no-index` to skip INDEX.md generation, `--no-hooks` to skip PreToolUse hooks, `--force` to overwrite existing files.
+
+Use `--global` to install indxr into user-level config directories so it's available for every project without per-project setup. Global mode merges the indxr MCP server entry into existing config files (preserving other servers).
 
 The sections below describe what each file does and how to set things up manually.
 
@@ -194,11 +198,9 @@ Restart Claude Desktop after updating the config. The indxr tools will appear in
 
 ### Cursor
 
-**Automated setup:** `indxr init --cursor` creates `.cursor/mcp.json` and `.cursorrules` automatically.
+**Automated setup:** `indxr init --cursor` creates `.cursor/mcp.json` and `.cursor/rules/indxr.mdc` automatically. Use `indxr init --global --cursor` to install globally at `~/.cursor/mcp.json`.
 
-**Manual setup:** Cursor supports MCP servers. Add to your Cursor MCP configuration:
-
-**Settings → MCP Servers → Add Server:**
+**Manual setup:** Cursor supports MCP servers. Add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
 
 ```json
 {
@@ -211,6 +213,8 @@ Restart Claude Desktop after updating the config. The indxr tools will appear in
 }
 ```
 
+**Project rules:** Create `.cursor/rules/indxr.mdc` with instructions to use indxr MCP tools.
+
 **Static index approach for Cursor:**
 
 Generate an index and add it to your project rules:
@@ -219,7 +223,7 @@ Generate an index and add it to your project rules:
 indxr --max-tokens 6000 --public-only -o .cursor/INDEX.md
 ```
 
-Then reference it in `.cursorrules`:
+Then reference it in `.cursor/rules/`:
 
 ```
 When exploring this codebase, refer to .cursor/INDEX.md for a structural overview
@@ -228,16 +232,16 @@ of all files, functions, classes, and imports.
 
 ### Windsurf
 
-**Automated setup:** `indxr init --windsurf` creates `.windsurf/mcp.json` and `.windsurfrules` automatically.
+**Automated setup:** `indxr init --windsurf` creates `.windsurf/mcp.json` and `.windsurf/rules/indxr.md` automatically. Use `indxr init --global --windsurf` to install globally at `~/.codeium/windsurf/mcp_config.json`.
 
-**Manual setup:** Windsurf supports MCP servers. Add to your MCP configuration:
+**Manual setup:** Windsurf supports MCP servers. Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ```json
 {
   "mcpServers": {
     "indxr": {
       "command": "indxr",
-      "args": ["serve", "/path/to/project"]
+      "args": ["serve", "."]
     }
   }
 }

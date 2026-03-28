@@ -20,9 +20,10 @@ indxr init [PATH] [OPTIONS]
 
 **Options:**
 - `--claude` — Set up for Claude Code (`.mcp.json`, `CLAUDE.md`, `.claude/settings.json`)
-- `--cursor` — Set up for Cursor (`.cursor/mcp.json`, `.cursorrules`)
-- `--windsurf` — Set up for Windsurf (`.windsurf/mcp.json`, `.windsurfrules`)
+- `--cursor` — Set up for Cursor (`.cursor/mcp.json`, `.cursor/rules/indxr.mdc`)
+- `--windsurf` — Set up for Windsurf (`.windsurf/mcp.json`, `.windsurf/rules/indxr.md`)
 - `--all` — Set up for all supported agents (default when no agent flag is specified)
+- `--global` — Install to global/user-level config so indxr is available for all projects
 - `--no-index` — Skip generating INDEX.md
 - `--no-hooks` — Skip PreToolUse hooks for Claude Code (`.claude/settings.json`)
 - `--force` — Overwrite existing files (default: skip with warning)
@@ -32,6 +33,11 @@ indxr init [PATH] [OPTIONS]
 - If no agent flag is specified, defaults to `--all`
 - Existing files are skipped with a warning unless `--force` is used
 - `.gitignore` is appended with `.indxr-cache/` if not already present (never overwritten)
+- `--global` writes to user-level config directories:
+  - Claude Code: `~/.claude.json` (MCP), `~/.claude/CLAUDE.md` (instructions)
+  - Cursor: `~/.cursor/mcp.json` (MCP)
+  - Windsurf: `~/.codeium/windsurf/mcp_config.json` (MCP), `~/.codeium/windsurf/memories/global_rules.md` (rules)
+- `--global` merges MCP server entries into existing config files (preserves other servers)
 
 ### `watch`
 
@@ -322,6 +328,12 @@ indxr init --claude
 
 # Cursor and Windsurf only
 indxr init --cursor --windsurf
+
+# Install globally for all projects
+indxr init --global
+
+# Global Cursor only
+indxr init --global --cursor
 
 # Config files only, skip INDEX.md generation
 indxr init --no-index

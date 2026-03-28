@@ -14,6 +14,7 @@ pub struct InitOptions {
     pub claude: bool,
     pub cursor: bool,
     pub windsurf: bool,
+    pub global: bool,
     pub generate_index: bool,
     pub force: bool,
     pub include_hooks: bool,
@@ -23,14 +24,12 @@ pub struct InitOptions {
 
 enum WriteResult {
     Created(PathBuf),
+    Updated(PathBuf),
     Skipped(PathBuf, &'static str),
     Appended(PathBuf),
 }
 
 pub fn run_init(opts: InitOptions) -> Result<()> {
-    let root = fs::canonicalize(&opts.path)
-        .map_err(|e| anyhow::anyhow!("cannot resolve path '{}': {}", opts.path.display(), e))?;
-
     // Determine which agents to set up
     let agents: Vec<&str> = [
         opts.claude.then_some("Claude Code"),
@@ -41,7 +40,8 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
     .flatten()
     .collect();
 
-    eprintln!("indxr init: setting up for {}", agents.join(", "));
+    let mode = if opts.global { "global" } else { "project" };
+    eprintln!("indxr init ({mode}): setting up for {}", agents.join(", "));
 
     // Detect RTK if not disabled
     let rtk_detected = opts.include_rtk && detect_rtk();
@@ -52,38 +52,81 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
 
     let mut results = Vec::new();
 
-    if opts.claude {
-        results.extend(setup_claude(
-            &root,
-            opts.force,
-            opts.include_hooks,
-            rtk_detected,
-        )?);
-    }
-    if opts.cursor {
-        results.extend(setup_cursor(&root, opts.force, rtk_detected)?);
-    }
-    if opts.windsurf {
-        results.extend(setup_windsurf(&root, opts.force, rtk_detected)?);
-    }
+    if opts.global {
+        let home = home_dir()?;
 
-    results.push(setup_gitignore(&root)?);
+        if opts.claude {
+            results.extend(setup_claude_global(&home, opts.force, rtk_detected)?);
+        }
+        if opts.cursor {
+            results.extend(setup_cursor_global(&home, opts.force, rtk_detected)?);
+        }
+        if opts.windsurf {
+            results.extend(setup_windsurf_global(&home, opts.force, rtk_detected)?);
+        }
 
-    if opts.generate_index {
-        results.push(generate_index(&root, opts.max_file_size)?);
-    }
-
-    // Print summary
-    for result in &results {
-        match result {
-            WriteResult::Created(path) => {
-                eprintln!("  Created  {}", display_relative(path, &root));
+        // Print summary with ~ prefix
+        for result in &results {
+            match result {
+                WriteResult::Created(path) => {
+                    eprintln!("  Created  {}", display_home(path, &home));
+                }
+                WriteResult::Updated(path) => {
+                    eprintln!("  Updated  {}", display_home(path, &home));
+                }
+                WriteResult::Skipped(path, reason) => {
+                    eprintln!("  Skipped  {} ({})", display_home(path, &home), reason);
+                }
+                WriteResult::Appended(path) => {
+                    eprintln!("  Appended {}", display_home(path, &home));
+                }
             }
-            WriteResult::Skipped(path, reason) => {
-                eprintln!("  Skipped  {} ({})", display_relative(path, &root), reason);
-            }
-            WriteResult::Appended(path) => {
-                eprintln!("  Appended {}", display_relative(path, &root));
+        }
+    } else {
+        let root = fs::canonicalize(&opts.path).map_err(|e| {
+            anyhow::anyhow!("cannot resolve path '{}': {}", opts.path.display(), e)
+        })?;
+
+        if opts.claude {
+            results.extend(setup_claude(
+                &root,
+                opts.force,
+                opts.include_hooks,
+                rtk_detected,
+            )?);
+        }
+        if opts.cursor {
+            results.extend(setup_cursor(&root, opts.force, rtk_detected)?);
+        }
+        if opts.windsurf {
+            results.extend(setup_windsurf(&root, opts.force, rtk_detected)?);
+        }
+
+        results.push(setup_gitignore(&root)?);
+
+        if opts.generate_index {
+            results.push(generate_index(&root, opts.max_file_size)?);
+        }
+
+        // Print summary
+        for result in &results {
+            match result {
+                WriteResult::Created(path) => {
+                    eprintln!("  Created  {}", display_relative(path, &root));
+                }
+                WriteResult::Updated(path) => {
+                    eprintln!("  Updated  {}", display_relative(path, &root));
+                }
+                WriteResult::Skipped(path, reason) => {
+                    eprintln!(
+                        "  Skipped  {} ({})",
+                        display_relative(path, &root),
+                        reason
+                    );
+                }
+                WriteResult::Appended(path) => {
+                    eprintln!("  Appended {}", display_relative(path, &root));
+                }
             }
         }
     }
@@ -101,6 +144,20 @@ fn display_relative(path: &Path, root: &Path) -> String {
         .to_string()
 }
 
+fn display_home(path: &Path, home: &Path) -> String {
+    match path.strip_prefix(home) {
+        Ok(rel) => format!("~/{}", rel.display()),
+        Err(_) => path.display().to_string(),
+    }
+}
+
+fn home_dir() -> Result<PathBuf> {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .map_err(|_| anyhow::anyhow!("cannot determine home directory (HOME not set)"))
+}
+
 fn write_file_safe(path: &Path, content: &str, force: bool) -> Result<WriteResult> {
     if path.exists() && !force {
         return Ok(WriteResult::Skipped(
@@ -113,6 +170,77 @@ fn write_file_safe(path: &Path, content: &str, force: bool) -> Result<WriteResul
     }
     fs::write(path, content)?;
     Ok(WriteResult::Created(path.to_path_buf()))
+}
+
+/// Merge the indxr MCP server entry into an existing JSON config file,
+/// preserving all other servers and fields.
+fn merge_mcp_server(path: &Path, force: bool) -> Result<WriteResult> {
+    use serde_json::json;
+
+    let indxr_server = json!({
+        "command": "indxr",
+        "args": ["serve", "."]
+    });
+
+    if path.exists() {
+        let content = fs::read_to_string(path)?;
+        let mut doc: serde_json::Value =
+            serde_json::from_str(&content).unwrap_or_else(|_| json!({}));
+
+        if doc
+            .get("mcpServers")
+            .and_then(|s| s.get("indxr"))
+            .is_some()
+            && !force
+        {
+            return Ok(WriteResult::Skipped(
+                path.to_path_buf(),
+                "indxr server already configured",
+            ));
+        }
+
+        if doc.get("mcpServers").is_none() {
+            doc["mcpServers"] = json!({});
+        }
+        doc["mcpServers"]["indxr"] = indxr_server;
+
+        fs::write(path, serde_json::to_string_pretty(&doc)? + "\n")?;
+        Ok(WriteResult::Updated(path.to_path_buf()))
+    } else {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let doc = json!({ "mcpServers": { "indxr": indxr_server } });
+        fs::write(path, serde_json::to_string_pretty(&doc)? + "\n")?;
+        Ok(WriteResult::Created(path.to_path_buf()))
+    }
+}
+
+/// Append instructions to a file if a marker string is not already present.
+/// Creates the file (and parent dirs) if it doesn't exist.
+fn append_or_create_instructions(
+    path: &Path,
+    content: &str,
+    marker: &str,
+) -> Result<WriteResult> {
+    if path.exists() {
+        let existing = fs::read_to_string(path)?;
+        if existing.contains(marker) {
+            return Ok(WriteResult::Skipped(
+                path.to_path_buf(),
+                "already contains indxr instructions",
+            ));
+        }
+        let separator = if existing.ends_with('\n') { "\n" } else { "\n\n" };
+        fs::write(path, format!("{existing}{separator}{content}"))?;
+        Ok(WriteResult::Appended(path.to_path_buf()))
+    } else {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, content)?;
+        Ok(WriteResult::Created(path.to_path_buf()))
+    }
 }
 
 fn setup_claude(
@@ -149,8 +277,8 @@ fn setup_cursor(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<Write
     let results = vec![
         write_file_safe(&root.join(".cursor/mcp.json"), &mcp_json_content(), force)?,
         write_file_safe(
-            &root.join(".cursorrules"),
-            &cursorrules_content(include_rtk),
+            &root.join(".cursor/rules/indxr.mdc"),
+            &cursor_mdc_content(include_rtk),
             force,
         )?,
     ];
@@ -161,8 +289,8 @@ fn setup_windsurf(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<Wri
     let results = vec![
         write_file_safe(&root.join(".windsurf/mcp.json"), &mcp_json_content(), force)?,
         write_file_safe(
-            &root.join(".windsurfrules"),
-            &windsurfrules_content(include_rtk),
+            &root.join(".windsurf/rules/indxr.md"),
+            &windsurf_rule_content(include_rtk),
             force,
         )?,
     ];
@@ -191,6 +319,63 @@ fn setup_rtk_claude(root: &Path, force: bool) -> Result<Vec<WriteResult>> {
     }
 
     Ok(vec![result])
+}
+
+// --- Global setup functions ---
+
+fn setup_claude_global(
+    home: &Path,
+    force: bool,
+    include_rtk: bool,
+) -> Result<Vec<WriteResult>> {
+    let results = vec![
+        // Merge indxr into ~/.claude.json mcpServers
+        merge_mcp_server(&home.join(".claude.json"), force)?,
+        // Create or append to ~/.claude/CLAUDE.md
+        append_or_create_instructions(
+            &home.join(".claude/CLAUDE.md"),
+            &global_claude_md_content(include_rtk),
+            "indxr MCP tools",
+        )?,
+    ];
+    Ok(results)
+}
+
+fn setup_cursor_global(
+    home: &Path,
+    force: bool,
+    _include_rtk: bool,
+) -> Result<Vec<WriteResult>> {
+    // Cursor has no file-based global rules — global rules are set via Settings UI
+    eprintln!("  Note: Cursor global rules must be set via Settings > Rules in the IDE.");
+    eprintln!("        Copy the instructions from .cursor/rules/indxr.mdc if needed.");
+
+    let results = vec![
+        // Merge indxr into ~/.cursor/mcp.json
+        merge_mcp_server(&home.join(".cursor/mcp.json"), force)?,
+    ];
+    Ok(results)
+}
+
+fn setup_windsurf_global(
+    home: &Path,
+    force: bool,
+    include_rtk: bool,
+) -> Result<Vec<WriteResult>> {
+    let results = vec![
+        // Merge indxr into ~/.codeium/windsurf/mcp_config.json
+        merge_mcp_server(
+            &home.join(".codeium/windsurf/mcp_config.json"),
+            force,
+        )?,
+        // Create or append to ~/.codeium/windsurf/memories/global_rules.md
+        append_or_create_instructions(
+            &home.join(".codeium/windsurf/memories/global_rules.md"),
+            &global_windsurf_rules_content(include_rtk),
+            "indxr MCP tools",
+        )?,
+    ];
+    Ok(results)
 }
 
 const RTK_HOOK_SCRIPT: &str = r#"#!/bin/bash
@@ -421,7 +606,8 @@ fn claude_settings_content(include_rtk: bool) -> String {
     serde_json::to_string_pretty(&settings).unwrap() + "\n"
 }
 
-fn cursorrules_content(include_rtk: bool) -> String {
+/// Shared rules body used by Cursor, Windsurf, and global instructions.
+fn rules_body(include_rtk: bool) -> String {
     let mut content = r#"# Codebase Navigation — Use indxr MCP tools
 
 An MCP server called `indxr` is available. Always use indxr tools before reading full files.
@@ -465,9 +651,39 @@ RTK is installed and compresses shell command outputs (git, cargo, npm, etc.) by
     content
 }
 
-fn windsurfrules_content(include_rtk: bool) -> String {
-    // Same content as cursorrules — both are concise agent instruction files
-    cursorrules_content(include_rtk)
+/// Modern .cursor/rules/indxr.mdc format (replaces deprecated .cursorrules).
+fn cursor_mdc_content(include_rtk: bool) -> String {
+    format!(
+        r#"---
+description: Use indxr MCP tools for codebase navigation instead of reading full files
+alwaysApply: true
+---
+
+{}"#,
+        rules_body(include_rtk)
+    )
+}
+
+/// Windsurf .windsurf/rules/indxr.md format (replaces deprecated .windsurfrules).
+fn windsurf_rule_content(include_rtk: bool) -> String {
+    format!(
+        r#"---
+trigger: always_on
+---
+
+{}"#,
+        rules_body(include_rtk)
+    )
+}
+
+/// Global ~/.claude/CLAUDE.md content — concise version for user-level instructions.
+fn global_claude_md_content(include_rtk: bool) -> String {
+    rules_body(include_rtk)
+}
+
+/// Global ~/.codeium/windsurf/memories/global_rules.md content.
+fn global_windsurf_rules_content(include_rtk: bool) -> String {
+    rules_body(include_rtk)
 }
 
 #[cfg(test)]
@@ -687,7 +903,11 @@ mod tests {
         let results = setup_cursor(dir.path(), false, false).unwrap();
         assert_eq!(results.len(), 2);
         assert!(dir.path().join(".cursor/mcp.json").exists());
-        assert!(dir.path().join(".cursorrules").exists());
+        assert!(dir.path().join(".cursor/rules/indxr.mdc").exists());
+        // Verify MDC frontmatter
+        let mdc = fs::read_to_string(dir.path().join(".cursor/rules/indxr.mdc")).unwrap();
+        assert!(mdc.starts_with("---\n"));
+        assert!(mdc.contains("alwaysApply: true"));
     }
 
     #[test]
@@ -696,7 +916,11 @@ mod tests {
         let results = setup_windsurf(dir.path(), false, false).unwrap();
         assert_eq!(results.len(), 2);
         assert!(dir.path().join(".windsurf/mcp.json").exists());
-        assert!(dir.path().join(".windsurfrules").exists());
+        assert!(dir.path().join(".windsurf/rules/indxr.md").exists());
+        // Verify Windsurf rule frontmatter
+        let rule = fs::read_to_string(dir.path().join(".windsurf/rules/indxr.md")).unwrap();
+        assert!(rule.starts_with("---\n"));
+        assert!(rule.contains("trigger: always_on"));
     }
 
     #[test]
@@ -707,5 +931,173 @@ mod tests {
         // Must use printf, not echo, for piping $TOOL_INPUT (echo mishandles flags/backslashes)
         assert!(RTK_HOOK_SCRIPT.contains("printf '%s' \"$TOOL_INPUT\""));
         assert!(!RTK_HOOK_SCRIPT.contains("echo \"$TOOL_INPUT\""));
+    }
+
+    #[test]
+    fn test_merge_mcp_server_creates_new() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("mcp.json");
+        let result = merge_mcp_server(&path, false).unwrap();
+        assert!(matches!(result, WriteResult::Created(_)));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed["mcpServers"]["indxr"]["command"], "indxr");
+    }
+
+    #[test]
+    fn test_merge_mcp_server_preserves_existing() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("mcp.json");
+        fs::write(
+            &path,
+            r#"{"mcpServers":{"other":{"command":"other-cmd","args":[]}}}"#,
+        )
+        .unwrap();
+        let result = merge_mcp_server(&path, false).unwrap();
+        assert!(matches!(result, WriteResult::Updated(_)));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed["mcpServers"]["indxr"]["command"], "indxr");
+        assert_eq!(parsed["mcpServers"]["other"]["command"], "other-cmd");
+    }
+
+    #[test]
+    fn test_merge_mcp_server_skips_existing_indxr() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("mcp.json");
+        fs::write(
+            &path,
+            r#"{"mcpServers":{"indxr":{"command":"indxr","args":["serve","."]}}}"#,
+        )
+        .unwrap();
+        let result = merge_mcp_server(&path, false).unwrap();
+        assert!(matches!(result, WriteResult::Skipped(_, _)));
+    }
+
+    #[test]
+    fn test_merge_mcp_server_force_overwrites_indxr() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("mcp.json");
+        fs::write(
+            &path,
+            r#"{"mcpServers":{"indxr":{"command":"old","args":[]}}}"#,
+        )
+        .unwrap();
+        let result = merge_mcp_server(&path, true).unwrap();
+        assert!(matches!(result, WriteResult::Updated(_)));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed["mcpServers"]["indxr"]["command"], "indxr");
+    }
+
+    #[test]
+    fn test_merge_mcp_server_into_non_mcp_json() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+        // File has other fields but no mcpServers
+        fs::write(&path, r#"{"theme":"dark","fontSize":14}"#).unwrap();
+        let result = merge_mcp_server(&path, false).unwrap();
+        assert!(matches!(result, WriteResult::Updated(_)));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed["mcpServers"]["indxr"]["command"], "indxr");
+        assert_eq!(parsed["theme"], "dark"); // preserved
+    }
+
+    #[test]
+    fn test_append_or_create_instructions_creates_new() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("rules.md");
+        let result =
+            append_or_create_instructions(&path, "# indxr MCP tools\nUse them.", "indxr MCP tools")
+                .unwrap();
+        assert!(matches!(result, WriteResult::Created(_)));
+        assert!(fs::read_to_string(&path).unwrap().contains("indxr MCP"));
+    }
+
+    #[test]
+    fn test_append_or_create_instructions_appends() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("rules.md");
+        fs::write(&path, "# Existing rules\nDo stuff.\n").unwrap();
+        let result =
+            append_or_create_instructions(&path, "# indxr MCP tools\nUse them.", "indxr MCP tools")
+                .unwrap();
+        assert!(matches!(result, WriteResult::Appended(_)));
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("Existing rules"));
+        assert!(content.contains("indxr MCP tools"));
+    }
+
+    #[test]
+    fn test_append_or_create_instructions_skips_if_present() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("rules.md");
+        fs::write(&path, "# indxr MCP tools\nAlready here.\n").unwrap();
+        let result =
+            append_or_create_instructions(&path, "# indxr MCP tools\nUse them.", "indxr MCP tools")
+                .unwrap();
+        assert!(matches!(result, WriteResult::Skipped(_, _)));
+    }
+
+    #[test]
+    fn test_setup_claude_global() {
+        let dir = TempDir::new().unwrap();
+        let results = setup_claude_global(dir.path(), false, false).unwrap();
+        assert_eq!(results.len(), 2);
+        // Check ~/.claude.json has indxr server
+        let claude_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.path().join(".claude.json")).unwrap())
+                .unwrap();
+        assert_eq!(claude_json["mcpServers"]["indxr"]["command"], "indxr");
+        // Check ~/.claude/CLAUDE.md
+        let claude_md = fs::read_to_string(dir.path().join(".claude/CLAUDE.md")).unwrap();
+        assert!(claude_md.contains("indxr MCP tools"));
+    }
+
+    #[test]
+    fn test_setup_cursor_global() {
+        let dir = TempDir::new().unwrap();
+        let results = setup_cursor_global(dir.path(), false, false).unwrap();
+        assert_eq!(results.len(), 1);
+        // Check ~/.cursor/mcp.json has indxr server
+        let mcp_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.path().join(".cursor/mcp.json")).unwrap())
+                .unwrap();
+        assert_eq!(mcp_json["mcpServers"]["indxr"]["command"], "indxr");
+    }
+
+    #[test]
+    fn test_setup_windsurf_global() {
+        let dir = TempDir::new().unwrap();
+        let results = setup_windsurf_global(dir.path(), false, false).unwrap();
+        assert_eq!(results.len(), 2);
+        // Check ~/.codeium/windsurf/mcp_config.json
+        let mcp_json: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(dir.path().join(".codeium/windsurf/mcp_config.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(mcp_json["mcpServers"]["indxr"]["command"], "indxr");
+        // Check global rules
+        let rules =
+            fs::read_to_string(dir.path().join(".codeium/windsurf/memories/global_rules.md"))
+                .unwrap();
+        assert!(rules.contains("indxr MCP tools"));
+    }
+
+    #[test]
+    fn test_cursor_mdc_content_has_frontmatter() {
+        let content = cursor_mdc_content(false);
+        assert!(content.starts_with("---\n"));
+        assert!(content.contains("alwaysApply: true"));
+        assert!(content.contains("indxr MCP tools"));
+    }
+
+    #[test]
+    fn test_windsurf_rule_content_has_frontmatter() {
+        let content = windsurf_rule_content(false);
+        assert!(content.starts_with("---\n"));
+        assert!(content.contains("trigger: always_on"));
+        assert!(content.contains("indxr MCP tools"));
     }
 }
