@@ -207,8 +207,12 @@ fn merge_mcp_server(path: &Path, force: bool) -> Result<WriteResult> {
             ));
         }
 
-        if doc.get("mcpServers").is_none() {
-            doc["mcpServers"] = json!({});
+        // Ensure mcpServers is an object (overwrite if wrong type)
+        match doc.get("mcpServers") {
+            Some(serde_json::Value::Object(_)) => {}
+            _ => {
+                doc["mcpServers"] = json!({});
+            }
         }
         doc["mcpServers"]["indxr"] = indxr_server;
 
@@ -284,12 +288,15 @@ args = ["serve", "."]
             ));
         }
 
-        // Ensure mcp_servers table exists
-        if !doc.contains_key("mcp_servers") {
-            doc.insert(
-                "mcp_servers".to_string(),
-                toml::Value::Table(toml::Table::new()),
-            );
+        // Ensure mcp_servers is a table (overwrite if wrong type)
+        match doc.get("mcp_servers") {
+            Some(toml::Value::Table(_)) => {}
+            _ => {
+                doc.insert(
+                    "mcp_servers".to_string(),
+                    toml::Value::Table(toml::Table::new()),
+                );
+            }
         }
 
         // Build the indxr server table
@@ -1213,6 +1220,31 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_mcp_server_into_empty_json() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("empty.json");
+        fs::write(&path, "{}").unwrap();
+        let result = merge_mcp_server(&path, false).unwrap();
+        assert!(matches!(result, WriteResult::Updated(_)));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed["mcpServers"]["indxr"]["command"], "indxr");
+    }
+
+    #[test]
+    fn test_merge_mcp_server_non_object_mcp_servers() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("bad_type.json");
+        // mcpServers exists but is a string, not an object
+        fs::write(&path, r#"{"mcpServers":"not an object"}"#).unwrap();
+        let result = merge_mcp_server(&path, false).unwrap();
+        assert!(matches!(result, WriteResult::Updated(_)));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed["mcpServers"]["indxr"]["command"], "indxr");
+    }
+
+    #[test]
     fn test_merge_mcp_server_rejects_malformed_json() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("bad.json");
@@ -1290,6 +1322,22 @@ mod tests {
         let result = merge_mcp_server_toml(&path, false);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("failed to parse"));
+    }
+
+    #[test]
+    fn test_merge_mcp_server_toml_non_table_mcp_servers() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        // mcp_servers exists but is a string, not a table
+        fs::write(&path, "mcp_servers = \"not a table\"\n").unwrap();
+        let result = merge_mcp_server_toml(&path, false).unwrap();
+        assert!(matches!(result, WriteResult::Updated(_)));
+        let content = fs::read_to_string(&path).unwrap();
+        let doc: toml::Table = content.parse().unwrap();
+        assert_eq!(
+            doc["mcp_servers"]["indxr"]["command"].as_str().unwrap(),
+            "indxr"
+        );
     }
 
     #[test]
