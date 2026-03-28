@@ -7,7 +7,7 @@ use anyhow::Result;
 use notify::RecursiveMode;
 use notify_debouncer_mini::new_debouncer;
 
-use crate::indexer::{self, IndexConfig};
+use crate::indexer::{self, WorkspaceConfig};
 use crate::languages::Language;
 
 /// Keeps the file watcher alive. The watcher stops when this guard is dropped.
@@ -16,7 +16,7 @@ pub struct WatchGuard {
 }
 
 pub struct WatchOptions {
-    pub config: IndexConfig,
+    pub ws_config: WorkspaceConfig,
     pub output: Option<PathBuf>,
     pub debounce_ms: u64,
     pub quiet: bool,
@@ -25,7 +25,7 @@ pub struct WatchOptions {
 /// Run the standalone watch loop. Performs an initial index, then re-indexes on each
 /// debounced file change. Blocks indefinitely until Ctrl+C or error.
 pub fn run_watch(opts: WatchOptions) -> Result<()> {
-    let root = fs::canonicalize(&opts.config.root)?;
+    let root = fs::canonicalize(&opts.ws_config.workspace.root)?;
     let output_path = opts.output.clone().unwrap_or_else(|| root.join("INDEX.md"));
 
     // Initial index
@@ -33,21 +33,21 @@ pub fn run_watch(opts: WatchOptions) -> Result<()> {
         eprintln!("Performing initial index...");
     }
 
-    let index = write_index(&opts.config, &output_path)?;
-    // Canonicalize after write_index so the file exists — prevents self-triggering
+    let ws_index = write_workspace_index(&opts.ws_config, &output_path)?;
+    // Canonicalize after write so the file exists — prevents self-triggering
     // loops when the user passes a relative `-o` path.
     let output_path = fs::canonicalize(&output_path).unwrap_or(output_path);
 
     if !opts.quiet {
         eprintln!(
             "Indexed {} files. Watching {} for changes... (press Ctrl+C to stop)",
-            index.files.len(),
+            ws_index.stats.total_files,
             root.display()
         );
     }
 
-    let cache_dir = fs::canonicalize(root.join(&opts.config.cache_dir))
-        .unwrap_or_else(|_| root.join(&opts.config.cache_dir));
+    let cache_dir = fs::canonicalize(root.join(&opts.ws_config.template.cache_dir))
+        .unwrap_or_else(|_| root.join(&opts.ws_config.template.cache_dir));
     let (rx, _guard) = spawn_watcher(&root, &cache_dir, &output_path, opts.debounce_ms)?;
 
     while let Ok(()) = rx.recv() {
@@ -57,12 +57,12 @@ pub fn run_watch(opts: WatchOptions) -> Result<()> {
         if !opts.quiet {
             eprintln!("Change detected, re-indexing...");
         }
-        match write_index(&opts.config, &output_path) {
-            Ok(new_index) => {
+        match write_workspace_index(&opts.ws_config, &output_path) {
+            Ok(new_ws) => {
                 if !opts.quiet {
                     eprintln!(
                         "Index updated ({} files, {} lines)",
-                        new_index.stats.total_files, new_index.stats.total_lines
+                        new_ws.stats.total_files, new_ws.stats.total_lines
                     );
                 }
             }
@@ -75,14 +75,15 @@ pub fn run_watch(opts: WatchOptions) -> Result<()> {
     Ok(())
 }
 
-/// Build the index and write it to the given output path.
-/// Similar to `indexer::regenerate_index_file`, but accepts an explicit output path
-/// (rather than always writing to `<root>/INDEX.md`) to support `--output`.
-fn write_index(config: &IndexConfig, output_path: &Path) -> Result<crate::model::CodebaseIndex> {
-    let index = indexer::build_index(config)?;
-    let markdown = indexer::generate_index_markdown(&index)?;
+/// Build the workspace index and write it to the given output path.
+fn write_workspace_index(
+    ws_config: &WorkspaceConfig,
+    output_path: &Path,
+) -> Result<crate::model::WorkspaceIndex> {
+    let ws_index = indexer::build_workspace_index(ws_config)?;
+    let markdown = indexer::generate_workspace_markdown(&ws_index)?;
     fs::write(output_path, &markdown)?;
-    Ok(index)
+    Ok(ws_index)
 }
 
 /// Spawn a file watcher that sends a signal on a channel whenever source files change.

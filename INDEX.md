@@ -1,7 +1,7 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-27 17:28:36 UTC | Files: 57 | Lines: 28068
-> Languages: Markdown (14), Python (1), Rust (40), Shell (1), TOML (1)
+> Generated: 2026-03-27 20:39:35 UTC | Files: 58 | Lines: 30650
+> Languages: Markdown (14), Python (1), Rust (41), Shell (1), TOML (1)
 
 ## Directory Structure
 
@@ -72,6 +72,7 @@ indxr/
     walker/
       mod.rs
     watch.rs
+    workspace.rs
   token_count.py
 ```
 
@@ -313,7 +314,9 @@ indxr/
 - `pub struct GraphEdge`
 - `pub enum EdgeKind`
 - `pub fn build_file_graph( index: &CodebaseIndex, scope: Option<&str>, depth: Option<usize>, ) -> DepGraph`
+- `pub fn build_file_graph_from_file_refs( files: &[&FileIndex], scope: Option<&str>, depth: Option<usize>, ) -> DepGraph`
 - `pub fn build_symbol_graph( index: &CodebaseIndex, scope: Option<&str>, depth: Option<usize>, ) -> DepGraph`
+- `pub fn build_symbol_graph_from_file_refs( files: &[&FileIndex], scope: Option<&str>, depth: Option<usize>, ) -> DepGraph`
 - `pub fn format_dot(graph: &DepGraph) -> String`
 - `pub fn format_mermaid(graph: &DepGraph) -> String`
 - `pub fn format_json(graph: &DepGraph) -> Value`
@@ -348,8 +351,11 @@ indxr/
 - `pub fn parse_files( files: &[&FileEntry], cache: &Cache, registry: &ParserRegistry, ) -> Vec<ParseResult>`
 - `pub fn collect_results( results: Vec<ParseResult>, cache: &mut Cache, ) -> (Vec<FileIndex>, usize, HashMap<String, usize>, usize)`
 - `pub fn build_index(config: &IndexConfig) -> anyhow::Result<CodebaseIndex>`
-- `pub fn generate_index_markdown(index: &CodebaseIndex) -> anyhow::Result<String>`
-- `pub fn regenerate_index_file(config: &IndexConfig) -> anyhow::Result<CodebaseIndex>`
+- `pub struct WorkspaceConfig`
+- `pub fn build_workspace_index(ws_config: &WorkspaceConfig) -> anyhow::Result<WorkspaceIndex>`
+- `pub fn detect_and_build_workspace( root: &std::path::Path, config: &IndexConfig, no_workspace: bool, member_filter: Option<&[String]>, ) -> anyhow::Result<(WorkspaceIndex, WorkspaceConfig)>`
+- `pub fn regenerate_workspace_index(ws_config: &WorkspaceConfig) -> anyhow::Result<WorkspaceIndex>`
+- `pub fn generate_workspace_markdown(ws_index: &WorkspaceIndex) -> anyhow::Result<String>`
 
 **src/init.rs**
 - `pub struct InitOptions`
@@ -389,37 +395,37 @@ indxr/
 - `pub(super) const APPROX_SUMMARY_TOKENS: usize = 300`
 
 **src/mcp/http.rs**
-- `pub async fn run_http_server( index: CodebaseIndex, config: IndexConfig, watch: bool, debounce_ms: u64, addr: &str, ) -> anyhow::Result<()>`
+- `pub async fn run_http_server( workspace: WorkspaceIndex, config: WorkspaceConfig, watch: bool, debounce_ms: u64, addr: &str, ) -> anyhow::Result<()>`
 
 **src/mcp/mod.rs**
 - `pub mod http`
-- `pub fn run_mcp_server( mut index: CodebaseIndex, config: IndexConfig, watch: bool, debounce_ms: u64, ) -> anyhow::Result<()>`
+- `pub fn run_mcp_server( mut workspace: WorkspaceIndex, config: WorkspaceConfig, watch: bool, debounce_ms: u64, ) -> anyhow::Result<()>`
 
 **src/mcp/tools.rs**
 - `pub(super) fn tool_definitions() -> Value`
-- `pub(super) fn handle_tool_call(index: &CodebaseIndex, name: &str, args: &Value) -> Value`
-- `pub(super) fn tool_regenerate_index(index: &mut CodebaseIndex, config: &IndexConfig) -> Value`
-- `pub(super) fn tool_lookup_symbol(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_list_declarations(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_search_signatures(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_tree(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_imports(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_stats(index: &CodebaseIndex) -> Value`
-- `pub(super) fn tool_get_file_summary(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_read_source(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_file_context(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_token_estimate(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_search_relevant(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_diff_summary( index: &CodebaseIndex, config: &IndexConfig, registry: &ParserRegistry, args: &Value, ) -> Value`
-- `pub(super) fn tool_batch_file_summaries(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_callers(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_public_api(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_explain_symbol(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_related_tests(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_dependency_graph(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_hotspots(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_health(index: &CodebaseIndex, args: &Value) -> Value`
-- `pub(super) fn tool_get_type_flow(index: &CodebaseIndex, args: &Value) -> Value`
+- `pub(super) fn handle_tool_call(workspace: &WorkspaceIndex, name: &str, args: &Value) -> Value`
+- `pub(super) fn tool_regenerate_index( workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, ) -> Value`
+- `pub(super) fn tool_lookup_symbol(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_list_declarations(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_search_signatures(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_tree(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_imports(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_stats(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_file_summary(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_read_source(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_file_context(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_token_estimate(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_search_relevant(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_diff_summary( workspace: &WorkspaceIndex, _config: &WorkspaceConfig, registry: &ParserRegistry, args: &Value, ) -> Value`
+- `pub(super) fn tool_batch_file_summaries(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_callers(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_public_api(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_explain_symbol(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_related_tests(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_dependency_graph(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_hotspots(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_health(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_get_type_flow(workspace: &WorkspaceIndex, args: &Value) -> Value`
 
 **src/mcp/type_flow.rs**
 - `pub(super) struct TypeInfo`
@@ -443,6 +449,8 @@ indxr/
 - `pub struct Import`
 - `pub struct TreeEntry`
 - `pub struct IndexStats`
+- `pub struct WorkspaceIndex`
+- `pub struct MemberIndex`
 
 **src/output/markdown.rs**
 - `pub struct MarkdownOptions`
@@ -462,9 +470,10 @@ indxr/
 - `pub fn hotspot_score( cyclomatic: u16, max_nesting: u16, param_count: u16, body_lines: usize, ) -> f64`
 - `pub fn sort_hotspots(entries: &mut [HotspotEntry], sort_by: &str)`
 - `pub fn collect_hotspots( index: &CodebaseIndex, path_filter: Option<&str>, min_complexity: u16, ) -> Vec<HotspotEntry>`
+- `pub fn collect_hotspots_from_file_refs( files: &[&FileIndex], path_filter: Option<&str>, min_complexity: u16, ) -> Vec<HotspotEntry>`
 - `pub struct HottestFile`
 - `pub struct HealthReport`
-- `pub fn compute_health(index: &CodebaseIndex, path_filter: Option<&str>) -> HealthReport`
+- `pub fn compute_health_from_file_refs( files: &[&FileIndex], path_filter: Option<&str>, ) -> HealthReport`
 
 **src/parser/mod.rs**
 - `pub mod complexity`
@@ -531,6 +540,13 @@ indxr/
 - `pub fn run_watch(opts: WatchOptions) -> Result<()>`
 - `pub fn spawn_watcher( root: &Path, cache_dir: &Path, output_path: &Path, debounce_ms: u64, ) -> Result<(mpsc::Receiver<()>, WatchGuard)>`
 
+**src/workspace.rs**
+- `pub enum WorkspaceKind`
+- `pub struct WorkspaceMember`
+- `pub struct Workspace`
+- `pub fn detect_workspace(root: &Path) -> Result<Workspace>`
+- `pub fn single_root_workspace(root: &Path) -> Workspace`
+
 **token_count.py**
 - `def count_openai(text: str) -> int | None`
 - `def count_claude(text: str) -> int | None`
@@ -548,7 +564,7 @@ indxr/
 
 ## Cargo.toml
 
-**Language:** TOML | **Size:** 1.5 KB | **Lines:** 53
+**Language:** TOML | **Size:** 1.4 KB | **Lines:** 52
 
 **Imports:**
 - `anyhow`
@@ -561,7 +577,7 @@ indxr/
 - `regex`
 - `serde`
 - `serde_json`
-- *... and 23 more imports*
+- *... and 22 more imports*
 
 **Declarations:**
 
@@ -569,7 +585,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 61.7 KB | **Lines:** 2298
+**Language:** Markdown | **Size:** 64.4 KB | **Lines:** 2379
 
 **Declarations:**
 
@@ -649,7 +665,7 @@ indxr/
 
 ## docs/mcp-server.md
 
-**Language:** Markdown | **Size:** 22.1 KB | **Lines:** 752
+**Language:** Markdown | **Size:** 23.0 KB | **Lines:** 756
 
 **Declarations:**
 
@@ -673,7 +689,7 @@ indxr/
 
 ## roadmap.md
 
-**Language:** Markdown | **Size:** 2.6 KB | **Lines:** 54
+**Language:** Markdown | **Size:** 2.9 KB | **Lines:** 58
 
 **Declarations:**
 
@@ -767,7 +783,7 @@ indxr/
 
 ## src/cli.rs
 
-**Language:** Rust | **Size:** 9.2 KB | **Lines:** 340
+**Language:** Rust | **Size:** 9.6 KB | **Lines:** 355
 
 **Imports:**
 - `std::path::PathBuf`
@@ -782,14 +798,14 @@ indxr/
 
 ## src/dep_graph.rs
 
-**Language:** Rust | **Size:** 58.0 KB | **Lines:** 1791
+**Language:** Rust | **Size:** 58.7 KB | **Lines:** 1811
 
 **Imports:**
 - `std::collections::{HashMap, HashSet}`
 - `std::path::Path`
 - `serde::Serialize`
 - `serde_json::{Value, json}`
-- `crate::model::CodebaseIndex`
+- `crate::model::{CodebaseIndex, FileIndex}`
 - `crate::model::declarations::{Declaration, RelKind}`
 - `crate::utils::contains_word_boundary`
 
@@ -930,7 +946,7 @@ indxr/
 
 ## src/indexer.rs
 
-**Language:** Rust | **Size:** 5.3 KB | **Lines:** 176
+**Language:** Rust | **Size:** 10.7 KB | **Lines:** 346
 
 **Imports:**
 - `std::collections::HashMap`
@@ -938,13 +954,16 @@ indxr/
 - `std::path::PathBuf`
 - `rayon::prelude::*`
 - `crate::cache::Cache`
-- `crate::model::{CodebaseIndex, FileIndex, IndexStats}`
+- `crate::model::{CodebaseIndex, FileIndex, IndexStats, MemberIndex, WorkspaceIndex}`
 - `crate::output::OutputFormatter`
 - `crate::output::markdown::{MarkdownFormatter, MarkdownOptions}`
 - `crate::parser::ParserRegistry`
 - `crate::walker::{self, FileEntry}`
+- *... and 1 more imports*
 
 **Declarations:**
+
+`fn aggregate_stats(members: &[MemberIndex], duration: std::time::Duration) -> IndexStats`
 
 ---
 
@@ -1030,7 +1049,7 @@ indxr/
 
 ## src/main.rs
 
-**Language:** Rust | **Size:** 13.0 KB | **Lines:** 461
+**Language:** Rust | **Size:** 14.0 KB | **Lines:** 490
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1083,6 +1102,8 @@ indxr/
 
 `mod watch`
 
+`mod workspace`
+
 `fn main() -> Result<()>`
 
 `fn index_config_from(opts: &cli::IndexOpts) -> indexer::IndexConfig`
@@ -1113,43 +1134,59 @@ indxr/
 
 ## src/mcp/http.rs
 
-**Language:** Rust | **Size:** 17.7 KB | **Lines:** 553
+**Language:** Rust | **Size:** 39.0 KB | **Lines:** 1148
 
 **Imports:**
 - `std::collections::HashMap`
 - `std::convert::Infallible`
 - `std::sync::{Arc, RwLock}`
 - `std::time::Instant`
-- `axum::extract::State`
-- `axum::http::{HeaderMap, StatusCode}`
+- `axum::Router`
+- `axum::extract::{DefaultBodyLimit, State}`
+- `axum::http::{HeaderMap, HeaderValue, StatusCode}`
 - `axum::response::sse::{Event, KeepAlive, Sse}`
 - `axum::response::{IntoResponse, Response}`
 - `axum::routing::{get, post}`
-- `axum::Router`
 - *... and 6 more imports*
 
 **Declarations:**
 
 `struct AppState`
-> Fields: `index: RwLock<CodebaseIndex>`, `config: IndexConfig`, `registry: ParserRegistry`, `notify_tx: broadcast::Sender<SseEvent>`, `sessions: RwLock<HashMap<String, SessionInfo>>`
+> Fields: `index: RwLock<WorkspaceIndex>`, `config: WorkspaceConfig`, `registry: ParserRegistry`, `notify_tx: broadcast::Sender<SseEvent>`, `sessions: AsyncRwLock<HashMap<String, SessionInfo>>`
 
 `struct SessionInfo`
-> Fields: `created_at: Instant`
+> Fields: `last_accessed: Instant`, `close_tx: watch::Sender<bool>`
+
+`const SESSION_TTL: std::time::Duration = std::time::Duration::from_secs(3600)`
+
+`const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60)`
+
+`const MAX_SESSIONS: usize = 1000`
 
 `struct SseEvent`
 > Fields: `id: Option<String>`, `event: Option<String>`, `data: String`
 
 `async fn handle_post( State(state): State<Arc<AppState>>, headers: HeaderMap, body: String, ) -> Response`
 
-`async fn handle_get( State(state): State<Arc<AppState>>, headers: HeaderMap, ) -> Response`
+`async fn handle_single(state: Arc<AppState>, headers: &HeaderMap, value: Value) -> Response`
 
-`async fn handle_delete( State(state): State<Arc<AppState>>, headers: HeaderMap, ) -> StatusCode`
+`async fn handle_batch(state: Arc<AppState>, headers: &HeaderMap, items: Vec<Value>) -> Response`
+
+`async fn handle_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response`
+
+`async fn handle_delete(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response`
 
 `fn spawn_file_watcher(state: Arc<AppState>, debounce_ms: u64) -> anyhow::Result<()>`
 
-`fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Response>`
+`async fn validate_session(state: &AppState, headers: &HeaderMap) -> Result<String, Box<Response>>`
 
-`fn is_mutating_tool_call(req: &JsonRpcRequest) -> bool`
+`async fn create_session(state: &AppState) -> Result<String, ()>`
+
+`async fn cleanup_session(state: &AppState, sid: &str)`
+
+`fn evict_expired_sessions(sessions: &mut HashMap<String, SessionInfo>)`
+
+`fn unauthorized_response(message: &str) -> Response`
 
 `fn json_response(status: StatusCode, body: &JsonRpcResponse, session_id: Option<&str>) -> Response`
 
@@ -1159,7 +1196,7 @@ indxr/
 
 ## src/mcp/mod.rs
 
-**Language:** Rust | **Size:** 14.6 KB | **Lines:** 456
+**Language:** Rust | **Size:** 15.3 KB | **Lines:** 476
 
 **Imports:**
 - `std::io::{self, BufRead, Write}`
@@ -1168,8 +1205,8 @@ indxr/
 - `serde::Deserialize`
 - `serde::Serialize`
 - `serde_json::{self, Value, json}`
-- `crate::indexer::{self, IndexConfig}`
-- `crate::model::CodebaseIndex`
+- `crate::indexer::{self, WorkspaceConfig}`
+- `crate::model::WorkspaceIndex`
 - `crate::parser::ParserRegistry`
 - `self::tools::{
     handle_tool_call, tool_definitions, tool_get_diff_summary, tool_regenerate_index,
@@ -1205,14 +1242,16 @@ indxr/
 
 `pub(crate) fn handle_tools_list(id: Value) -> JsonRpcResponse`
 
-`pub(crate) fn handle_tools_call( id: Value, index: &mut CodebaseIndex, config: &IndexConfig, registry: &ParserRegistry, params: &Value, ) -> JsonRpcResponse`
+`pub(crate) fn handle_tools_call( id: Value, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, params: &Value, ) -> JsonRpcResponse`
 
 `enum ServerEvent`
 > Variants: `StdinLine`, `StdinClosed`, `FileChanged`
 
-`pub(crate) fn process_jsonrpc_message( line: &str, index: &mut CodebaseIndex, config: &IndexConfig, registry: &ParserRegistry, transport: Transport, ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse>`
+`pub(crate) fn process_jsonrpc_request( request: JsonRpcRequest, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, ) -> Option<JsonRpcResponse>`
 
-`fn handle_stdin_line( line: &str, index: &mut CodebaseIndex, config: &IndexConfig, registry: &ParserRegistry, writer: &mut impl Write, ) -> anyhow::Result<()>`
+`pub(crate) fn process_jsonrpc_message( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse>`
+
+`fn handle_stdin_line( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, writer: &mut impl Write, ) -> anyhow::Result<()>`
 
 `mod coalesce_tests`
 
@@ -1220,7 +1259,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 73.2 KB | **Lines:** 2097
+**Language:** Rust | **Size:** 86.9 KB | **Lines:** 2496
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1230,14 +1269,16 @@ indxr/
 - `crate::model::declarations::{
     ComplexityMetrics, DeclKind, Declaration, RelKind, Relationship, Visibility,
 }`
-- `crate::model::{CodebaseIndex, FileIndex, Import, IndexStats}`
+- `crate::model::{CodebaseIndex, FileIndex, Import, IndexStats, MemberIndex, WorkspaceIndex}`
+- `crate::workspace::WorkspaceKind`
 - `super::helpers::*`
 - `super::tools::*`
 - `super::type_flow::*`
-- `super::{Transport, process_jsonrpc_message}`
-- *... and 2 more imports*
+- *... and 3 more imports*
 
 **Declarations:**
+
+`fn wrap_workspace(index: CodebaseIndex) -> WorkspaceIndex`
 
 `fn test_score_match_exact_full_match()`
 
@@ -1411,7 +1452,7 @@ indxr/
 
 `fn test_tool_get_health_empty_codebase()`
 
-`fn make_diff_test_fixtures() -> ( CodebaseIndex, crate::indexer::IndexConfig, crate::parser::ParserRegistry, )`
+`fn make_diff_test_fixtures() -> ( WorkspaceIndex, WorkspaceConfig, crate::parser::ParserRegistry, )`
 
 `fn test_tool_get_diff_summary_both_params_error()`
 
@@ -1489,7 +1530,7 @@ indxr/
 
 `fn test_tool_get_type_flow_producer_and_consumer()`
 
-`fn make_test_config() -> IndexConfig`
+`fn make_test_config() -> (WorkspaceConfig, IndexConfig)`
 
 `fn test_process_jsonrpc_empty_line()`
 
@@ -1503,11 +1544,43 @@ indxr/
 
 `fn test_process_jsonrpc_unknown_method()`
 
+`fn make_multi_member_workspace() -> WorkspaceIndex`
+
+`fn test_list_workspace_members()`
+
+`fn test_lookup_symbol_across_members()`
+
+`fn test_lookup_symbol_scoped_to_member()`
+
+`fn test_member_param_invalid_returns_error()`
+
+`fn test_get_stats_multi_member()`
+
+`fn test_get_stats_single_member()`
+
+`fn test_get_file_summary_auto_resolves_member()`
+
+`fn test_get_callers_across_members()`
+
+`fn test_get_hotspots_across_members()`
+
+`fn test_get_health_across_members()`
+
+`fn test_get_public_api_across_members()`
+
+`fn test_search_relevant_across_members()`
+
+`fn test_find_member_by_path()`
+
+`fn test_find_member_by_name()`
+
+`fn test_workspace_is_single()`
+
 ---
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 65.3 KB | **Lines:** 1778
+**Language:** Rust | **Size:** 77.8 KB | **Lines:** 2133
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1518,11 +1591,26 @@ indxr/
 - `crate::dep_graph`
 - `crate::diff`
 - `crate::github`
-- `crate::indexer::{self, IndexConfig}`
+- `crate::indexer::{self, WorkspaceConfig}`
 - `crate::languages::Language`
 - *... and 6 more imports*
 
 **Declarations:**
+
+`fn member_property() -> Value`
+
+`fn resolve_indices<'a>( workspace: &'a WorkspaceIndex, args: &Value, ) -> Result<Vec<(&'a str, &'a CodebaseIndex)>, Value>`
+
+`fn resolve_index_by_path<'a>( workspace: &'a WorkspaceIndex, args: &Value, path: &str, ) -> Result<Option<(&'a str, &'a CodebaseIndex)>, Value>`
+
+`fn collect_file_refs<'a>(indices: &[(&str, &'a CodebaseIndex)]) -> Vec<&'a FileIndex>`
+
+`struct MergedStructuralDiff`
+> Fields: `files_added: Vec<PathBuf>`, `files_removed: Vec<PathBuf>`, `files_modified: Vec<diff::FileDiff>`
+
+`fn merge_member_diffs( workspace: &WorkspaceIndex, old_files: &HashMap<PathBuf, FileIndex>, changed_paths: &[PathBuf], ) -> MergedStructuralDiff`
+
+`fn tool_list_workspace_members(workspace: &WorkspaceIndex) -> Value`
 
 ---
 
@@ -1598,7 +1686,7 @@ indxr/
 
 ## src/model/mod.rs
 
-**Language:** Rust | **Size:** 1.1 KB | **Lines:** 56
+**Language:** Rust | **Size:** 4.7 KB | **Lines:** 157
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1606,8 +1694,17 @@ indxr/
 - `serde::{Deserialize, Serialize}`
 - `self::declarations::Declaration`
 - `crate::languages::Language`
+- `crate::workspace::WorkspaceKind`
 
 **Declarations:**
+
+**`impl WorkspaceIndex`**
+  `pub fn find_member(&self, name: &str) -> Option<&MemberIndex>`
+
+  `pub fn find_member_by_path(&self, path: &str) -> Option<&MemberIndex>`
+
+  `pub fn is_single(&self) -> bool`
+
 
 ---
 
@@ -1681,13 +1778,13 @@ indxr/
 
 ## src/parser/complexity.rs
 
-**Language:** Rust | **Size:** 36.1 KB | **Lines:** 1168
+**Language:** Rust | **Size:** 36.7 KB | **Lines:** 1185
 
 **Imports:**
 - `std::collections::HashMap`
 - `serde::Serialize`
 - `crate::languages::Language`
-- `crate::model::CodebaseIndex`
+- `crate::model::{CodebaseIndex, FileIndex}`
 - `crate::model::declarations::{ComplexityMetrics, DeclKind, Declaration, Visibility}`
 - `crate::utils::path_matches_filter`
 
@@ -2343,7 +2440,7 @@ indxr/
 
 ## src/watch.rs
 
-**Language:** Rust | **Size:** 10.4 KB | **Lines:** 341
+**Language:** Rust | **Size:** 10.4 KB | **Lines:** 342
 
 **Imports:**
 - `std::fs`
@@ -2353,14 +2450,55 @@ indxr/
 - `anyhow::Result`
 - `notify::RecursiveMode`
 - `notify_debouncer_mini::new_debouncer`
-- `crate::indexer::{self, IndexConfig}`
+- `crate::indexer::{self, WorkspaceConfig}`
 - `crate::languages::Language`
 
 **Declarations:**
 
-`fn write_index(config: &IndexConfig, output_path: &Path) -> Result<crate::model::CodebaseIndex>`
+`fn write_workspace_index( ws_config: &WorkspaceConfig, output_path: &Path, ) -> Result<crate::model::WorkspaceIndex>`
 
 `fn should_trigger_reindex(path: &Path, root: &Path, output_path: &Path, cache_dir: &Path) -> bool`
+
+`mod tests`
+
+---
+
+## src/workspace.rs
+
+**Language:** Rust | **Size:** 22.9 KB | **Lines:** 772
+
+**Imports:**
+- `std::fs`
+- `std::path::{Path, PathBuf}`
+- `anyhow::{Context, Result}`
+
+**Declarations:**
+
+**`impl WorkspaceKind`**
+  `pub fn as_str(&self) -> &'static str`
+
+
+`fn detect_cargo_workspace(root: &Path, cargo_toml: &Path) -> Result<Option<Workspace>>`
+
+`fn cargo_package_name(member_dir: &Path) -> Option<String>`
+
+`fn detect_npm_workspace(root: &Path, package_json: &Path) -> Result<Option<Workspace>>`
+
+`fn npm_package_name(member_dir: &Path) -> Option<String>`
+
+`fn detect_go_workspace(root: &Path, go_work: &Path) -> Result<Option<Workspace>>`
+
+`fn parse_go_work_path(s: &str) -> Option<String>`
+
+`fn resolve_go_member(root: &Path, path_str: &str) -> Option<WorkspaceMember>`
+
+`fn go_module_name(member_dir: &Path) -> Option<String>`
+
+`fn expand_glob(root: &Path, pattern: &str) -> Vec<PathBuf>`
+
+`fn glob_match_segment(pattern: &str, name: &str) -> bool`
+
+`fn glob_match_chars(pat: &[char], nam: &[char]) -> bool`
 
 `mod tests`
 

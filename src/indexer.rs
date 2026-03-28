@@ -5,11 +5,12 @@ use std::path::PathBuf;
 use rayon::prelude::*;
 
 use crate::cache::Cache;
-use crate::model::{CodebaseIndex, FileIndex, IndexStats};
+use crate::model::{CodebaseIndex, FileIndex, IndexStats, MemberIndex, WorkspaceIndex};
 use crate::output::OutputFormatter;
 use crate::output::markdown::{MarkdownFormatter, MarkdownOptions};
 use crate::parser::ParserRegistry;
 use crate::walker::{self, FileEntry};
+use crate::workspace::{self, Workspace};
 
 /// Configuration needed to (re-)build an index.
 #[derive(Clone, Debug)]
@@ -155,22 +156,191 @@ pub fn build_index(config: &IndexConfig) -> anyhow::Result<CodebaseIndex> {
     })
 }
 
-/// Generate INDEX.md content from a `CodebaseIndex`.
-pub fn generate_index_markdown(index: &CodebaseIndex) -> anyhow::Result<String> {
+// ---------------------------------------------------------------------------
+// Workspace-level indexing
+// ---------------------------------------------------------------------------
+
+/// Configuration for workspace-level indexing.
+#[derive(Clone, Debug)]
+pub struct WorkspaceConfig {
+    /// The detected workspace.
+    pub workspace: Workspace,
+    /// Template config (max_file_size, max_depth, exclude, no_gitignore).
+    /// The `root` and `cache_dir` fields are overridden per-member.
+    pub template: IndexConfig,
+}
+
+/// Build a `WorkspaceIndex` by indexing each member independently.
+pub fn build_workspace_index(ws_config: &WorkspaceConfig) -> anyhow::Result<WorkspaceIndex> {
+    let workspace = &ws_config.workspace;
+    let start = std::time::Instant::now();
+
+    let members: Vec<anyhow::Result<MemberIndex>> = workspace
+        .members
+        .par_iter()
+        .map(|member| {
+            let member_config = IndexConfig {
+                root: member.path.clone(),
+                cache_dir: ws_config.template.cache_dir.join(&member.name),
+                max_file_size: ws_config.template.max_file_size,
+                max_depth: ws_config.template.max_depth,
+                exclude: ws_config.template.exclude.clone(),
+                no_gitignore: ws_config.template.no_gitignore,
+            };
+            let index = build_index(&member_config)?;
+            Ok(MemberIndex {
+                name: member.name.clone(),
+                relative_path: member.relative_path.clone(),
+                index,
+            })
+        })
+        .collect();
+
+    let mut member_indices = Vec::new();
+    for result in members {
+        member_indices.push(result?);
+    }
+
+    let stats = aggregate_stats(&member_indices, start.elapsed());
+
+    Ok(WorkspaceIndex {
+        root: workspace.root.clone(),
+        root_name: workspace
+            .root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "workspace".to_string()),
+        workspace_kind: workspace.kind,
+        generated_at: chrono::Utc::now()
+            .format("%Y-%m-%d %H:%M:%S UTC")
+            .to_string(),
+        members: member_indices,
+        stats,
+    })
+}
+
+/// Detect workspace and build a `WorkspaceIndex`.
+/// If no workspace is detected, creates a single-member workspace wrapping `build_index`.
+/// Returns both the index and the config so callers don't need to re-detect the workspace.
+pub fn detect_and_build_workspace(
+    root: &std::path::Path,
+    config: &IndexConfig,
+    no_workspace: bool,
+    member_filter: Option<&[String]>,
+) -> anyhow::Result<(WorkspaceIndex, WorkspaceConfig)> {
+    let mut workspace = if no_workspace {
+        workspace::single_root_workspace(&fs::canonicalize(root)?)
+    } else {
+        workspace::detect_workspace(root)?
+    };
+
+    // Filter to specific members if requested
+    if let Some(filter) = member_filter {
+        let filter_lower: Vec<String> = filter.iter().map(|s| s.to_lowercase()).collect();
+        workspace
+            .members
+            .retain(|m| filter_lower.contains(&m.name.to_lowercase()));
+        if workspace.members.is_empty() {
+            anyhow::bail!(
+                "No matching workspace members found for: {}",
+                filter.join(", ")
+            );
+        }
+    }
+
+    let ws_config = WorkspaceConfig {
+        workspace,
+        template: config.clone(),
+    };
+
+    let ws_index = build_workspace_index(&ws_config)?;
+    Ok((ws_index, ws_config))
+}
+
+/// Rebuild a workspace index and write INDEX.md to the workspace root.
+pub fn regenerate_workspace_index(ws_config: &WorkspaceConfig) -> anyhow::Result<WorkspaceIndex> {
+    let ws_index = build_workspace_index(ws_config)?;
+    let markdown = generate_workspace_markdown(&ws_index)?;
+    let output_path = ws_index.root.join("INDEX.md");
+    fs::write(&output_path, &markdown)?;
+    Ok(ws_index)
+}
+
+/// Generate INDEX.md content from a `WorkspaceIndex`.
+pub fn generate_workspace_markdown(ws_index: &WorkspaceIndex) -> anyhow::Result<String> {
     use crate::model::DetailLevel;
+    use std::fmt::Write;
+
     let formatter = MarkdownFormatter::with_options(MarkdownOptions {
         omit_imports: false,
         omit_tree: false,
     });
-    formatter.format(index, DetailLevel::Signatures)
+
+    if ws_index.is_single() {
+        // Single-member workspace: just format the inner index
+        return formatter.format(&ws_index.members[0].index, DetailLevel::Signatures);
+    }
+
+    let mut out = String::new();
+    writeln!(out, "# Workspace Index: {}", ws_index.root_name)?;
+    writeln!(out)?;
+    writeln!(
+        out,
+        "> Generated: {} | Workspace: {} | Members: {} | Files: {} | Lines: {}",
+        ws_index.generated_at,
+        ws_index.workspace_kind.as_str(),
+        ws_index.members.len(),
+        ws_index.stats.total_files,
+        ws_index.stats.total_lines
+    )?;
+    writeln!(out)?;
+
+    // Members table
+    writeln!(out, "## Members")?;
+    writeln!(out)?;
+    writeln!(out, "| Member | Path | Files | Lines |")?;
+    writeln!(out, "|--------|------|-------|-------|")?;
+    for member in &ws_index.members {
+        writeln!(
+            out,
+            "| {} | {} | {} | {} |",
+            member.name,
+            member.relative_path.display(),
+            member.index.stats.total_files,
+            member.index.stats.total_lines
+        )?;
+    }
+    writeln!(out)?;
+
+    // Per-member sections
+    for member in &ws_index.members {
+        writeln!(out, "---")?;
+        writeln!(out)?;
+        let member_md = formatter.format(&member.index, DetailLevel::Signatures)?;
+        out.push_str(&member_md);
+        writeln!(out)?;
+    }
+
+    Ok(out)
 }
 
-/// Rebuild the index and write INDEX.md to the project root.
-/// Returns the new `CodebaseIndex`.
-pub fn regenerate_index_file(config: &IndexConfig) -> anyhow::Result<CodebaseIndex> {
-    let index = build_index(config)?;
-    let markdown = generate_index_markdown(&index)?;
-    let output_path = index.root.join("INDEX.md");
-    fs::write(&output_path, &markdown)?;
-    Ok(index)
+fn aggregate_stats(members: &[MemberIndex], duration: std::time::Duration) -> IndexStats {
+    let mut total_files = 0;
+    let mut total_lines = 0;
+    let mut languages: HashMap<String, usize> = HashMap::new();
+
+    for member in members {
+        total_files += member.index.stats.total_files;
+        total_lines += member.index.stats.total_lines;
+        for (lang, count) in &member.index.stats.languages {
+            *languages.entry(lang.clone()).or_insert(0) += count;
+        }
+    }
+
+    IndexStats {
+        total_files,
+        total_lines,
+        languages,
+        duration_ms: duration.as_millis() as u64,
+    }
 }

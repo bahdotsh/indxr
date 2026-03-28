@@ -143,6 +143,14 @@ pub struct IndexOpts {
     /// Do not respect .gitignore
     #[arg(long)]
     pub no_gitignore: bool,
+
+    /// Specific workspace member(s) to index (comma-separated names)
+    #[arg(long, value_delimiter = ',')]
+    pub member: Option<Vec<String>>,
+
+    /// Disable workspace detection (treat root as a single project)
+    #[arg(long)]
+    pub no_workspace: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -201,6 +209,13 @@ pub enum Command {
         /// Output format: markdown or json
         #[arg(short, long, default_value = "markdown")]
         format: OutputFormat,
+    },
+
+    /// List detected workspace members
+    Members {
+        /// Root directory
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
 
     /// Initialize indxr configuration files for AI agent integration
