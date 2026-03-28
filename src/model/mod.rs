@@ -96,40 +96,46 @@ impl WorkspaceIndex {
     ///
     /// Matching strategy (in priority order):
     /// 1. Exact match: `file_path == path`
-    /// 2. Suffix match: `file_path` ends with `path` (e.g. query `"src/lib.rs"` matches
-    ///    `"crates/alpha/src/lib.rs"`)
+    /// 2. Suffix match: `file_path` ends with `/<path>` (path-separator-aware)
     ///
-    /// When multiple members match via suffix at the same specificity level,
+    /// When multiple members match at the same specificity level,
     /// returns `None` to avoid silently picking the wrong member.
     pub fn find_member_by_path(&self, path: &str) -> Option<&MemberIndex> {
-        let mut matched: Option<&MemberIndex> = None;
+        let mut exact_count = 0usize;
+        let mut exact_matched: Option<&MemberIndex> = None;
+        let mut suffix_count = 0usize;
+        let mut suffix_matched: Option<&MemberIndex> = None;
+
+        let suffix_needle = format!("/{}", path);
 
         for member in &self.members {
-            let mut member_matches = false;
             for file in &member.index.files {
                 let file_path = file.path.to_string_lossy();
 
                 if file_path == path {
-                    // Exact match — return immediately
-                    return Some(member);
+                    exact_count += 1;
+                    exact_matched = Some(member);
+                    break;
                 }
 
-                if file_path.ends_with(path) {
-                    member_matches = true;
+                if file_path.ends_with(&suffix_needle) {
+                    suffix_count += 1;
+                    suffix_matched = Some(member);
                     break;
                 }
             }
-
-            if member_matches {
-                if matched.is_some() {
-                    // Multiple members have suffix matches — ambiguous
-                    return None;
-                }
-                matched = Some(member);
-            }
         }
 
-        matched
+        if exact_count == 1 {
+            return exact_matched;
+        }
+        if exact_count > 1 {
+            return None; // Ambiguous: multiple members have this exact relative path
+        }
+        if suffix_count == 1 {
+            return suffix_matched;
+        }
+        None // No match, or ambiguous suffix
     }
 
     /// Returns true if this is a single-member "none" workspace (non-monorepo).

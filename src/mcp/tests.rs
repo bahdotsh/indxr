@@ -2554,6 +2554,61 @@ fn test_find_member_by_path_ambiguous() {
 }
 
 #[test]
+fn test_find_member_by_path_same_relative_path() {
+    // When two members both have files with the identical relative path (e.g. both
+    // have "src/lib.rs"), auto-resolution should return None (ambiguous).
+    let make_member = |name: &str| {
+        let file = FileIndex {
+            path: PathBuf::from("src/lib.rs"),
+            language: Language::Rust,
+            size: 100,
+            lines: 10,
+            imports: vec![],
+            declarations: vec![],
+        };
+        MemberIndex {
+            name: name.to_string(),
+            relative_path: PathBuf::from(format!("crates/{}", name)),
+            index: CodebaseIndex {
+                root: PathBuf::from(format!("/tmp/ws/crates/{}", name)),
+                root_name: name.to_string(),
+                generated_at: "2026-01-01T00:00:00Z".to_string(),
+                stats: IndexStats {
+                    total_files: 1,
+                    total_lines: 10,
+                    languages: HashMap::from([("Rust".to_string(), 1)]),
+                    duration_ms: 1,
+                },
+                tree: vec![],
+                files: vec![file],
+            },
+        }
+    };
+
+    let ws = WorkspaceIndex {
+        root: PathBuf::from("/tmp/ws"),
+        root_name: "ws".to_string(),
+        workspace_kind: WorkspaceKind::Cargo,
+        generated_at: "2026-01-01T00:00:00Z".to_string(),
+        stats: IndexStats {
+            total_files: 2,
+            total_lines: 20,
+            languages: HashMap::from([("Rust".to_string(), 2)]),
+            duration_ms: 2,
+        },
+        members: vec![make_member("alpha"), make_member("beta")],
+    };
+
+    // Both members have "src/lib.rs" as exact path — should be ambiguous
+    let m = ws.find_member_by_path("src/lib.rs");
+    assert!(
+        m.is_none(),
+        "expected None for ambiguous exact path, got {:?}",
+        m.map(|m| &m.name)
+    );
+}
+
+#[test]
 fn test_find_member_by_name() {
     let ws = make_multi_member_workspace();
     assert!(ws.find_member("frontend").is_some());
