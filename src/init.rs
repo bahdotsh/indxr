@@ -14,6 +14,7 @@ pub struct InitOptions {
     pub claude: bool,
     pub cursor: bool,
     pub windsurf: bool,
+    pub codex: bool,
     pub global: bool,
     pub generate_index: bool,
     pub force: bool,
@@ -22,6 +23,7 @@ pub struct InitOptions {
     pub max_file_size: u64,
 }
 
+#[derive(Debug)]
 enum WriteResult {
     Created(PathBuf),
     Updated(PathBuf),
@@ -35,6 +37,7 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
         opts.claude.then_some("Claude Code"),
         opts.cursor.then_some("Cursor"),
         opts.windsurf.then_some("Windsurf"),
+        opts.codex.then_some("Codex CLI"),
     ]
     .into_iter()
     .flatten()
@@ -53,6 +56,21 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
     let mut results = Vec::new();
 
     if opts.global {
+        if opts.generate_index {
+            eprintln!(
+                "  Note: INDEX.md generation is project-specific and has no effect in global mode."
+            );
+        }
+        if opts.include_hooks {
+            eprintln!(
+                "  Note: PreToolUse hooks are project-specific and have no effect in global mode."
+            );
+        }
+        if opts.path != Path::new(".") {
+            eprintln!(
+                "  Note: PATH argument is ignored in global mode (writes to home directory)."
+            );
+        }
         let home = home_dir()?;
 
         if opts.claude {
@@ -63,6 +81,9 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
         }
         if opts.windsurf {
             results.extend(setup_windsurf_global(&home, opts.force, rtk_detected)?);
+        }
+        if opts.codex {
+            results.extend(setup_codex_global(&home, opts.force, rtk_detected)?);
         }
 
         // Print summary with ~ prefix
@@ -83,9 +104,8 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
             }
         }
     } else {
-        let root = fs::canonicalize(&opts.path).map_err(|e| {
-            anyhow::anyhow!("cannot resolve path '{}': {}", opts.path.display(), e)
-        })?;
+        let root = fs::canonicalize(&opts.path)
+            .map_err(|e| anyhow::anyhow!("cannot resolve path '{}': {}", opts.path.display(), e))?;
 
         if opts.claude {
             results.extend(setup_claude(
@@ -100,6 +120,9 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
         }
         if opts.windsurf {
             results.extend(setup_windsurf(&root, opts.force, rtk_detected)?);
+        }
+        if opts.codex {
+            results.extend(setup_codex(&root, opts.force, rtk_detected)?);
         }
 
         results.push(setup_gitignore(&root)?);
@@ -118,11 +141,7 @@ pub fn run_init(opts: InitOptions) -> Result<()> {
                     eprintln!("  Updated  {}", display_relative(path, &root));
                 }
                 WriteResult::Skipped(path, reason) => {
-                    eprintln!(
-                        "  Skipped  {} ({})",
-                        display_relative(path, &root),
-                        reason
-                    );
+                    eprintln!("  Skipped  {} ({})", display_relative(path, &root), reason);
                 }
                 WriteResult::Appended(path) => {
                     eprintln!("  Appended {}", display_relative(path, &root));
@@ -184,15 +203,15 @@ fn merge_mcp_server(path: &Path, force: bool) -> Result<WriteResult> {
 
     if path.exists() {
         let content = fs::read_to_string(path)?;
-        let mut doc: serde_json::Value =
-            serde_json::from_str(&content).unwrap_or_else(|_| json!({}));
+        let mut doc: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to parse {}: {}. Fix the JSON syntax or delete the file and retry.",
+                path.display(),
+                e
+            )
+        })?;
 
-        if doc
-            .get("mcpServers")
-            .and_then(|s| s.get("indxr"))
-            .is_some()
-            && !force
-        {
+        if doc.get("mcpServers").and_then(|s| s.get("indxr")).is_some() && !force {
             return Ok(WriteResult::Skipped(
                 path.to_path_buf(),
                 "indxr server already configured",
@@ -218,11 +237,7 @@ fn merge_mcp_server(path: &Path, force: bool) -> Result<WriteResult> {
 
 /// Append instructions to a file if a marker string is not already present.
 /// Creates the file (and parent dirs) if it doesn't exist.
-fn append_or_create_instructions(
-    path: &Path,
-    content: &str,
-    marker: &str,
-) -> Result<WriteResult> {
+fn append_or_create_instructions(path: &Path, content: &str, marker: &str) -> Result<WriteResult> {
     if path.exists() {
         let existing = fs::read_to_string(path)?;
         if existing.contains(marker) {
@@ -231,7 +246,11 @@ fn append_or_create_instructions(
                 "already contains indxr instructions",
             ));
         }
-        let separator = if existing.ends_with('\n') { "\n" } else { "\n\n" };
+        let separator = if existing.ends_with('\n') {
+            "\n"
+        } else {
+            "\n\n"
+        };
         fs::write(path, format!("{existing}{separator}{content}"))?;
         Ok(WriteResult::Appended(path.to_path_buf()))
     } else {
@@ -239,6 +258,78 @@ fn append_or_create_instructions(
             fs::create_dir_all(parent)?;
         }
         fs::write(path, content)?;
+        Ok(WriteResult::Created(path.to_path_buf()))
+    }
+}
+
+/// Merge the indxr MCP server entry into an existing TOML config file (Codex CLI format),
+/// preserving all other settings and servers.
+fn merge_mcp_server_toml(path: &Path, force: bool) -> Result<WriteResult> {
+    let indxr_section = r#"
+[mcp_servers.indxr]
+command = "indxr"
+args = ["serve", "."]
+"#;
+
+    if path.exists() {
+        let content = fs::read_to_string(path)?;
+        let mut doc: toml::Table = content.parse::<toml::Table>().map_err(|e| {
+            anyhow::anyhow!(
+                "failed to parse {}: {}. Fix the TOML syntax or delete the file and retry.",
+                path.display(),
+                e
+            )
+        })?;
+
+        // Check if mcp_servers.indxr already exists
+        if doc
+            .get("mcp_servers")
+            .and_then(|s| s.as_table())
+            .and_then(|t| t.get("indxr"))
+            .is_some()
+            && !force
+        {
+            return Ok(WriteResult::Skipped(
+                path.to_path_buf(),
+                "indxr server already configured",
+            ));
+        }
+
+        // Ensure mcp_servers table exists
+        if !doc.contains_key("mcp_servers") {
+            doc.insert(
+                "mcp_servers".to_string(),
+                toml::Value::Table(toml::Table::new()),
+            );
+        }
+
+        // Build the indxr server table
+        let mut server = toml::Table::new();
+        server.insert(
+            "command".to_string(),
+            toml::Value::String("indxr".to_string()),
+        );
+        server.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![
+                toml::Value::String("serve".to_string()),
+                toml::Value::String(".".to_string()),
+            ]),
+        );
+
+        doc.get_mut("mcp_servers")
+            .unwrap()
+            .as_table_mut()
+            .unwrap()
+            .insert("indxr".to_string(), toml::Value::Table(server));
+
+        fs::write(path, toml::to_string_pretty(&doc)? + "\n")?;
+        Ok(WriteResult::Updated(path.to_path_buf()))
+    } else {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, indxr_section.trim_start())?;
         Ok(WriteResult::Created(path.to_path_buf()))
     }
 }
@@ -297,6 +388,22 @@ fn setup_windsurf(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<Wri
     Ok(results)
 }
 
+fn setup_codex(root: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>> {
+    let results = vec![
+        write_file_safe(
+            &root.join(".codex/config.toml"),
+            &codex_config_toml_content(),
+            force,
+        )?,
+        write_file_safe(
+            &root.join("AGENTS.md"),
+            &agents_md_content(include_rtk),
+            force,
+        )?,
+    ];
+    Ok(results)
+}
+
 fn detect_rtk() -> bool {
     ProcessCommand::new("rtk")
         .arg("--version")
@@ -323,11 +430,7 @@ fn setup_rtk_claude(root: &Path, force: bool) -> Result<Vec<WriteResult>> {
 
 // --- Global setup functions ---
 
-fn setup_claude_global(
-    home: &Path,
-    force: bool,
-    include_rtk: bool,
-) -> Result<Vec<WriteResult>> {
+fn setup_claude_global(home: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>> {
     let results = vec![
         // Merge indxr into ~/.claude.json mcpServers
         merge_mcp_server(&home.join(".claude.json"), force)?,
@@ -341,11 +444,7 @@ fn setup_claude_global(
     Ok(results)
 }
 
-fn setup_cursor_global(
-    home: &Path,
-    force: bool,
-    _include_rtk: bool,
-) -> Result<Vec<WriteResult>> {
+fn setup_cursor_global(home: &Path, force: bool, _include_rtk: bool) -> Result<Vec<WriteResult>> {
     // Cursor has no file-based global rules — global rules are set via Settings UI
     eprintln!("  Note: Cursor global rules must be set via Settings > Rules in the IDE.");
     eprintln!("        Copy the instructions from .cursor/rules/indxr.mdc if needed.");
@@ -357,21 +456,28 @@ fn setup_cursor_global(
     Ok(results)
 }
 
-fn setup_windsurf_global(
-    home: &Path,
-    force: bool,
-    include_rtk: bool,
-) -> Result<Vec<WriteResult>> {
+fn setup_windsurf_global(home: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>> {
     let results = vec![
         // Merge indxr into ~/.codeium/windsurf/mcp_config.json
-        merge_mcp_server(
-            &home.join(".codeium/windsurf/mcp_config.json"),
-            force,
-        )?,
+        merge_mcp_server(&home.join(".codeium/windsurf/mcp_config.json"), force)?,
         // Create or append to ~/.codeium/windsurf/memories/global_rules.md
         append_or_create_instructions(
             &home.join(".codeium/windsurf/memories/global_rules.md"),
             &global_windsurf_rules_content(include_rtk),
+            "indxr MCP tools",
+        )?,
+    ];
+    Ok(results)
+}
+
+fn setup_codex_global(home: &Path, force: bool, include_rtk: bool) -> Result<Vec<WriteResult>> {
+    let results = vec![
+        // Merge indxr into ~/.codex/config.toml
+        merge_mcp_server_toml(&home.join(".codex/config.toml"), force)?,
+        // Create or append to ~/.codex/AGENTS.md
+        append_or_create_instructions(
+            &home.join(".codex/AGENTS.md"),
+            &agents_md_content(include_rtk),
             "indxr MCP tools",
         )?,
     ];
@@ -683,6 +789,20 @@ fn global_claude_md_content(include_rtk: bool) -> String {
 
 /// Global ~/.codeium/windsurf/memories/global_rules.md content.
 fn global_windsurf_rules_content(include_rtk: bool) -> String {
+    rules_body(include_rtk)
+}
+
+/// Project-level .codex/config.toml — MCP server config in TOML format.
+fn codex_config_toml_content() -> String {
+    r#"[mcp_servers.indxr]
+command = "indxr"
+args = ["serve", "."]
+"#
+    .to_string()
+}
+
+/// AGENTS.md content for Codex CLI — analogous to CLAUDE.md.
+fn agents_md_content(include_rtk: bool) -> String {
     rules_body(include_rtk)
 }
 
@@ -1079,9 +1199,11 @@ mod tests {
         .unwrap();
         assert_eq!(mcp_json["mcpServers"]["indxr"]["command"], "indxr");
         // Check global rules
-        let rules =
-            fs::read_to_string(dir.path().join(".codeium/windsurf/memories/global_rules.md"))
-                .unwrap();
+        let rules = fs::read_to_string(
+            dir.path()
+                .join(".codeium/windsurf/memories/global_rules.md"),
+        )
+        .unwrap();
         assert!(rules.contains("indxr MCP tools"));
     }
 
@@ -1099,5 +1221,156 @@ mod tests {
         assert!(content.starts_with("---\n"));
         assert!(content.contains("trigger: always_on"));
         assert!(content.contains("indxr MCP tools"));
+    }
+
+    #[test]
+    fn test_merge_mcp_server_rejects_malformed_json() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("bad.json");
+        fs::write(&path, "{ not valid json !!!").unwrap();
+        let result = merge_mcp_server(&path, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("failed to parse"));
+        // Verify file was NOT overwritten
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{ not valid json !!!");
+    }
+
+    #[test]
+    fn test_merge_mcp_server_toml_creates_new() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let result = merge_mcp_server_toml(&path, false).unwrap();
+        assert!(matches!(result, WriteResult::Created(_)));
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[mcp_servers.indxr]"));
+        assert!(content.contains("command = \"indxr\""));
+    }
+
+    #[test]
+    fn test_merge_mcp_server_toml_preserves_existing() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "[mcp_servers.other]\ncommand = \"other-cmd\"\nargs = []\n",
+        )
+        .unwrap();
+        let result = merge_mcp_server_toml(&path, false).unwrap();
+        assert!(matches!(result, WriteResult::Updated(_)));
+        let content = fs::read_to_string(&path).unwrap();
+        let doc: toml::Table = content.parse().unwrap();
+        let servers = doc["mcp_servers"].as_table().unwrap();
+        assert_eq!(servers["indxr"]["command"].as_str().unwrap(), "indxr");
+        assert_eq!(servers["other"]["command"].as_str().unwrap(), "other-cmd");
+    }
+
+    #[test]
+    fn test_merge_mcp_server_toml_skips_existing_indxr() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "[mcp_servers.indxr]\ncommand = \"indxr\"\nargs = [\"serve\", \".\"]\n",
+        )
+        .unwrap();
+        let result = merge_mcp_server_toml(&path, false).unwrap();
+        assert!(matches!(result, WriteResult::Skipped(_, _)));
+    }
+
+    #[test]
+    fn test_merge_mcp_server_toml_force_overwrites() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[mcp_servers.indxr]\ncommand = \"old\"\nargs = []\n").unwrap();
+        let result = merge_mcp_server_toml(&path, true).unwrap();
+        assert!(matches!(result, WriteResult::Updated(_)));
+        let content = fs::read_to_string(&path).unwrap();
+        let doc: toml::Table = content.parse().unwrap();
+        assert_eq!(
+            doc["mcp_servers"]["indxr"]["command"].as_str().unwrap(),
+            "indxr"
+        );
+    }
+
+    #[test]
+    fn test_merge_mcp_server_toml_rejects_malformed() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[broken\nnot = valid toml").unwrap();
+        let result = merge_mcp_server_toml(&path, false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("failed to parse"));
+    }
+
+    #[test]
+    fn test_merge_mcp_server_toml_into_non_mcp_config() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "model = \"o3\"\napproval_mode = \"suggest\"\n").unwrap();
+        let result = merge_mcp_server_toml(&path, false).unwrap();
+        assert!(matches!(result, WriteResult::Updated(_)));
+        let content = fs::read_to_string(&path).unwrap();
+        let doc: toml::Table = content.parse().unwrap();
+        assert_eq!(
+            doc["mcp_servers"]["indxr"]["command"].as_str().unwrap(),
+            "indxr"
+        );
+        assert_eq!(doc["model"].as_str().unwrap(), "o3"); // preserved
+    }
+
+    #[test]
+    fn test_setup_codex_creates_files() {
+        let dir = TempDir::new().unwrap();
+        let results = setup_codex(dir.path(), false, false).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(dir.path().join(".codex/config.toml").exists());
+        assert!(dir.path().join("AGENTS.md").exists());
+        // Verify TOML content
+        let toml_content = fs::read_to_string(dir.path().join(".codex/config.toml")).unwrap();
+        assert!(toml_content.contains("[mcp_servers.indxr]"));
+        // Verify AGENTS.md content
+        let agents_md = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        assert!(agents_md.contains("indxr MCP tools"));
+    }
+
+    #[test]
+    fn test_setup_codex_global() {
+        let dir = TempDir::new().unwrap();
+        let results = setup_codex_global(dir.path(), false, false).unwrap();
+        assert_eq!(results.len(), 2);
+        // Check ~/.codex/config.toml has indxr server
+        let toml_content = fs::read_to_string(dir.path().join(".codex/config.toml")).unwrap();
+        assert!(toml_content.contains("[mcp_servers.indxr]"));
+        assert!(toml_content.contains("command = \"indxr\""));
+        // Check ~/.codex/AGENTS.md
+        let agents_md = fs::read_to_string(dir.path().join(".codex/AGENTS.md")).unwrap();
+        assert!(agents_md.contains("indxr MCP tools"));
+    }
+
+    #[test]
+    fn test_codex_config_toml_is_valid() {
+        let content = codex_config_toml_content();
+        let doc: toml::Table = content.parse().unwrap();
+        let servers = doc["mcp_servers"].as_table().unwrap();
+        let indxr = servers["indxr"].as_table().unwrap();
+        assert_eq!(indxr["command"].as_str().unwrap(), "indxr");
+        let args = indxr["args"].as_array().unwrap();
+        assert_eq!(args[0].as_str().unwrap(), "serve");
+        assert_eq!(args[1].as_str().unwrap(), ".");
+    }
+
+    #[test]
+    fn test_agents_md_content_has_instructions() {
+        let content = agents_md_content(false);
+        assert!(content.contains("indxr MCP tools"));
+        assert!(content.contains("search_relevant"));
+        assert!(!content.contains("RTK"));
+    }
+
+    #[test]
+    fn test_agents_md_content_with_rtk() {
+        let content = agents_md_content(true);
+        assert!(content.contains("RTK"));
     }
 }

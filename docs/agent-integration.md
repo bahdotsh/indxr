@@ -59,17 +59,18 @@ indxr serve ./my-project --watch   # auto-reindex on file changes
 The fastest way to set up indxr for any agent is the `init` command:
 
 ```bash
-indxr init                    # all agents (Claude Code, Cursor, Windsurf)
+indxr init                    # all agents (Claude Code, Cursor, Windsurf, Codex CLI)
 indxr init --claude           # Claude Code only
 indxr init --cursor           # Cursor only
 indxr init --windsurf         # Windsurf only
+indxr init --codex            # OpenAI Codex CLI only
 indxr init --global           # install globally for all projects
 indxr init --global --cursor  # global Cursor only
 ```
 
 This creates all configuration files, agent instruction files, PreToolUse hooks, and an initial INDEX.md in one command. Use `--no-index` to skip INDEX.md generation, `--no-hooks` to skip PreToolUse hooks, `--force` to overwrite existing files.
 
-Use `--global` to install indxr into user-level config directories so it's available for every project without per-project setup. Global mode merges the indxr MCP server entry into existing config files (preserving other servers).
+Use `--global` to install indxr into user-level config directories so it's available for every project without per-project setup. Global mode merges the indxr MCP server entry into existing config files (preserving other servers and settings).
 
 The sections below describe what each file does and how to set things up manually.
 
@@ -249,22 +250,23 @@ of all files, functions, classes, and imports.
 
 ### OpenAI Codex CLI
 
-Codex CLI doesn't support MCP, so use the static index approach:
+**Automated setup:** `indxr init --codex` creates `.codex/config.toml` and `AGENTS.md` automatically. Use `indxr init --global --codex` to install globally at `~/.codex/config.toml` and `~/.codex/AGENTS.md`.
 
-```bash
-# Generate a compact index
-indxr --max-tokens 8000 -o INDEX.md
+**Manual setup:** Codex CLI uses TOML configuration. Add to `.codex/config.toml` (project) or `~/.codex/config.toml` (global):
 
-# Include in Codex instructions
-codex -p "$(cat INDEX.md)
-
-Given the codebase structure above, implement..."
+```toml
+[mcp_servers.indxr]
+command = "indxr"
+args = ["serve", "."]
 ```
 
-**Tips for Codex:**
-- Use `--max-tokens` to fit within Codex's context window
-- `--public-only` is great for API-focused tasks
-- `--filter-path` to scope to the relevant part of the codebase
+Or use the CLI:
+
+```bash
+codex mcp add indxr -- indxr serve .
+```
+
+**Instructions file:** Create `AGENTS.md` in the project root (or `~/.codex/AGENTS.md` for global) with instructions to use indxr MCP tools for codebase navigation.
 
 ### GitHub Copilot
 

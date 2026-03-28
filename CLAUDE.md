@@ -132,6 +132,7 @@ indxr watch -o custom.md --debounce-ms 500   # custom output and debounce
 indxr init                                   # set up all agent configs (.mcp.json, CLAUDE.md, etc.)
 indxr init --claude                          # Claude Code only
 indxr init --cursor --windsurf               # Cursor + Windsurf only
+indxr init --codex                           # OpenAI Codex CLI only
 indxr init --global                          # install globally for all projects
 indxr init --global --cursor                 # global Cursor only
 indxr init --no-index --no-hooks             # config files only, no INDEX.md or hooks

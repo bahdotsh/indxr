@@ -22,6 +22,7 @@ indxr init [PATH] [OPTIONS]
 - `--claude` — Set up for Claude Code (`.mcp.json`, `CLAUDE.md`, `.claude/settings.json`)
 - `--cursor` — Set up for Cursor (`.cursor/mcp.json`, `.cursor/rules/indxr.mdc`)
 - `--windsurf` — Set up for Windsurf (`.windsurf/mcp.json`, `.windsurf/rules/indxr.md`)
+- `--codex` — Set up for OpenAI Codex CLI (`.codex/config.toml`, `AGENTS.md`)
 - `--all` — Set up for all supported agents (default when no agent flag is specified)
 - `--global` — Install to global/user-level config so indxr is available for all projects
 - `--no-index` — Skip generating INDEX.md
@@ -37,7 +38,8 @@ indxr init [PATH] [OPTIONS]
   - Claude Code: `~/.claude.json` (MCP), `~/.claude/CLAUDE.md` (instructions)
   - Cursor: `~/.cursor/mcp.json` (MCP)
   - Windsurf: `~/.codeium/windsurf/mcp_config.json` (MCP), `~/.codeium/windsurf/memories/global_rules.md` (rules)
-- `--global` merges MCP server entries into existing config files (preserves other servers)
+  - Codex CLI: `~/.codex/config.toml` (MCP), `~/.codex/AGENTS.md` (instructions)
+- `--global` merges MCP/TOML server entries into existing config files (preserves other servers)
 
 ### `watch`
 
@@ -328,6 +330,9 @@ indxr init --claude
 
 # Cursor and Windsurf only
 indxr init --cursor --windsurf
+
+# OpenAI Codex CLI only
+indxr init --codex
 
 # Install globally for all projects
 indxr init --global

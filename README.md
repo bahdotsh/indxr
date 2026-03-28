@@ -61,6 +61,7 @@ indxr init                    # set up for all agents
 indxr init --claude           # Claude Code only
 indxr init --cursor           # Cursor only
 indxr init --windsurf         # Windsurf only
+indxr init --codex            # OpenAI Codex CLI only
 indxr init --global           # install globally for all projects
 indxr init --global --cursor  # global Cursor only
 ```
@@ -70,6 +71,7 @@ indxr init --global --cursor  # global Cursor only
 | Claude Code | `.mcp.json`, `CLAUDE.md`, `.claude/settings.json` | `~/.claude.json`, `~/.claude/CLAUDE.md` |
 | Cursor | `.cursor/mcp.json`, `.cursor/rules/indxr.mdc` | `~/.cursor/mcp.json` |
 | Windsurf | `.windsurf/mcp.json`, `.windsurf/rules/indxr.md` | `~/.codeium/windsurf/mcp_config.json`, `~/.codeium/windsurf/memories/global_rules.md` |
+| Codex CLI | `.codex/config.toml`, `AGENTS.md` | `~/.codex/config.toml`, `~/.codex/AGENTS.md` |
 | All | `.gitignore` entry, `INDEX.md` | — |
 
 Agents don't always pick MCP tools over file reads on their own. `indxr init` sets up reinforcement — PreToolUse hooks intercept `Read`/`Bash` calls and instruction files teach the exploration workflow.

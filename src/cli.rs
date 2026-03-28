@@ -236,11 +236,15 @@ pub enum Command {
         #[arg(long)]
         windsurf: bool,
 
+        /// Set up for OpenAI Codex CLI (.codex/config.toml, AGENTS.md)
+        #[arg(long)]
+        codex: bool,
+
         /// Set up for all supported agents
-        #[arg(long, conflicts_with_all = ["claude", "cursor", "windsurf"])]
+        #[arg(long, conflicts_with_all = ["claude", "cursor", "windsurf", "codex"])]
         all: bool,
 
-        /// Install to global/user-level config (~/.claude.json, ~/.cursor/, ~/.codeium/)
+        /// Install to global/user-level config (~/.claude.json, ~/.cursor/, ~/.codeium/, ~/.codex/)
         /// so indxr is available for all projects
         #[arg(long)]
         global: bool,
