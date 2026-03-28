@@ -112,8 +112,13 @@ pub(crate) fn handle_initialize(id: Value, transport: Transport) -> JsonRpcRespo
     )
 }
 
-pub(crate) fn handle_tools_list(id: Value) -> JsonRpcResponse {
-    ok_response(id, tool_definitions())
+pub(crate) fn handle_tools_list(
+    id: Value,
+    workspace: &WorkspaceIndex,
+    all_tools: bool,
+) -> JsonRpcResponse {
+    let is_workspace = workspace.members.len() > 1;
+    ok_response(id, tool_definitions(is_workspace, all_tools))
 }
 
 pub(crate) fn handle_tools_call(
@@ -169,13 +174,14 @@ pub(crate) fn process_jsonrpc_request(
     config: &WorkspaceConfig,
     registry: &ParserRegistry,
     transport: Transport,
+    all_tools: bool,
 ) -> Option<JsonRpcResponse> {
     let id = request.id?;
     let params = request.params.unwrap_or(json!({}));
 
     let response = match request.method.as_str() {
         "initialize" => handle_initialize(id, transport),
-        "tools/list" => handle_tools_list(id),
+        "tools/list" => handle_tools_list(id, workspace, all_tools),
         "tools/call" => handle_tools_call(id, workspace, config, registry, &params),
         _ => err_response(id, -32601, format!("Method not found: {}", request.method)),
     };
@@ -195,6 +201,7 @@ pub(crate) fn process_jsonrpc_message(
     config: &WorkspaceConfig,
     registry: &ParserRegistry,
     transport: Transport,
+    all_tools: bool,
 ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse> {
     let line = line.trim();
     if line.is_empty() {
@@ -213,7 +220,7 @@ pub(crate) fn process_jsonrpc_message(
     };
 
     Ok(process_jsonrpc_request(
-        request, workspace, config, registry, transport,
+        request, workspace, config, registry, transport, all_tools,
     ))
 }
 
@@ -227,11 +234,12 @@ fn handle_stdin_line(
     config: &WorkspaceConfig,
     registry: &ParserRegistry,
     writer: &mut impl Write,
+    all_tools: bool,
 ) -> anyhow::Result<()> {
     eprintln!("< {}", line);
 
     let response =
-        match process_jsonrpc_message(line, workspace, config, registry, Transport::Stdio) {
+        match process_jsonrpc_message(line, workspace, config, registry, Transport::Stdio, all_tools) {
             Ok(Some(resp)) => resp,
             Ok(None) => {
                 if !line.trim().is_empty() {
@@ -261,6 +269,7 @@ pub fn run_mcp_server(
     config: WorkspaceConfig,
     watch: bool,
     debounce_ms: u64,
+    all_tools: bool,
 ) -> anyhow::Result<()> {
     eprintln!(
         "indxr MCP server starting (root: {})",
@@ -362,6 +371,7 @@ pub fn run_mcp_server(
                                 &config,
                                 &registry,
                                 &mut writer,
+                                all_tools,
                             )?;
                         }
                         ServerEvent::FileChanged => unreachable!(),
@@ -369,7 +379,7 @@ pub fn run_mcp_server(
                 }
             }
             ServerEvent::StdinLine(line) => {
-                handle_stdin_line(&line, &mut workspace, &config, &registry, &mut writer)?;
+                handle_stdin_line(&line, &mut workspace, &config, &registry, &mut writer, all_tools)?;
             }
         }
     }

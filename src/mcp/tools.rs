@@ -22,21 +22,35 @@ use super::type_flow::*;
 // Tool definitions for tools/list
 // ---------------------------------------------------------------------------
 
+/// Tools that are only advertised when `--all-tools` is set (or the server
+/// detects a workspace with multiple members for workspace-specific tools).
+/// They still *work* if called — they just aren't listed by default, which
+/// saves ~1,200 tokens of schema overhead per API round.
+const EXTENDED_TOOLS: &[&str] = &[
+    "get_hotspots",
+    "get_health",
+    "get_type_flow",
+    "get_dependency_graph",
+    "get_diff_summary",
+    "get_token_estimate",
+    "list_workspace_members",
+    "regenerate_index",
+];
+
 /// JSON property definition for the optional `member` parameter, shared across tools.
 fn member_property() -> Value {
     json!({
         "type": "string",
-        "description": "Workspace member name to scope this operation. Omit to search all members."
+        "description": "Workspace member name (omit to search all)"
     })
 }
 
-pub(super) fn tool_definitions() -> Value {
-    let mp = member_property();
+pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value {
     let mut defs = json!({
         "tools": [
             {
                 "name": "list_workspace_members",
-                "description": "List workspace members (monorepo packages/crates). Returns member names, paths, and workspace type. In single-project mode, returns one member.",
+                "description": "List monorepo workspace members.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {},
@@ -45,48 +59,47 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "lookup_symbol",
-                "description": "Find declarations matching a name (case-insensitive substring search across all indexed files).",
+                "description": "Find declarations by name (case-insensitive substring).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "name": {
                             "type": "string",
-                            "description": "Symbol name to search for"
+                            "description": "Symbol name"
                         },
                         "limit": {
                             "type": "number",
-                            "description": "Maximum number of results (default 50, max 200)"
+                            "description": "Max results (default 50)"
                         },
                         "compact": {
                             "type": "boolean",
-                            "description": "If true, return columnar format [columns, rows] instead of objects (saves ~30% tokens)"
-                        },
-                        "member": mp
+                            "description": "Columnar output (fewer tokens)"
+                        }
                     },
                     "required": ["name"]
                 }
             },
             {
                 "name": "list_declarations",
-                "description": "List all declarations in a specific file, optionally filtered by kind.",
+                "description": "List declarations in a file, optionally filtered by kind.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "File path (relative to project root)"
+                            "description": "File path"
                         },
                         "kind": {
                             "type": "string",
-                            "description": "Optional declaration kind filter (e.g. fn, struct, class, trait)"
+                            "description": "Filter: fn, struct, class, trait, etc."
                         },
                         "shallow": {
                             "type": "boolean",
-                            "description": "If true, omit children and doc_comments to reduce output size (default false)"
+                            "description": "Omit children and doc_comments"
                         },
                         "compact": {
                             "type": "boolean",
-                            "description": "If true, return columnar format (implies shallow). Saves ~30% tokens."
+                            "description": "Columnar output (fewer tokens)"
                         }
                     },
                     "required": ["path"]
@@ -94,21 +107,21 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "search_signatures",
-                "description": "Search declaration signatures by substring match.",
+                "description": "Search function signatures by substring.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Substring to search for in signatures"
+                            "description": "Substring to match in signatures"
                         },
                         "limit": {
                             "type": "number",
-                            "description": "Maximum number of results (default 20, max 100)"
+                            "description": "Max results (default 20)"
                         },
                         "compact": {
                             "type": "boolean",
-                            "description": "If true, return columnar format (saves ~30% tokens)"
+                            "description": "Columnar output (fewer tokens)"
                         }
                     },
                     "required": ["query"]
@@ -116,13 +129,13 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "get_tree",
-                "description": "Get the directory / file tree of the indexed codebase.",
+                "description": "Directory/file tree of the codebase.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Optional path prefix to filter the tree"
+                            "description": "Path prefix filter"
                         }
                     },
                     "required": []
@@ -130,13 +143,13 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "get_imports",
-                "description": "Get the import statements for a specific file.",
+                "description": "Import statements for a file.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "File path (relative to project root)"
+                            "description": "File path"
                         }
                     },
                     "required": ["path"]
@@ -144,7 +157,7 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "get_stats",
-                "description": "Get summary statistics for the indexed codebase.",
+                "description": "Codebase stats: file count, lines, languages.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {},
@@ -153,13 +166,13 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "get_file_summary",
-                "description": "Get a complete overview of a file in one call: metadata, imports, declarations (shallow), kind counts, public symbol count, and test presence.",
+                "description": "File overview: imports, declarations, kind counts, test presence.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "File path (relative to project root)"
+                            "description": "File path"
                         }
                     },
                     "required": ["path"]
@@ -167,38 +180,38 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "read_source",
-                "description": "Read source code from a file, either by symbol name (uses indexed line info) or by explicit line range. Returns the actual source text from disk.",
+                "description": "Read source by symbol name or line range.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "File path (relative to project root)"
+                            "description": "File path"
                         },
                         "symbol": {
                             "type": "string",
-                            "description": "Symbol name to read (looks up declaration and extracts its source)"
+                            "description": "Symbol name to read"
                         },
                         "start_line": {
                             "type": "number",
-                            "description": "Start line (1-based) for explicit line range mode"
+                            "description": "Start line (1-based)"
                         },
                         "end_line": {
                             "type": "number",
-                            "description": "End line (1-based, inclusive) for explicit line range mode"
+                            "description": "End line (1-based, inclusive)"
                         },
                         "expand": {
                             "type": "number",
-                            "description": "Extra context lines above and below the target range (default 0)"
+                            "description": "Context lines above/below (default 0)"
                         },
                         "symbols": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "Multiple symbol names to read in one call (alternative to single 'symbol'). Cap: 500 total lines."
+                            "description": "Multiple symbols in one call (cap: 500 lines)"
                         },
                         "collapse": {
                             "type": "boolean",
-                            "description": "If true, collapse nested block bodies to { ... }. Shows structure without inner implementation."
+                            "description": "Fold nested bodies to { ... }"
                         }
                     },
                     "required": ["path"]
@@ -206,13 +219,13 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "get_file_context",
-                "description": "Get a file's summary plus its dependency context: which files import it (reverse dependencies) and related files (tests, siblings in the same directory).",
+                "description": "File summary + reverse dependencies + related files.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "File path (relative to project root)"
+                            "description": "File path"
                         }
                     },
                     "required": ["path"]
@@ -220,7 +233,7 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "regenerate_index",
-                "description": "Re-scan the codebase, rebuild the index, and write an updated INDEX.md to the project root. Use this after making code changes to keep the index current. Also refreshes the in-memory index used by all other tools.",
+                "description": "Re-index codebase and update INDEX.md. Use after code changes.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {},
@@ -229,25 +242,25 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "get_token_estimate",
-                "description": "Estimate how many tokens a file or symbol would consume if read in full. Use this to decide whether to read_source (targeted) or Read (full file). Helps agents make informed token-budget decisions.",
+                "description": "Estimate token cost of reading a file, symbol, or directory.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "File path (relative to project root)"
+                            "description": "File path"
                         },
                         "symbol": {
                             "type": "string",
-                            "description": "Optional symbol name — if provided, estimates tokens for just that symbol's source"
+                            "description": "Symbol name (estimates just that symbol)"
                         },
                         "directory": {
                             "type": "string",
-                            "description": "Directory path — estimates all files within. Alternative to path."
+                            "description": "Directory path (all files within)"
                         },
                         "glob": {
                             "type": "string",
-                            "description": "Glob pattern — estimates all matching files. Alternative to path."
+                            "description": "Glob pattern (all matching files)"
                         }
                     },
                     "required": []
@@ -255,25 +268,25 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "search_relevant",
-                "description": "Search for files and symbols relevant to a query. Searches across file paths, symbol names, signatures, and doc comments. Returns ranked results. Use this as a first step to find where to look without reading any files.",
+                "description": "Search files/symbols by concept, name, or type pattern. Ranked results.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Search query — can be a concept (e.g. 'authentication'), a partial name (e.g. 'parse'), or a type pattern (e.g. 'Result<Cache>')"
+                            "description": "Concept, partial name, or type pattern"
                         },
                         "limit": {
                             "type": "number",
-                            "description": "Maximum number of results (default 20, max 50)"
+                            "description": "Max results (default 20)"
                         },
                         "kind": {
                             "type": "string",
-                            "description": "Optional declaration kind filter (e.g. fn, struct, class, trait). Only returns symbols of this kind."
+                            "description": "Filter: fn, struct, class, trait, etc."
                         },
                         "compact": {
                             "type": "boolean",
-                            "description": "If true, return columnar format (saves ~30% tokens)"
+                            "description": "Columnar output (fewer tokens)"
                         }
                     },
                     "required": ["query"]
@@ -281,35 +294,35 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "get_diff_summary",
-                "description": "Get structural changes (added/removed/modified declarations) since a git ref or for a GitHub PR. Requires either 'since_ref' or 'pr' (not both). Much cheaper than reading raw diffs.",
+                "description": "Structural changes (added/removed/modified) since a git ref or PR.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "since_ref": {
                             "type": "string",
-                            "description": "Git ref to diff against (branch name, tag, or commit like HEAD~3)"
+                            "description": "Git ref (branch, tag, HEAD~3)"
                         },
                         "pr": {
                             "type": "integer",
-                            "description": "GitHub PR number — resolves the PR's base branch automatically (alternative to since_ref)"
+                            "description": "GitHub PR number"
                         }
                     }
                 }
             },
             {
                 "name": "batch_file_summaries",
-                "description": "Get summaries for multiple files in one call. Provide paths array or glob pattern. Cap: 30 files.",
+                "description": "Summaries for multiple files in one call (cap: 30).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "paths": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "Array of file paths (relative to project root)"
+                            "description": "File paths array"
                         },
                         "glob": {
                             "type": "string",
-                            "description": "Glob pattern to match files (e.g. '*.rs', 'src/parser/*')"
+                            "description": "Glob pattern (e.g. 'src/**/*.rs')"
                         }
                     },
                     "required": []
@@ -317,17 +330,17 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "get_callers",
-                "description": "Find declarations that reference a symbol. Searches signatures and import statements across all files. Approximate — based on name matching, not full call graph.",
+                "description": "Find references to a symbol across all files (name-based).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "symbol": {
                             "type": "string",
-                            "description": "Symbol name to search for references to"
+                            "description": "Symbol name"
                         },
                         "limit": {
                             "type": "number",
-                            "description": "Maximum number of results (default 20, max 50)"
+                            "description": "Max results (default 20)"
                         }
                     },
                     "required": ["symbol"]
@@ -335,17 +348,17 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "get_public_api",
-                "description": "Get the public API surface: only public declarations with signatures. Ideal for understanding how to use a module without reading it.",
+                "description": "Public declarations with signatures for a file or directory.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "File path or directory prefix (relative to project root). Omit for entire codebase."
+                            "description": "File or directory path"
                         },
                         "limit": {
                             "type": "number",
-                            "description": "Maximum number of declarations to return (default 100, max 500)"
+                            "description": "Max results (default 100)"
                         }
                     },
                     "required": []
@@ -353,13 +366,13 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "explain_symbol",
-                "description": "Get everything needed to USE a symbol: signature, doc comment, relationships, metadata. No body source — just the interface.",
+                "description": "Symbol interface: signature, doc comment, relationships. No body.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "name": {
                             "type": "string",
-                            "description": "Symbol name to explain (exact match, case-insensitive)"
+                            "description": "Symbol name (case-insensitive)"
                         }
                     },
                     "required": ["name"]
@@ -367,17 +380,17 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "get_related_tests",
-                "description": "Find test functions related to a symbol by naming convention and file association.",
+                "description": "Find test functions for a symbol by naming convention.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "symbol": {
                             "type": "string",
-                            "description": "Symbol name to find tests for"
+                            "description": "Symbol name"
                         },
                         "path": {
                             "type": "string",
-                            "description": "Optional file path to scope search"
+                            "description": "Scope to file path"
                         }
                     },
                     "required": ["symbol"]
@@ -385,99 +398,99 @@ pub(super) fn tool_definitions() -> Value {
             },
             {
                 "name": "get_dependency_graph",
-                "description": "Get file-level or symbol-level dependency graph. Shows import relationships between files or extends/implements relationships between symbols. Output in DOT (Graphviz), Mermaid, or JSON format.",
+                "description": "File or symbol dependency graph (DOT/Mermaid/JSON).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Scope to a subtree (file or directory prefix). Omit for entire codebase."
+                            "description": "Scope to subtree"
                         },
                         "level": {
                             "type": "string",
                             "enum": ["file", "symbol"],
-                            "description": "Graph granularity: 'file' for file-to-file imports (default), 'symbol' for symbol-to-symbol relationships."
+                            "description": "file (default) or symbol granularity"
                         },
                         "format": {
                             "type": "string",
                             "enum": ["dot", "mermaid", "json"],
-                            "description": "Output format (default: mermaid)."
+                            "description": "Output format (default: mermaid)"
                         },
                         "depth": {
                             "type": "number",
-                            "description": "Max edge hops from scoped files/symbols (default: unlimited). Useful to limit graph size."
+                            "description": "Max edge hops (default: unlimited)"
                         }
                     }
                 }
             },
             {
                 "name": "get_hotspots",
-                "description": "Get the most complex functions/methods in the codebase, ranked by a composite complexity score. Useful for identifying refactoring targets and understanding where technical debt concentrates. Only includes tree-sitter parsed languages (Rust, Python, TS, JS, Go, Java, C, C++).",
+                "description": "Most complex functions ranked by composite score.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "limit": {
                             "type": "number",
-                            "description": "Maximum number of results (default 20, max 100)"
+                            "description": "Max results (default 20)"
                         },
                         "path": {
                             "type": "string",
-                            "description": "Optional file or directory path filter"
+                            "description": "File or directory filter"
                         },
                         "min_complexity": {
                             "type": "number",
-                            "description": "Minimum cyclomatic complexity to include (default 1)"
+                            "description": "Min cyclomatic complexity (default 1)"
                         },
                         "sort_by": {
                             "type": "string",
                             "enum": ["score", "complexity", "nesting", "params", "body_lines"],
-                            "description": "Sort criterion (default: score — a composite of all metrics)"
+                            "description": "Sort criterion (default: score)"
                         },
                         "compact": {
                             "type": "boolean",
-                            "description": "If true, return columnar format (saves ~30% tokens)"
+                            "description": "Columnar output (fewer tokens)"
                         }
                     }
                 }
             },
             {
                 "name": "get_health",
-                "description": "Get a codebase health summary with aggregate complexity metrics, documentation coverage, test ratio, and quality indicators. Only complexity data from tree-sitter parsed languages is included.",
+                "description": "Codebase health: complexity, doc coverage, test ratio.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Optional path filter to scope to a directory or file"
+                            "description": "Scope to directory or file"
                         }
                     }
                 }
             },
             {
                 "name": "get_type_flow",
-                "description": "Track where a type flows across function boundaries. Shows which functions produce (return) and consume (accept as parameters) a given type. Useful for understanding data flow and finding related code.",
+                "description": "Which functions produce (return) and consume (accept) a type.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "type_name": {
                             "type": "string",
-                            "description": "Type name to track (e.g., 'FileIndex', 'Declaration', 'Cache')"
+                            "description": "Type name to track"
                         },
                         "path": {
                             "type": "string",
-                            "description": "Optional file or directory path filter to scope the search"
+                            "description": "Scope to directory or file"
                         },
                         "include_fields": {
                             "type": "boolean",
-                            "description": "If true, also include struct/class fields that hold this type (default false)"
+                            "description": "Include struct fields holding this type"
                         },
                         "limit": {
                             "type": "number",
-                            "description": "Maximum number of results per role (default 50, max 200)"
+                            "description": "Max results per role (default 50)"
                         },
                         "compact": {
                             "type": "boolean",
-                            "description": "If true, return columnar format (saves ~30% tokens)"
+                            "description": "Columnar output (fewer tokens)"
                         }
                     },
                     "required": ["type_name"]
@@ -486,20 +499,31 @@ pub(super) fn tool_definitions() -> Value {
         ]
     });
 
-    // Post-process: add optional "member" property to all tools that don't already
-    // have it and aren't workspace-meta tools (list_workspace_members, regenerate_index).
-    let skip = ["list_workspace_members", "regenerate_index"];
+    // Post-process: conditionally add `member` property and filter extended tools.
+    let mp = member_property();
+    let skip_member = ["list_workspace_members", "regenerate_index"];
     if let Some(tools) = defs["tools"].as_array_mut() {
-        for tool in tools.iter_mut() {
-            let name = tool["name"].as_str().unwrap_or("");
-            if skip.contains(&name) {
-                continue;
-            }
-            if let Some(props) = tool["inputSchema"]["properties"].as_object_mut() {
-                if !props.contains_key("member") {
-                    props.insert("member".to_string(), mp.clone());
+        // Only inject `member` param when serving a multi-member workspace.
+        if is_workspace {
+            for tool in tools.iter_mut() {
+                let name = tool["name"].as_str().unwrap_or("");
+                if skip_member.contains(&name) {
+                    continue;
+                }
+                if let Some(props) = tool["inputSchema"]["properties"].as_object_mut() {
+                    if !props.contains_key("member") {
+                        props.insert("member".to_string(), mp.clone());
+                    }
                 }
             }
+        }
+
+        // Filter out extended tools unless --all-tools is set.
+        if !all_tools {
+            tools.retain(|tool| {
+                let name = tool["name"].as_str().unwrap_or("");
+                !EXTENDED_TOOLS.contains(&name)
+            });
         }
     }
 

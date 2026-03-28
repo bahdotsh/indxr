@@ -1,11 +1,12 @@
 # Benchmarks
 
-indxr ships two benchmarks that measure different things:
+indxr ships three benchmarks:
 
 1. **Token Efficiency Benchmark** (`benchmark.sh`) — measures how many tokens indxr outputs vs reading raw source files. Answers: "how much smaller is indxr's output?"
-2. **Accuracy Benchmark** (`accuracy_bench.py`) — measures whether an LLM answers questions correctly with indxr context vs full-file context. Answers: "does the token reduction hurt answer quality?"
+2. **Accuracy Benchmark v2** (`bench/`) — agent-loop benchmark where both conditions (baseline and indxr) use an LLM that chooses its own tools. Answers: "does the token reduction hurt answer quality when the agent picks its own tools?"
+3. **Accuracy Benchmark v1** (`accuracy_bench.py`) — original benchmark with pre-specified tool calls. Kept for reference.
 
-Together they prove the core claim: **indxr gives agents the same (or better) understanding of a codebase with 5-20x fewer tokens.**
+Together they prove the core claim: **indxr gives agents the same (or better) understanding of a codebase with fewer tokens.**
 
 ---
 
@@ -80,9 +81,6 @@ python3 -m venv .bench-venv
 # Benchmark specific projects
 ./benchmark.sh /path/to/project1 /path/to/project2
 
-# Benchmark multiple well-known repos
-./benchmark.sh ~/projects/fastapi ~/projects/tokio ~/projects/express
-
 # With Claude token counts (set your key first)
 export ANTHROPIC_API_KEY=sk-ant-...
 ./benchmark.sh
@@ -90,80 +88,58 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 If no paths are given, it benchmarks the indxr project itself.
 
-### Output
-
-Prints a formatted, color-coded table to the terminal. Example summary for the indxr codebase:
-
-```
-▸ 8. Summary: Token Efficiency Comparison
-
-  Approach                             Tokens (OA)    vs Raw
-  ──────────────────────────────────────────────────────────────
-  cat all source files                     211,667      1.0x
-  tree (structure only)                      1,200    176.4x
-  indxr --detail summary                    2,800     75.6x
-  indxr --detail signatures                 5,400     39.2x
-  indxr --detail full                       8,100     26.1x
-  indxr --max-tokens 8000                   7,800     27.1x
-```
-
-Each section also shows per-tool breakdowns and timing. When run against multiple projects, it prints per-project results followed by a cross-project summary.
-
-### How it works internally
-
-The script:
-1. Builds a JSON index of the project with `indxr -f json`
-2. Concatenates all indexed source files to measure the raw baseline
-3. Runs `indxr` with different flags, capturing output to temp files
-4. Counts tokens in each temp file using tiktoken / Anthropic API / fallback
-5. Starts an MCP server subprocess and sends JSON-RPC tool calls, measuring the token cost of each response
-6. Computes compression ratios and prints everything in a formatted table
-
 ---
 
-## Accuracy Benchmark (`accuracy_bench.py`)
+## Accuracy Benchmark v2 (`bench/`)
 
 ### Why it exists
 
-The token efficiency benchmark proves indxr outputs fewer tokens. But fewer tokens only matter if the LLM can still answer correctly. A skeptic can reasonably ask: "sure it's smaller, but does the model lose information it needs?"
+The v1 accuracy benchmark had several methodological limitations:
+- **Pre-specified tool calls** — the indxr tools to call were hard-coded per question, assuming perfect tool selection
+- **Strawman baseline** — the baseline concatenated full files, rather than letting an agent search
+- **Self-benchmarking only** — tested only on indxr's own codebase
+- **Only structural questions** — no behavioral or reasoning questions
+- **No statistical rigor** — single run, no confidence intervals
 
-This benchmark answers that directly. It sends the same questions to Claude under two conditions — full file reads vs indxr structural context — and compares answer quality. If indxr context produces equal or better answers with fewer tokens, the claim is proven.
+v2 addresses all of these with a proper **agent loop** design.
 
-### What it measures
+### Design
 
-For each of 20 code comprehension questions:
+Both conditions use the same agent loop — the LLM decides which tools to call:
 
-1. **Baseline condition**: reads the full contents of relevant source files and sends them as context to Claude
-2. **indxr condition**: queries indxr's MCP server (file summaries, symbol lookups, caller traces, etc.) and sends that structural output as context
-3. **Scores both answers** against a known ground-truth answer using deterministic scoring
-4. **Records exact token counts** from the Claude API response (`response.usage.input_tokens`) — these are real billing tokens, not estimates
+| Condition | Available tools | What it simulates |
+|-----------|----------------|-------------------|
+| **Baseline** | `grep_codebase`, `read_file`, `list_directory` | Agent with standard code tools (grep + read) |
+| **indxr** | MCP tools (dynamically fetched from server; 15 default, 23 with `--all-tools`) | Agent with indxr structural tools |
 
-### Question categories
+Same model, same system prompt, same question, same `temperature=0`. The only difference is the toolbox.
 
-The 20 questions cover 7 categories of code comprehension:
+### Question categories (40 questions)
 
 | Category | Count | What it tests | Example |
 |----------|-------|--------------|---------|
-| `symbol_lookup` | 4 | Find where a symbol is defined | "In which file is `estimate_tokens` defined?" |
-| `cross_file` | 3 | Trace imports/dependencies across files | "Which files import from `src/mcp/helpers.rs`?" |
-| `function_behavior` | 3 | Understand what a function does | "What does the `tool_error` function do?" |
-| `structural_counting` | 3 | Count/enumerate declarations | "How many public functions are in `tools.rs`?" |
-| `caller_tracing` | 2 | Find who calls/uses a symbol | "Which functions reference `estimate_tokens`?" |
-| `architecture` | 3 | Answer high-level structural questions | "What are the top-level modules in `src/`?" |
-| `public_api` | 2 | Identify public API surface | "What are the public functions in `budget.rs`?" |
+| `structural` | 17 | Symbol lookup, cross-file imports, counting, architecture | "Where is `estimate_tokens` defined?" |
+| `behavioral` | 13 | What functions do, edge cases, error handling | "What happens with an unknown tool name?" |
+| `reasoning` | 10 | Why code is designed a certain way | "Why are doc comments stripped before private decls?" |
 
 ### Scoring
 
-All scoring is deterministic — no LLM-as-judge, fully reproducible:
+All scoring is deterministic — no LLM-as-judge:
 
-- **substring**: answer contains the expected string (score: 1.0 or 0.0)
-- **all_of**: answer contains all expected strings (score: fraction found)
-- **set_match**: fraction of expected items found in the answer (partial credit)
-- **number_range**: a number in the answer falls within the expected range (score: 1.0 or 0.0)
+- **substring**: answer contains the expected string (1.0 or 0.0)
+- **all_of**: fraction of required strings found
+- **set_match**: fraction of expected items found (partial credit)
+- **number_range**: extracted number falls within expected range
 
-### Token counting
+**Anti-hallucination**: questions can specify `scoring_anti_targets` — strings that indicate wrong information. Each anti-target found applies a penalty of `0.25 × (found / total)`.
 
-Token counts come from the **Claude API response** — not from any estimation. When you call `client.messages.create(...)`, the response includes `response.usage.input_tokens` and `response.usage.output_tokens`. These are exact counts from Anthropic's tokenizer, the same numbers that appear on your billing.
+### Statistical rigor
+
+- Runs each question K times (default K=3)
+- Reports mean accuracy with bootstrap 95% confidence intervals
+- Per-category breakdown
+- Records total input tokens across all agent rounds (real API billing tokens)
+- Tracks tool-call count and rounds per condition
 
 ### Requirements
 
@@ -171,124 +147,100 @@ Token counts come from the **Claude API response** — not from any estimation. 
 - Python 3 with anthropic SDK (`pip install anthropic`)
 - `ANTHROPIC_API_KEY` environment variable
 
-### Setup
-
-```bash
-cargo build --release
-
-# Python environment (first time only)
-python3 -m venv .bench-venv
-.bench-venv/bin/pip install anthropic
-```
-
 ### Usage
 
 ```bash
 # Set your API key
 export ANTHROPIC_API_KEY=sk-ant-...
 
-# Run the full benchmark
-.bench-venv/bin/python3 accuracy_bench.py
+# Full benchmark (3 runs, ~$15-25)
+python -m bench
 
-# Dry run — show contexts without calling the API (free, no key needed)
-.bench-venv/bin/python3 accuracy_bench.py --dry-run
+# Quick single run (~$5-8)
+python -m bench --runs 1
 
-# Show the full LLM answers for both conditions
-.bench-venv/bin/python3 accuracy_bench.py --verbose
+# Dry run — show tools and questions without API calls (free)
+python -m bench --dry-run
 
-# Run only one question category
-.bench-venv/bin/python3 accuracy_bench.py --filter symbol_lookup
+# Run one category
+python -m bench --filter behavioral
 
-# Use a different model
-.bench-venv/bin/python3 accuracy_bench.py --model claude-haiku-4-5
+# Run one question
+python -m bench --question behav-004
 
-# Custom output path
-.bench-venv/bin/python3 accuracy_bench.py --output my_results.json
+# Verbose — show agent tool traces and answers
+python -m bench --verbose
+
+# External repo
+python -m bench --repo /path/to/project --questions my_questions.json
+
+# Different model
+python -m bench --model claude-haiku-4-5
 ```
-
-**Cost**: ~$0.50–1.00 per run (40 API calls, ~370K total tokens). Takes about 2 minutes.
 
 ### Output
 
-Prints a results table to the terminal:
+Prints a results table with per-question and per-category breakdown, then writes `benchmark_results_v2.json` with full per-run data including agent traces.
 
-```
-==========================================================================================
-indxr Accuracy Benchmark Results
-==========================================================================================
-Model:     claude-sonnet-4-6
-Questions: 20
+**Note on token measurement:** The benchmark measures total API billing tokens (`input_tokens`) across all agent rounds. This includes system prompt, tool definitions, and growing conversation history — not just tool output. Because tool definitions are re-sent every round, the number of tools directly impacts total cost. indxr's default 15-tool set adds ~1,270 tokens/round of schema overhead vs ~370 for the 3 baseline tools. On small codebases where grep+read is already cheap, this overhead can offset the content savings. indxr's structural tools show the biggest wins on questions that require reading large files or multi-step exploration (e.g., counting public functions, tracing type flow).
 
-ID           Category             BL Score IX Score  BL Toks  IX Toks  Reduction
-------------------------------------------------------------------------------------------
-sym-001      symbol_lookup            1.00     1.00   27,633      203     136.1x
-sym-002      symbol_lookup            1.00     1.00   21,744      228      95.4x
-behav-001    function_behavior        1.00     1.00   29,290      243     120.5x
-caller-001   caller_tracing           1.00     1.00   27,728      165     168.0x
-...
-------------------------------------------------------------------------------------------
+### Adding questions for external repos
 
-Summary:
-  Baseline accuracy:    0.97  (19/20 questions)
-  indxr accuracy:       0.99  (19/20 questions)
-  Accuracy delta:       +2.3%
-  Total baseline tokens: 351,349
-  Total indxr tokens:    16,124
-  Avg token reduction:   21.8x
+Create a questions file following this format:
 
-  => indxr achieves better accuracy with 21.8x fewer tokens.
+```json
+{
+  "version": 2,
+  "repo": "self",
+  "questions": [
+    {
+      "id": "my-001",
+      "category": "structural",
+      "difficulty": "easy",
+      "question": "Where is function X defined?",
+      "ground_truth": "src/foo.rs",
+      "scoring": "substring",
+      "scoring_targets": ["src/foo.rs"],
+      "scoring_anti_targets": []
+    }
+  ]
+}
 ```
 
-Also writes `benchmark_results.json` with full data for every question: both LLM answers, exact token counts, scores, and aggregate summary.
-
-### How it works internally
-
-The script:
-1. Loads questions from `accuracy_questions.json`
-2. Starts an indxr MCP server as a subprocess (communicates via stdin/stdout JSON-RPC)
-3. For each question:
-   - **Baseline**: reads the specified source files from disk, concatenates them as context, sends to Claude API with `temperature=0`
-   - **indxr**: calls the specified MCP tools (e.g. `lookup_symbol`, `get_file_summary`), concatenates their outputs as context, sends to Claude API with `temperature=0`
-   - Scores both answers against ground truth using deterministic string matching
-   - Records exact token counts from `response.usage`
-4. Prints the results table and writes `benchmark_results.json`
+Categories: `structural`, `behavioral`, `reasoning`. Scoring methods: `substring`, `all_of`, `set_match`, `number_range`.
 
 ### Files
 
 | File | Purpose |
 |------|---------|
-| `accuracy_bench.py` | Benchmark runner — MCP communication, API calls, scoring, output |
-| `accuracy_questions.json` | 20 questions with ground truth, scoring methods, baseline files, and indxr tool calls |
-| `benchmark_results.json` | Output — full results from the last run |
-
-### Adding questions
-
-Add entries to `accuracy_questions.json`:
-
-```json
-{
-  "id": "my-001",
-  "category": "symbol_lookup",
-  "question": "Where is function X defined?",
-  "ground_truth": "src/foo.rs",
-  "scoring": "substring",
-  "scoring_targets": ["src/foo.rs"],
-  "baseline_files": ["src/foo.rs", "src/bar.rs"],
-  "indxr_tool_calls": [
-    {"tool": "lookup_symbol", "args": {"name": "X"}}
-  ],
-  "difficulty": "easy"
-}
-```
-
-- **`baseline_files`**: the files an agent would typically read to answer the question. Include the files containing the answer plus a few plausible extras an agent might open while searching.
-- **`indxr_tool_calls`**: the MCP tool calls indxr would make instead. Each entry specifies a tool name and arguments.
-- **`scoring_targets`**: strings to look for in the LLM's answer. The scoring method determines how they're checked.
-- **`scoring`**: one of `substring`, `all_of`, `set_match`, or `number_range`.
+| `bench/__init__.py` | Package marker |
+| `bench/__main__.py` | Entry point for `python -m bench` |
+| `bench/agent.py` | Agent loop (shared by both conditions) |
+| `bench/tools_baseline.py` | Baseline tools: grep, read, list_directory |
+| `bench/tools_indxr.py` | indxr MCP tools (dynamically loaded from server) |
+| `bench/scoring.py` | Deterministic scoring with anti-hallucination |
+| `bench/stats.py` | Multi-run aggregation, bootstrap confidence intervals |
+| `bench/output.py` | Terminal tables and JSON output |
+| `bench/runner.py` | CLI, orchestration, main loop |
+| `bench_questions/indxr.json` | 40 questions across 3 categories |
 
 ---
 
-## Running both benchmarks
+## Accuracy Benchmark v1 (`accuracy_bench.py`) — Reference
+
+The original accuracy benchmark, kept for historical reference. Uses pre-specified tool calls and file selections rather than an agent loop.
+
+| File | Purpose |
+|------|---------|
+| `accuracy_bench.py` | v1 benchmark runner |
+| `accuracy_questions.json` | v1 questions (20, with hard-coded tool calls) |
+| `benchmark_results.json` | v1 results from the last run |
+
+See the v1 section in git history for full documentation.
+
+---
+
+## Running all benchmarks
 
 ```bash
 # One-time setup
@@ -300,9 +252,9 @@ export ANTHROPIC_API_KEY=sk-ant-...
 # Token efficiency (no API key needed if tiktoken is installed)
 ./benchmark.sh
 
-# Accuracy (requires API key, ~$0.50-1.00)
-.bench-venv/bin/python3 accuracy_bench.py
+# Accuracy v2 — quick single run (~$5-8)
+.bench-venv/bin/python -m bench --runs 1
 
-# Benchmark other projects (token efficiency only)
-./benchmark.sh ~/projects/fastapi ~/projects/tokio
+# Accuracy v2 — full with statistical rigor (~$15-25)
+.bench-venv/bin/python -m bench --runs 3
 ```

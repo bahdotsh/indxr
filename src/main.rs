@@ -45,6 +45,7 @@ fn main() -> Result<()> {
         watch: enable_watch,
         debounce_ms,
         http,
+        all_tools,
     }) = &cli.command
     {
         let config = index_config_from(opts);
@@ -71,6 +72,7 @@ fn main() -> Result<()> {
                     *enable_watch,
                     *debounce_ms,
                     addr,
+                    *all_tools,
                 ));
             }
             #[cfg(not(feature = "http"))]
@@ -88,7 +90,7 @@ fn main() -> Result<()> {
             ws_index.stats.total_files,
             ws_index.members.len()
         );
-        return mcp::run_mcp_server(ws_index, ws_config, *enable_watch, *debounce_ms);
+        return mcp::run_mcp_server(ws_index, ws_config, *enable_watch, *debounce_ms, *all_tools);
     }
 
     // Handle watch subcommand

@@ -193,15 +193,15 @@ fn test_simple_glob_match() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn test_tool_definitions_include_new_tools() {
-    let defs = tool_definitions();
+fn test_tool_definitions_all_tools() {
+    // With all_tools=true, all 23 tools should be present
+    let defs = tool_definitions(false, true);
     let tools = defs["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"get_token_estimate"));
     assert!(names.contains(&"search_relevant"));
     assert!(names.contains(&"lookup_symbol"));
     assert!(names.contains(&"regenerate_index"));
-    // New tools
     assert!(names.contains(&"get_diff_summary"));
     assert!(names.contains(&"batch_file_summaries"));
     assert!(names.contains(&"get_callers"));
@@ -213,8 +213,53 @@ fn test_tool_definitions_include_new_tools() {
     assert!(names.contains(&"get_health"));
     assert!(names.contains(&"get_type_flow"));
     assert!(names.contains(&"list_workspace_members"));
-    // Total: 12 original + 11 new = 23
     assert_eq!(names.len(), 23);
+}
+
+#[test]
+fn test_tool_definitions_default_excludes_extended() {
+    // Default (all_tools=false) should exclude extended tools
+    let defs = tool_definitions(false, false);
+    let tools = defs["tools"].as_array().unwrap();
+    let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+    // Core tools present
+    assert!(names.contains(&"lookup_symbol"));
+    assert!(names.contains(&"search_relevant"));
+    assert!(names.contains(&"read_source"));
+    assert!(names.contains(&"get_file_summary"));
+    // Extended tools absent
+    assert!(!names.contains(&"get_hotspots"));
+    assert!(!names.contains(&"get_health"));
+    assert!(!names.contains(&"get_type_flow"));
+    assert!(!names.contains(&"get_dependency_graph"));
+    assert!(!names.contains(&"get_diff_summary"));
+    assert!(!names.contains(&"get_token_estimate"));
+    assert!(!names.contains(&"list_workspace_members"));
+    assert!(!names.contains(&"regenerate_index"));
+    assert_eq!(names.len(), 15);
+}
+
+#[test]
+fn test_tool_definitions_member_param_only_in_workspace() {
+    // Single-project: no member param
+    let defs = tool_definitions(false, true);
+    let tools = defs["tools"].as_array().unwrap();
+    for tool in tools {
+        let name = tool["name"].as_str().unwrap();
+        let props = tool["inputSchema"]["properties"].as_object().unwrap();
+        assert!(!props.contains_key("member"), "{name} should not have member param in single-project mode");
+    }
+
+    // Multi-member workspace: member param added
+    let defs = tool_definitions(true, true);
+    let tools = defs["tools"].as_array().unwrap();
+    let skip = ["list_workspace_members", "regenerate_index"];
+    for tool in tools {
+        let name = tool["name"].as_str().unwrap();
+        if skip.contains(&name) { continue; }
+        let props = tool["inputSchema"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("member"), "{name} should have member param in workspace mode");
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -2118,7 +2163,7 @@ fn test_process_jsonrpc_empty_line() {
     let (ws_config, _config) = make_test_config();
     let registry = ParserRegistry::new();
     let mut ws = wrap_workspace(make_test_index());
-    let result = process_jsonrpc_message("", &mut ws, &ws_config, &registry, Transport::Stdio);
+    let result = process_jsonrpc_message("", &mut ws, &ws_config, &registry, Transport::Stdio, false);
     assert!(result.unwrap().is_none());
 }
 
@@ -2128,7 +2173,7 @@ fn test_process_jsonrpc_notification_returns_none() {
     let registry = ParserRegistry::new();
     let mut ws = wrap_workspace(make_test_index());
     let msg = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-    let result = process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio);
+    let result = process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio, false);
     assert!(result.unwrap().is_none());
 }
 
@@ -2138,7 +2183,7 @@ fn test_process_jsonrpc_parse_error() {
     let registry = ParserRegistry::new();
     let mut ws = wrap_workspace(make_test_index());
     let result =
-        process_jsonrpc_message("not json", &mut ws, &ws_config, &registry, Transport::Stdio);
+        process_jsonrpc_message("not json", &mut ws, &ws_config, &registry, Transport::Stdio, false);
     let err_resp = result.unwrap_err();
     let json = serde_json::to_value(&err_resp).unwrap();
     assert_eq!(json["error"]["code"], -32700);
@@ -2150,7 +2195,7 @@ fn test_process_jsonrpc_initialize() {
     let registry = ParserRegistry::new();
     let mut ws = wrap_workspace(make_test_index());
     let msg = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
-    let result = process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio);
+    let result = process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio, false);
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();
     assert_eq!(json["result"]["protocolVersion"], "2024-11-05");
@@ -2163,7 +2208,7 @@ fn test_process_jsonrpc_tools_list() {
     let registry = ParserRegistry::new();
     let mut ws = wrap_workspace(make_test_index());
     let msg = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#;
-    let result = process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio);
+    let result = process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio, false);
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();
     let tools = json["result"]["tools"].as_array().unwrap();
@@ -2179,7 +2224,7 @@ fn test_process_jsonrpc_unknown_method() {
     let registry = ParserRegistry::new();
     let mut ws = wrap_workspace(make_test_index());
     let msg = r#"{"jsonrpc":"2.0","id":3,"method":"bogus/method","params":{}}"#;
-    let result = process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio);
+    let result = process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio, false);
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();
     assert_eq!(json["error"]["code"], -32601);
