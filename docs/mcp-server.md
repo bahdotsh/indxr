@@ -816,10 +816,10 @@ proc.stdin.write(json.dumps({
 }) + "\n")
 proc.stdin.flush()
 
-# Call a tool
+# Call a compound tool
 request = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-    "name": "lookup_symbol",
-    "arguments": {"name": "main"}
+    "name": "find",
+    "arguments": {"query": "main", "mode": "symbol"}
 }}
 proc.stdin.write(json.dumps(request) + "\n")
 proc.stdin.flush()

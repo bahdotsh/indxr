@@ -127,7 +127,7 @@ Even with MCP tools available, Claude Code may still default to reading full fil
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'IMPORTANT: Before reading full source files, use indxr MCP tools to minimize token usage:\n- get_file_summary: understand a file without reading it (~300 tokens vs ~3000+)\n- lookup_symbol / search_signatures: find specific functions/types\n- read_source: read only the exact function/symbol you need (~100 tokens vs full file)\nOnly use Read when you need to EDIT a file, need exact formatting, or the file is not source code (e.g., CLAUDE.md, Cargo.toml).'"
+            "command": "echo 'IMPORTANT: Before reading full source files, use indxr MCP tools to minimize token usage:\n- summarize(path): understand a file without reading it (~300 tokens vs ~3000+)\n- find(query): find specific functions/types by name, concept, or signature\n- read(path, symbol): read only the exact function/symbol you need (~100 tokens vs full file)\nOnly use Read when you need to EDIT a file, need exact formatting, or the file is not source code (e.g., CLAUDE.md, Cargo.toml).'"
           }
         ]
       },
@@ -136,7 +136,7 @@ Even with MCP tools available, Claude Code may still default to reading full fil
         "hooks": [
           {
             "type": "command",
-            "command": "if printf '%s' \"$TOOL_INPUT\" | grep -qE 'git\\s+diff'; then echo 'IMPORTANT: Use indxr get_diff_summary MCP tool instead of git diff. It shows structural changes (added/removed/modified declarations) at ~200-500 tokens vs thousands for raw diffs. Example: get_diff_summary(since_ref: \"main\")'; fi"
+            "command": "if printf '%s' \"$TOOL_INPUT\" | grep -qE 'git\\s+diff'; then echo 'IMPORTANT: Use indxr get_diff_summary MCP tool instead of git diff (requires --all-tools). It shows structural changes (added/removed/modified declarations) at ~200-500 tokens vs thousands for raw diffs. Example: get_diff_summary(since_ref: \"main\")'; fi"
           }
         ]
       }
@@ -145,7 +145,7 @@ Even with MCP tools available, Claude Code may still default to reading full fil
 }
 ```
 
-The hooks are non-blocking — they print reminders nudging the agent toward cheaper MCP calls without preventing the original action when it's actually needed (e.g., `Read` before editing, or `git diff` for exact line-level changes).
+The hooks are non-blocking — they print reminders nudging the agent toward cheaper compound tool calls without preventing the original action when it's actually needed (e.g., `Read` before editing, or `git diff` for exact line-level changes).
 
 **Teaching the agent via CLAUDE.md:**
 
@@ -315,43 +315,44 @@ Or integrate the MCP server via JSON-RPC 2.0 over stdin/stdout. See [MCP Server 
 
 indxr includes tools specifically designed to help agents minimize token consumption:
 
-### `get_token_estimate`
+### Compound tools for efficient exploration
 
-Before reading a file, agents can check how many tokens it will cost and get a recommendation:
-
-```
-Agent: "I need to understand src/mcp.rs"
-→ calls get_token_estimate("src/mcp.rs")
-→ response: "full file is ~8500 tokens, use get_file_summary (~300 tokens) instead"
-→ agent uses get_file_summary, saving ~8200 tokens
-```
-
-For specific symbols, the savings are even larger:
-
-```
-Agent: "I need to read the parse_declaration function"
-→ calls get_token_estimate("src/parser/rust.rs", symbol="parse_declaration")
-→ response: "symbol is ~150 tokens, full file is ~5000 tokens — 97% reduction with read_source"
-```
-
-### `find`
-
-Instead of the multi-step `get_tree` → `get_file_summary` → `lookup_symbol` dance, agents can search by concept in a single call:
+The 3 default compound tools (`find`, `summarize`, `read`) cover the most common exploration patterns:
 
 ```
 Agent: "Where is authentication handled?"
 → calls find("authentication")
-→ ranked results across paths, names, signatures, and doc comments
+→ ranked results across paths, names, signatures, and doc comments (~200 tokens)
+
+Agent: "I need to understand src/mcp.rs"
+→ calls summarize("src/mcp.rs")
+→ complete file overview: declarations, imports, counts (~300 tokens vs ~8500 for full read)
+
+Agent: "I need to read the parse_declaration function"
+→ calls read("src/parser/rust.rs", symbol="parse_declaration")
+→ just the function source (~150 tokens vs ~5000 for full file)
 ```
 
-The search uses weighted scoring: symbol names match strongest (3x), then signatures (2x), then doc comments (1x), with a boost for public symbols. The `find` compound tool supports multiple modes: `relevant` (default), `symbol`, `callers`, and `signature`.
+The `find` tool supports multiple modes: `relevant` (default — weighted scoring across names, signatures, docs), `symbol` (exact name match), `callers` (who references this), and `signature` (search by pattern like `"-> Result<"`).
+
+The `summarize` tool auto-detects what you pass: file path → file summary, glob pattern → batch summaries, symbol name → full interface details. Use `scope: "public"` for public API only.
+
+### `get_token_estimate` (requires `--all-tools`)
+
+Before reading a file, agents can check how many tokens it will cost:
+
+```
+Agent: "Should I read this file?"
+→ calls get_token_estimate("src/mcp/tools.rs")
+→ response: "full file is ~8500 tokens, use summarize (~300 tokens) instead"
+```
 
 ### Reinforcing with Hooks and CLAUDE.md
 
 Agents don't always use MCP tools voluntarily. Two mechanisms help:
 
-- **`.claude/settings.json` PreToolUse hooks** — intercepts `Read` calls (reminding agents to use `summarize`/`read`) and `Bash` calls containing `git diff` (reminding agents to use `get_diff_summary`). Non-blocking, works automatically.
-- **`CLAUDE.md` instructions** — loaded into every conversation's system prompt. Tell the agent the exploration order, token costs, and when `Read`/`git diff` are justified vs MCP alternatives.
+- **`.claude/settings.json` PreToolUse hooks** — intercepts `Read` calls (reminding agents to use `summarize`/`read` compound tools) and `Bash` calls containing `git diff` (reminding agents to use `get_diff_summary`). Non-blocking, works automatically.
+- **`CLAUDE.md` instructions** — loaded into every conversation's system prompt. Teaches the compound tool workflow (`find` → `summarize` → `read` → `Read`), token costs, and when `Read`/`git diff` are justified vs MCP alternatives.
 
 See the [Claude Code setup section](#claude-code) above for full details, examples, and a ready-to-copy CLAUDE.md template.
 
@@ -400,8 +401,12 @@ With the MCP server running, agents can look up symbols as needed:
 
 ```
 Agent: "Let me check what methods are available on the Cache struct"
-→ calls lookup_symbol("Cache")
-→ gets: struct Cache, impl Cache { fn load(), fn save(), fn get(), fn insert(), ... }
+→ calls summarize("Cache")
+→ gets: struct Cache — signature, doc comment, children (load, save, get, insert, ...), relationships
+
+Agent: "Who calls estimate_tokens?"
+→ calls find("estimate_tokens", mode="callers")
+→ gets: files and declarations that reference estimate_tokens
 ```
 
 ### Pattern 5: Token-Budget-Aware Exploration (MCP)
