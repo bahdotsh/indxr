@@ -41,6 +41,11 @@ DEFAULT_QUESTIONS = "bench_questions/indxr.json"
 DEFAULT_OUTPUT = "benchmark_results_v2.json"
 
 
+def _indicator(s: float) -> str:
+    """Score indicator: OK (>=0.8), ~ (>=0.5), X (below)."""
+    return "OK" if s >= 0.8 else ("~" if s >= 0.5 else "X")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="indxr Accuracy Benchmark v2 — Agent Loop",
@@ -191,7 +196,6 @@ def main():
             ix_tok = ix_result.total_input_tokens
             reduction = bl_tok / ix_tok if ix_tok > 0 else 0
 
-            _indicator = lambda s: "OK" if s >= 0.8 else ("~" if s >= 0.5 else "X")
             print(
                 f"    BL: {_indicator(bl_score.score)} "
                 f"({bl_score.score:.2f}, {bl_tok:,}tok, {bl_result.rounds}rnd)  "

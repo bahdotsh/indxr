@@ -83,6 +83,10 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value {
                             "type": "string",
                             "enum": ["relevant", "symbol", "callers", "signature"],
                             "description": "relevant (default): ranked by relevance. symbol: exact name match. callers: who references this. signature: search in function signatures."
+                        },
+                        "kind": {
+                            "type": "string",
+                            "description": "Filter by declaration kind (e.g. fn, struct, class, trait). Only applies to relevant mode."
                         }
                     },
                     "required": ["query"]
@@ -133,6 +137,10 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value {
                         "end_line": {
                             "type": "number",
                             "description": "End line (1-based, inclusive)"
+                        },
+                        "collapse": {
+                            "type": "boolean",
+                            "description": "Fold nested function/block bodies to reduce output"
                         }
                     },
                     "required": ["path"]
@@ -802,17 +810,24 @@ fn tool_find(workspace: &WorkspaceIndex, args: &Value) -> Value {
             let inner = json!({"query": query, "compact": true});
             tool_search_signatures(workspace, &inner)
         }
-        _ => {
-            // "relevant" or any unrecognized mode
-            let inner = json!({"query": query, "compact": true});
+        "relevant" => {
+            let mut inner = json!({"query": query, "compact": true});
+            if let Some(kind) = args.get("kind") {
+                inner["kind"] = kind.clone();
+            }
             tool_search_relevant(workspace, &inner)
         }
+        other => tool_error(&format!(
+            "Unknown find mode: '{}'. Valid modes: relevant, symbol, callers, signature",
+            other
+        )),
     }
 }
 
 /// `summarize` — unified file/symbol/batch overview.
-/// Routes based on `path` content: glob → batch, no "/" → explain_symbol,
-/// scope=public → get_public_api, else → get_file_summary.
+/// Routes based on `path` content: glob → batch, bare name without file
+/// extension → explain_symbol, scope=public → get_public_api,
+/// else → get_file_summary.
 fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let path = match args.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
@@ -826,8 +841,10 @@ fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value {
         return tool_batch_file_summaries(workspace, &inner);
     }
 
-    // No "/" → treat as symbol name → explain_symbol
-    if !path.contains('/') {
+    // No "/" and no file extension → treat as symbol name → explain_symbol
+    // This lets bare filenames like "main.rs" route to get_file_summary
+    // while symbol names like "Cache" or "parse_file" route to explain_symbol.
+    if !path.contains('/') && !looks_like_file(path) {
         let inner = json!({"name": path});
         return tool_explain_symbol(workspace, &inner);
     }
@@ -841,6 +858,64 @@ fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value {
     // Default → get_file_summary
     let inner = json!({"path": path});
     tool_get_file_summary(workspace, &inner)
+}
+
+/// Returns true if the string looks like a filename (has a recognized extension).
+fn looks_like_file(s: &str) -> bool {
+    matches!(
+        s.rsplit('.').next(),
+        Some(
+            "rs" | "py"
+                | "js"
+                | "ts"
+                | "tsx"
+                | "jsx"
+                | "go"
+                | "java"
+                | "c"
+                | "cpp"
+                | "cc"
+                | "h"
+                | "hpp"
+                | "rb"
+                | "swift"
+                | "kt"
+                | "scala"
+                | "cs"
+                | "php"
+                | "lua"
+                | "zig"
+                | "ex"
+                | "exs"
+                | "erl"
+                | "hs"
+                | "ml"
+                | "toml"
+                | "yaml"
+                | "yml"
+                | "json"
+                | "md"
+                | "txt"
+                | "sh"
+                | "bash"
+                | "zsh"
+                | "r"
+                | "R"
+                | "vue"
+                | "svelte"
+                | "css"
+                | "html"
+                | "xml"
+                | "sql"
+                | "proto"
+                | "thrift"
+                | "dart"
+                | "nim"
+                | "v"
+                | "tf"
+                | "hcl"
+        )
+    ) && s.contains('.')
 }
 
 // ---------------------------------------------------------------------------

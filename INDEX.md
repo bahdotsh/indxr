@@ -1,6 +1,6 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-29 05:02:48 UTC | Files: 72 | Lines: 36242
+> Generated: 2026-03-29 05:12:53 UTC | Files: 72 | Lines: 36527
 > Languages: JSON (3), Markdown (15), Python (11), Rust (41), Shell (1), TOML (1)
 
 ## Directory Structure
@@ -732,7 +732,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 79.8 KB | **Lines:** 2894
+**Language:** Markdown | **Size:** 80.5 KB | **Lines:** 2927
 
 **Declarations:**
 
@@ -806,23 +806,22 @@ indxr/
 
 ## bench/output.py
 
-**Language:** Python | **Size:** 7.0 KB | **Lines:** 179
+**Language:** Python | **Size:** 7.0 KB | **Lines:** 177
 
 **Imports:**
 - `import json`
 - `import time`
+- `from .stats import _mean`
 
 **Declarations:**
 
 `def _print_stat(label: str, value: float, ci=None)`
 
-`def _mean(data) -> float`
-
 ---
 
 ## bench/runner.py
 
-**Language:** Python | **Size:** 12.2 KB | **Lines:** 330
+**Language:** Python | **Size:** 12.2 KB | **Lines:** 334
 
 **Imports:**
 - `import argparse`
@@ -838,6 +837,8 @@ indxr/
 - *... and 4 more imports*
 
 **Declarations:**
+
+`def _indicator(s: float) -> str`
 
 `def _dry_run(questions, baseline_tools, indxr_tools)`
 
@@ -1620,7 +1621,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 94.8 KB | **Lines:** 2731
+**Language:** Rust | **Size:** 102.3 KB | **Lines:** 2950
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1947,11 +1948,41 @@ indxr/
 
 `fn test_workspace_is_single()`
 
+`fn test_compound_find_relevant_mode()`
+
+`fn test_compound_find_symbol_mode()`
+
+`fn test_compound_find_callers_mode()`
+
+`fn test_compound_find_signature_mode()`
+
+`fn test_compound_find_invalid_mode_returns_error()`
+
+`fn test_compound_find_relevant_with_kind_filter()`
+
+`fn test_compound_find_missing_query_returns_error()`
+
+`fn test_compound_summarize_file_path()`
+
+`fn test_compound_summarize_glob_pattern()`
+
+`fn test_compound_summarize_symbol_name()`
+
+`fn test_compound_summarize_bare_filename_routes_to_file()`
+
+`fn test_compound_summarize_public_scope()`
+
+`fn test_compound_summarize_missing_path_returns_error()`
+
+`fn test_compound_read_forwards_to_read_source()`
+
+`fn test_compound_read_with_collapse()`
+
 ---
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 81.5 KB | **Lines:** 2334
+**Language:** Rust | **Size:** 83.0 KB | **Lines:** 2365
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1986,6 +2017,8 @@ indxr/
 `fn tool_find(workspace: &WorkspaceIndex, args: &Value) -> Value`
 
 `fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value`
+
+`fn looks_like_file(s: &str) -> bool`
 
 `fn tool_list_workspace_members(workspace: &WorkspaceIndex) -> Value`
 

@@ -7,6 +7,8 @@ Terminal tables and JSON output with full run details.
 import json
 import time
 
+from .stats import _mean
+
 
 def print_results(question_stats, summary, model: str, verbose: bool = False):
     """Print formatted results table to stdout."""
@@ -173,7 +175,3 @@ def _print_stat(label: str, value: float, ci=None):
         print(f"  {label}  {value:.3f} [{ci[0]:.3f}, {ci[1]:.3f}]")
     else:
         print(f"  {label}  {value:.3f}")
-
-
-def _mean(data) -> float:
-    return sum(float(x) for x in data) / len(data) if data else 0.0

@@ -2729,3 +2729,202 @@ fn test_workspace_is_single() {
     let single = wrap_workspace(make_test_index());
     assert!(single.is_single());
 }
+
+// ---------------------------------------------------------------------------
+// Compound tool tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_compound_find_relevant_mode() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "find", &json!({"query": "parse"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    // Should find parse_file via search_relevant
+    assert!(content["matches"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_compound_find_symbol_mode() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "parse_file", "mode": "symbol"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert!(content["matches"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_compound_find_callers_mode() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "parse_file", "mode": "callers"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    // cache.rs imports parse_file
+    assert!(content["count"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_compound_find_signature_mode() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "-> Result<", "mode": "signature"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert!(content["matches"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_compound_find_invalid_mode_returns_error() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "parse", "mode": "invalid_mode"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("Unknown find mode"));
+    assert!(result["isError"].as_bool().unwrap());
+}
+
+#[test]
+fn test_compound_find_relevant_with_kind_filter() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "find", &json!({"query": "Cache", "kind": "struct"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert!(content["matches"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_compound_find_missing_query_returns_error() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "find", &json!({}));
+    assert!(result["isError"].as_bool().unwrap());
+}
+
+#[test]
+fn test_compound_summarize_file_path() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "summarize", &json!({"path": "src/parser.rs"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(content["file"], "src/parser.rs");
+    assert!(content["declarations"].as_array().unwrap().len() > 0);
+}
+
+#[test]
+fn test_compound_summarize_glob_pattern() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "summarize", &json!({"path": "*.rs"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert!(content["count"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_compound_summarize_symbol_name() {
+    let ws = wrap_workspace(make_test_index());
+    // "Cache" has no "/" and no file extension → symbol
+    let result = handle_tool_call(&ws, "summarize", &json!({"path": "Cache"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(content["name"], "Cache");
+}
+
+#[test]
+fn test_compound_summarize_bare_filename_routes_to_file() {
+    // "main.rs" has no "/" but has a file extension → should route to get_file_summary, not explain_symbol
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "summarize", &json!({"path": "parser.rs"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    // Should NOT try to explain "parser.rs" as a symbol
+    // It will return a "File not found" error because our test paths are "src/parser.rs",
+    // but the important thing is it doesn't route to explain_symbol
+    assert!(!text.contains("\"name\":\"parser.rs\""));
+}
+
+#[test]
+fn test_compound_summarize_public_scope() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(
+        &ws,
+        "summarize",
+        &json!({"path": "src/parser.rs", "scope": "public"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    // get_public_api returns only public declarations
+    let decls = content["declarations"].as_array().unwrap();
+    assert!(!decls.is_empty());
+    // All returned declarations should be public (parse_file is public, internal_helper is not)
+    let names: Vec<&str> = decls.iter().map(|d| d["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"parse_file"));
+    assert!(!names.contains(&"internal_helper"));
+}
+
+#[test]
+fn test_compound_summarize_missing_path_returns_error() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "summarize", &json!({}));
+    assert!(result["isError"].as_bool().unwrap());
+}
+
+#[test]
+fn test_compound_read_forwards_to_read_source() {
+    use std::io::Write as IoWrite;
+
+    let mut index = make_test_index();
+    let dir = std::env::temp_dir().join("indxr_test_compound_read");
+    let _ = std::fs::create_dir_all(dir.join("src"));
+    let source = "// lines 1-9\n\n\n\n\n\n\n\n\npub fn parse_file() {\n    do_stuff();\n}\n";
+    let mut f = std::fs::File::create(dir.join("src/parser.rs")).unwrap();
+    f.write_all(source.as_bytes()).unwrap();
+    index.root = dir.clone();
+
+    let ws = wrap_workspace(index);
+    let result = handle_tool_call(
+        &ws,
+        "read",
+        &json!({"path": "src/parser.rs", "symbol": "parse_file"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("parse_file"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_compound_read_with_collapse() {
+    use std::io::Write as IoWrite;
+
+    let mut index = make_test_index();
+    let dir = std::env::temp_dir().join("indxr_test_compound_read_collapse");
+    let _ = std::fs::create_dir_all(dir.join("src"));
+    let source = "// lines 1-9\n\n\n\n\n\n\n\n\nfn parse_file() {\n    if true {\n        nested();\n    }\n}\n";
+    let mut f = std::fs::File::create(dir.join("src/parser.rs")).unwrap();
+    f.write_all(source.as_bytes()).unwrap();
+    index.root = dir.clone();
+
+    let ws = wrap_workspace(index);
+    let result = handle_tool_call(
+        &ws,
+        "read",
+        &json!({"path": "src/parser.rs", "symbol": "parse_file", "collapse": true}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert!(content["collapsed"].as_bool().unwrap());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
