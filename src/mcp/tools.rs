@@ -841,10 +841,9 @@ fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value {
         return tool_batch_file_summaries(workspace, &inner);
     }
 
-    // No "/" and no file extension → treat as symbol name → explain_symbol
-    // This lets bare filenames like "main.rs" route to get_file_summary
-    // while symbol names like "Cache" or "parse_file" route to explain_symbol.
-    if !path.contains('/') && !looks_like_file(path) {
+    // No "/" and no file extension → could be a symbol name or a bare directory name.
+    // Check if it matches a known directory prefix in the index before treating as symbol.
+    if !path.contains('/') && !looks_like_file(path) && !is_known_directory(workspace, path) {
         let inner = json!({"name": path});
         return tool_explain_symbol(workspace, &inner);
     }
@@ -861,7 +860,7 @@ fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value {
 }
 
 /// Returns true if the string looks like a filename (has a recognized extension).
-fn looks_like_file(s: &str) -> bool {
+pub(super) fn looks_like_file(s: &str) -> bool {
     matches!(
         s.rsplit('.').next(),
         Some(
@@ -916,6 +915,25 @@ fn looks_like_file(s: &str) -> bool {
                 | "hcl"
         )
     ) && s.contains('.')
+}
+
+/// Returns true if `name` matches a directory prefix of any indexed file path.
+/// This prevents bare directory names like `"src"` or `"."` from being misrouted
+/// to `explain_symbol` in the `summarize` compound tool.
+fn is_known_directory(workspace: &WorkspaceIndex, name: &str) -> bool {
+    if name == "." {
+        return true;
+    }
+    let prefix = format!("{}/", name);
+    workspace
+        .members
+        .iter()
+        .flat_map(|m| m.index.files.iter())
+        .any(|f| {
+            f.path
+                .to_str()
+                .is_some_and(|p| p.starts_with(&prefix) || p == name)
+        })
 }
 
 // ---------------------------------------------------------------------------

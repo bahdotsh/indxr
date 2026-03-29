@@ -1,6 +1,6 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-29 05:12:53 UTC | Files: 72 | Lines: 36527
+> Generated: 2026-03-29 05:28:40 UTC | Files: 72 | Lines: 36646
 > Languages: JSON (3), Markdown (15), Python (11), Rust (41), Shell (1), TOML (1)
 
 ## Directory Structure
@@ -551,6 +551,7 @@ indxr/
 **src/mcp/tools.rs**
 - `pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value`
 - `pub(super) fn handle_tool_call(workspace: &WorkspaceIndex, name: &str, args: &Value) -> Value`
+- `pub(super) fn looks_like_file(s: &str) -> bool`
 - `pub(super) fn tool_regenerate_index( workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, ) -> Value`
 - `pub(super) fn tool_lookup_symbol(workspace: &WorkspaceIndex, args: &Value) -> Value`
 - `pub(super) fn tool_list_declarations(workspace: &WorkspaceIndex, args: &Value) -> Value`
@@ -732,7 +733,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 80.5 KB | **Lines:** 2927
+**Language:** Markdown | **Size:** 80.9 KB | **Lines:** 2938
 
 **Declarations:**
 
@@ -887,7 +888,7 @@ indxr/
 
 ## bench/tools_indxr.py
 
-**Language:** Python | **Size:** 4.1 KB | **Lines:** 134
+**Language:** Python | **Size:** 4.2 KB | **Lines:** 137
 
 **Imports:**
 - `import json`
@@ -1621,7 +1622,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 102.3 KB | **Lines:** 2950
+**Language:** Rust | **Size:** 104.8 KB | **Lines:** 2996
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1978,11 +1979,21 @@ indxr/
 
 `fn test_compound_read_with_collapse()`
 
+`fn test_looks_like_file_recognized_extensions()`
+
+`fn test_looks_like_file_not_files()`
+
+`fn test_compound_summarize_bare_directory_routes_to_file_summary()`
+
+`fn test_compound_summarize_dot_routes_to_file_summary()`
+
+`fn test_compound_find_kind_ignored_for_non_relevant_modes()`
+
 ---
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 83.0 KB | **Lines:** 2365
+**Language:** Rust | **Size:** 84.3 KB | **Lines:** 2424
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2018,7 +2029,7 @@ indxr/
 
 `fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value`
 
-`fn looks_like_file(s: &str) -> bool`
+`fn is_known_directory(workspace: &WorkspaceIndex, name: &str) -> bool`
 
 `fn tool_list_workspace_members(workspace: &WorkspaceIndex) -> Value`
 

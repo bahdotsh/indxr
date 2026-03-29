@@ -21,7 +21,7 @@ class IndxrToolkit:
             [indxr_bin, "serve", repo_path],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             text=True,
         )
         self._msg_id = 0
@@ -42,7 +42,10 @@ class IndxrToolkit:
         while True:
             line = self.proc.stdout.readline()
             if not line:
-                raise RuntimeError("indxr MCP server closed unexpectedly")
+                stderr = self.proc.stderr.read() if self.proc.stderr else ""
+                raise RuntimeError(
+                    f"indxr MCP server closed unexpectedly\nstderr: {stderr}"
+                )
             line = line.strip()
             if not line:
                 continue

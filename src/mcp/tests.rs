@@ -2928,3 +2928,69 @@ fn test_compound_read_with_collapse() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---------------------------------------------------------------------------
+// looks_like_file edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_looks_like_file_recognized_extensions() {
+    use super::tools::looks_like_file;
+    assert!(looks_like_file("main.rs"));
+    assert!(looks_like_file("app.py"));
+    assert!(looks_like_file("index.ts"));
+    assert!(looks_like_file("file.test.rs")); // multiple dots
+    assert!(looks_like_file("config.toml"));
+    assert!(looks_like_file("styles.css"));
+}
+
+#[test]
+fn test_looks_like_file_not_files() {
+    use super::tools::looks_like_file;
+    assert!(!looks_like_file("Cache")); // symbol name
+    assert!(!looks_like_file("parse_file")); // symbol name
+    assert!(!looks_like_file("src")); // directory
+    assert!(!looks_like_file(".")); // current dir
+    assert!(!looks_like_file("")); // empty string
+    assert!(!looks_like_file(".gitignore")); // dotfile (no recognized ext)
+    assert!(!looks_like_file("Makefile")); // no extension
+}
+
+// ---------------------------------------------------------------------------
+// summarize: directory routing
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_compound_summarize_bare_directory_routes_to_file_summary() {
+    // "src" is a known directory prefix (files are "src/parser.rs", etc.)
+    // It should NOT route to explain_symbol.
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "summarize", &json!({"path": "src"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    // Should not try to explain "src" as a symbol
+    assert!(!text.contains("\"name\":\"src\""));
+}
+
+#[test]
+fn test_compound_summarize_dot_routes_to_file_summary() {
+    // "." should route to get_file_summary, not explain_symbol
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "summarize", &json!({"path": "."}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    assert!(!text.contains("\"name\":\".\""));
+}
+
+#[test]
+fn test_compound_find_kind_ignored_for_non_relevant_modes() {
+    // kind param should be silently ignored for non-relevant modes
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "parse_file", "mode": "symbol", "kind": "struct"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    // Should still find parse_file (kind is ignored in symbol mode)
+    assert!(content["matches"].as_u64().unwrap() >= 1);
+}
