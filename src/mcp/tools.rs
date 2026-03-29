@@ -105,7 +105,7 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value {
                         "scope": {
                             "type": "string",
                             "enum": ["all", "public"],
-                            "description": "all (default): all declarations. public: public API only."
+                            "description": "all (default): all declarations. public: public API only. Only applies to file paths, ignored for symbol names."
                         }
                     },
                     "required": ["path"]
@@ -828,6 +828,8 @@ fn tool_find(workspace: &WorkspaceIndex, args: &Value) -> Value {
 /// Routes based on `path` content: glob → batch, bare name without file
 /// extension → explain_symbol, scope=public → get_public_api,
 /// else → get_file_summary.
+/// Note: `scope` only applies to file paths — it is ignored for symbol names
+/// (which always route to `explain_symbol`).
 fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let path = match args.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
@@ -860,6 +862,9 @@ fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value {
 }
 
 /// Returns true if the string looks like a filename (has a recognized extension).
+/// This list is intentionally broader than parser-supported languages — it includes
+/// config, doc, and data formats so they route to `get_file_summary` rather than
+/// `explain_symbol` in the `summarize` compound tool.
 pub(super) fn looks_like_file(s: &str) -> bool {
     matches!(
         s.rsplit('.').next(),

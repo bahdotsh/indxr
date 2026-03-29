@@ -349,7 +349,7 @@ fn test_name_match_scores_higher_than_signature() {
     assert!(name_score > 0);
     assert!(sig_score > 0);
     // Both match, but name multiplier is higher
-    assert!(name_score > sig_score || name_score == sig_score);
+    assert!(name_score >= sig_score);
 }
 
 // -----------------------------------------------------------------------
@@ -2820,7 +2820,7 @@ fn test_compound_summarize_file_path() {
     let text = result["content"][0]["text"].as_str().unwrap();
     let content: Value = serde_json::from_str(text).unwrap();
     assert_eq!(content["file"], "src/parser.rs");
-    assert!(content["declarations"].as_array().unwrap().len() > 0);
+    assert!(!content["declarations"].as_array().unwrap().is_empty());
 }
 
 #[test]

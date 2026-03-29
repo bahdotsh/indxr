@@ -115,7 +115,8 @@ def main():
     indxr_tools = indxr.get_tools()
     print(f"  indxr: {len(indxr_tools)} tools loaded from MCP server")
 
-    # Fetch codebase tree for context injection (simulates real INDEX.md usage)
+    # Fetch codebase tree for context injection (simulates real INDEX.md usage).
+    # get_tree is callable even without --all-tools (unlisted but functional).
     tree_context = indxr.execute("get_tree", {})
     indxr_system_prompt = make_indxr_system_prompt(tree_context)
     tree_tokens = len(tree_context) // 4
