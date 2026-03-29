@@ -2994,3 +2994,102 @@ fn test_compound_find_kind_ignored_for_non_relevant_modes() {
     // Should still find parse_file (kind is ignored in symbol mode)
     assert!(content["matches"].as_u64().unwrap() >= 1);
 }
+
+// ---------------------------------------------------------------------------
+// Compound tool: member forwarding in workspace mode
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_compound_find_forwards_member_symbol_mode() {
+    let ws = make_multi_member_workspace();
+    // "Auth" exists in both members, but scoping to "backend" should only find AuthState
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "Auth", "mode": "symbol", "member": "backend"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    let rows = content["rows"].as_array().unwrap();
+    let names: Vec<&str> = rows.iter().map(|r| r[2].as_str().unwrap()).collect();
+    assert!(names.contains(&"AuthState"));
+    assert!(!names.contains(&"useAuth"));
+}
+
+#[test]
+fn test_compound_find_forwards_member_relevant_mode() {
+    let ws = make_multi_member_workspace();
+    // "handle_login" only exists in backend — scoping to "frontend" should not find it
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "handle_login", "member": "frontend"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(content["matches"].as_u64().unwrap(), 0);
+}
+
+#[test]
+fn test_compound_find_forwards_member_callers_mode() {
+    let ws = make_multi_member_workspace();
+    // Scoping callers to "frontend" — backend's import of AuthState should not appear
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "useAuth", "mode": "callers", "member": "frontend"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    // App.tsx imports useAuth — should appear in frontend-scoped results
+    assert!(content["count"].as_u64().unwrap() >= 1);
+    let references = content["references"].as_array().unwrap();
+    let files: Vec<&str> = references
+        .iter()
+        .filter_map(|r| r["file"].as_str())
+        .collect();
+    assert!(files.iter().any(|f| f.contains("App.tsx")));
+}
+
+#[test]
+fn test_compound_find_forwards_member_signature_mode() {
+    let ws = make_multi_member_workspace();
+    // "-> Response" only exists in backend's handle_login
+    // Scoping to "frontend" should find nothing
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "-> Response", "mode": "signature", "member": "frontend"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(content["matches"].as_u64().unwrap(), 0);
+}
+
+#[test]
+fn test_compound_summarize_forwards_member() {
+    let ws = make_multi_member_workspace();
+    // summarize with glob scoped to backend — should only find backend files
+    let result = handle_tool_call(
+        &ws,
+        "summarize",
+        &json!({"path": "src/*.rs", "member": "backend"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    let summaries = content["summaries"].as_array().unwrap();
+    let files: Vec<&str> = summaries
+        .iter()
+        .map(|s| s["file"].as_str().unwrap())
+        .collect();
+    assert!(
+        files
+            .iter()
+            .any(|f| f.contains("handlers.rs") || f.contains("auth.rs"))
+    );
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.contains("App.tsx") || f.contains("hooks.ts"))
+    );
+}

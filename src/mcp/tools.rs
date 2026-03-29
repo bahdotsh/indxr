@@ -28,7 +28,7 @@ use super::type_flow::*;
 ///
 /// The default surface is 3 compound tools (`find`, `summarize`, `read`)
 /// that internally dispatch to the granular tools below. This keeps schema
-/// overhead at ~350 tokens/round vs ~1,100+ for 12 granular tools.
+/// overhead at ~420 tokens/round vs ~1,100+ for 12 granular tools.
 const EXTENDED_TOOLS: &[&str] = &[
     // Granular tools (all still callable, just not listed by default)
     "lookup_symbol",
@@ -68,7 +68,7 @@ fn member_property() -> Value {
 pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value {
     let mut defs = json!({
         "tools": [
-            // -- Compound tools (default surface: 3 tools, ~350 tok/round) --
+            // -- Compound tools (default surface: 3 tools, ~420 tok/round) --
             {
                 "name": "find",
                 "description": "Find symbols, files, or references in the codebase.",
@@ -786,6 +786,14 @@ pub(super) fn handle_tool_call(workspace: &WorkspaceIndex, name: &str, args: &Va
 // Compound tool implementations
 // ---------------------------------------------------------------------------
 
+/// Copy `member` from outer compound tool args into an inner args object,
+/// so workspace scoping is preserved when dispatching to granular tools.
+fn forward_member(from: &Value, to: &mut Value) {
+    if let Some(member) = from.get("member") {
+        to["member"] = member.clone();
+    }
+}
+
 /// `find` — unified search: relevant (default), symbol, callers, signature.
 fn tool_find(workspace: &WorkspaceIndex, args: &Value) -> Value {
     let query = match args.get("query").and_then(|v| v.as_str()) {
@@ -799,15 +807,18 @@ fn tool_find(workspace: &WorkspaceIndex, args: &Value) -> Value {
 
     match mode {
         "symbol" => {
-            let inner = json!({"name": query, "compact": true});
+            let mut inner = json!({"name": query, "compact": true});
+            forward_member(args, &mut inner);
             tool_lookup_symbol(workspace, &inner)
         }
         "callers" => {
-            let inner = json!({"symbol": query});
+            let mut inner = json!({"symbol": query});
+            forward_member(args, &mut inner);
             tool_get_callers(workspace, &inner)
         }
         "signature" => {
-            let inner = json!({"query": query, "compact": true});
+            let mut inner = json!({"query": query, "compact": true});
+            forward_member(args, &mut inner);
             tool_search_signatures(workspace, &inner)
         }
         "relevant" => {
@@ -815,6 +826,7 @@ fn tool_find(workspace: &WorkspaceIndex, args: &Value) -> Value {
             if let Some(kind) = args.get("kind") {
                 inner["kind"] = kind.clone();
             }
+            forward_member(args, &mut inner);
             tool_search_relevant(workspace, &inner)
         }
         other => tool_error(&format!(
@@ -839,25 +851,29 @@ fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value {
 
     // Glob pattern → batch_file_summaries
     if path.contains('*') || path.contains('?') {
-        let inner = json!({"glob": path});
+        let mut inner = json!({"glob": path});
+        forward_member(args, &mut inner);
         return tool_batch_file_summaries(workspace, &inner);
     }
 
     // No "/" and no file extension → could be a symbol name or a bare directory name.
     // Check if it matches a known directory prefix in the index before treating as symbol.
     if !path.contains('/') && !looks_like_file(path) && !is_known_directory(workspace, path) {
-        let inner = json!({"name": path});
+        let mut inner = json!({"name": path});
+        forward_member(args, &mut inner);
         return tool_explain_symbol(workspace, &inner);
     }
 
     // Public scope → get_public_api
     if scope == "public" {
-        let inner = json!({"path": path});
+        let mut inner = json!({"path": path});
+        forward_member(args, &mut inner);
         return tool_get_public_api(workspace, &inner);
     }
 
     // Default → get_file_summary
-    let inner = json!({"path": path});
+    let mut inner = json!({"path": path});
+    forward_member(args, &mut inner);
     tool_get_file_summary(workspace, &inner)
 }
 
