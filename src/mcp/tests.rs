@@ -213,30 +213,29 @@ fn test_tool_definitions_all_tools() {
     assert!(names.contains(&"get_health"));
     assert!(names.contains(&"get_type_flow"));
     assert!(names.contains(&"list_workspace_members"));
-    assert_eq!(names.len(), 23);
+    assert_eq!(names.len(), 26); // 3 compound + 23 granular
 }
 
 #[test]
 fn test_tool_definitions_default_excludes_extended() {
-    // Default (all_tools=false) should exclude extended tools
+    // Default (all_tools=false) should only show compound tools
     let defs = tool_definitions(false, false);
     let tools = defs["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    // Core tools present
-    assert!(names.contains(&"lookup_symbol"));
-    assert!(names.contains(&"search_relevant"));
-    assert!(names.contains(&"read_source"));
-    assert!(names.contains(&"get_file_summary"));
-    // Extended tools absent
+    // Compound tools present
+    assert!(names.contains(&"find"));
+    assert!(names.contains(&"summarize"));
+    assert!(names.contains(&"read"));
+    // Granular tools absent (moved to --all-tools)
+    assert!(!names.contains(&"lookup_symbol"));
+    assert!(!names.contains(&"search_relevant"));
+    assert!(!names.contains(&"read_source"));
+    assert!(!names.contains(&"get_file_summary"));
     assert!(!names.contains(&"get_hotspots"));
     assert!(!names.contains(&"get_health"));
-    assert!(!names.contains(&"get_type_flow"));
-    assert!(!names.contains(&"get_dependency_graph"));
-    assert!(!names.contains(&"get_diff_summary"));
-    assert!(!names.contains(&"get_token_estimate"));
     assert!(!names.contains(&"list_workspace_members"));
     assert!(!names.contains(&"regenerate_index"));
-    assert_eq!(names.len(), 15);
+    assert_eq!(names.len(), 3);
 }
 
 #[test]

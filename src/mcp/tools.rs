@@ -25,7 +25,25 @@ use super::type_flow::*;
 /// Tools that are only advertised when `--all-tools` is set.
 /// They still *work* if called — they just aren't listed by default,
 /// reducing per-request schema overhead. See `benchmark.md` for measurements.
+///
+/// The default surface is 3 compound tools (`find`, `summarize`, `read`)
+/// that internally dispatch to the granular tools below. This keeps schema
+/// overhead at ~350 tokens/round vs ~1,100+ for 12 granular tools.
 const EXTENDED_TOOLS: &[&str] = &[
+    // Granular tools (all still callable, just not listed by default)
+    "lookup_symbol",
+    "list_declarations",
+    "search_signatures",
+    "get_tree",
+    "get_file_summary",
+    "read_source",
+    "get_file_context",
+    "search_relevant",
+    "batch_file_summaries",
+    "get_callers",
+    "get_public_api",
+    "explain_symbol",
+    // Extended tools
     "get_hotspots",
     "get_health",
     "get_type_flow",
@@ -34,6 +52,9 @@ const EXTENDED_TOOLS: &[&str] = &[
     "get_token_estimate",
     "list_workspace_members",
     "regenerate_index",
+    "get_stats",
+    "get_imports",
+    "get_related_tests",
 ];
 
 /// JSON property definition for the optional `member` parameter, shared across tools.
@@ -47,6 +68,77 @@ fn member_property() -> Value {
 pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value {
     let mut defs = json!({
         "tools": [
+            // -- Compound tools (default surface: 3 tools, ~350 tok/round) --
+            {
+                "name": "find",
+                "description": "Find symbols, files, or references in the codebase.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search term (name, concept, or pattern)"
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["relevant", "symbol", "callers", "signature"],
+                            "description": "relevant (default): ranked by relevance. symbol: exact name match. callers: who references this. signature: search in function signatures."
+                        }
+                    },
+                    "required": ["query"]
+                }
+            },
+            {
+                "name": "summarize",
+                "description": "Get overview of a file, symbol, or directory without reading source. Pass a file path for file summary, a glob (e.g. 'src/**/*.rs') for batch summaries, or a symbol name (no '/') to explain a symbol's interface.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "File path, glob pattern, or symbol name"
+                        },
+                        "scope": {
+                            "type": "string",
+                            "enum": ["all", "public"],
+                            "description": "all (default): all declarations. public: public API only."
+                        }
+                    },
+                    "required": ["path"]
+                }
+            },
+            {
+                "name": "read",
+                "description": "Read source code by symbol name or line range. Use symbol to read a specific function/struct, or start_line+end_line for a range. Cap: 200 lines per symbol, 500 total.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "File path"
+                        },
+                        "symbol": {
+                            "type": "string",
+                            "description": "Symbol name to read"
+                        },
+                        "symbols": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Multiple symbols in one call"
+                        },
+                        "start_line": {
+                            "type": "number",
+                            "description": "Start line (1-based)"
+                        },
+                        "end_line": {
+                            "type": "number",
+                            "description": "End line (1-based, inclusive)"
+                        }
+                    },
+                    "required": ["path"]
+                }
+            },
+            // -- Granular tools (listed only with --all-tools) --
             {
                 "name": "list_workspace_members",
                 "description": "List monorepo workspace members.",
@@ -650,8 +742,12 @@ fn merge_member_diffs(
 
 pub(super) fn handle_tool_call(workspace: &WorkspaceIndex, name: &str, args: &Value) -> Value {
     match name {
+        // Compound tools (default surface)
+        "find" => tool_find(workspace, args),
+        "summarize" => tool_summarize(workspace, args),
+        "read" => tool_read_source(workspace, args),
+        // Granular tools (still callable, listed with --all-tools)
         "list_workspace_members" => tool_list_workspace_members(workspace),
-        // Tools that search across all members
         "lookup_symbol" => tool_lookup_symbol(workspace, args),
         "search_signatures" => tool_search_signatures(workspace, args),
         "search_relevant" => tool_search_relevant(workspace, args),
@@ -676,6 +772,75 @@ pub(super) fn handle_tool_call(workspace: &WorkspaceIndex, name: &str, args: &Va
         "get_file_context" => tool_get_file_context(workspace, args),
         _ => tool_error(&format!("Unknown tool: {}", name)),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Compound tool implementations
+// ---------------------------------------------------------------------------
+
+/// `find` — unified search: relevant (default), symbol, callers, signature.
+fn tool_find(workspace: &WorkspaceIndex, args: &Value) -> Value {
+    let query = match args.get("query").and_then(|v| v.as_str()) {
+        Some(q) => q,
+        None => return tool_error("Missing required parameter: query"),
+    };
+    let mode = args
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("relevant");
+
+    match mode {
+        "symbol" => {
+            let inner = json!({"name": query, "compact": true});
+            tool_lookup_symbol(workspace, &inner)
+        }
+        "callers" => {
+            let inner = json!({"symbol": query});
+            tool_get_callers(workspace, &inner)
+        }
+        "signature" => {
+            let inner = json!({"query": query, "compact": true});
+            tool_search_signatures(workspace, &inner)
+        }
+        _ => {
+            // "relevant" or any unrecognized mode
+            let inner = json!({"query": query, "compact": true});
+            tool_search_relevant(workspace, &inner)
+        }
+    }
+}
+
+/// `summarize` — unified file/symbol/batch overview.
+/// Routes based on `path` content: glob → batch, no "/" → explain_symbol,
+/// scope=public → get_public_api, else → get_file_summary.
+fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value {
+    let path = match args.get("path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return tool_error("Missing required parameter: path"),
+    };
+    let scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("all");
+
+    // Glob pattern → batch_file_summaries
+    if path.contains('*') || path.contains('?') {
+        let inner = json!({"glob": path});
+        return tool_batch_file_summaries(workspace, &inner);
+    }
+
+    // No "/" → treat as symbol name → explain_symbol
+    if !path.contains('/') {
+        let inner = json!({"name": path});
+        return tool_explain_symbol(workspace, &inner);
+    }
+
+    // Public scope → get_public_api
+    if scope == "public" {
+        let inner = json!({"path": path});
+        return tool_get_public_api(workspace, &inner);
+    }
+
+    // Default → get_file_summary
+    let inner = json!({"path": path});
+    tool_get_file_summary(workspace, &inner)
 }
 
 // ---------------------------------------------------------------------------

@@ -56,7 +56,7 @@ Options:
   --watch                    Watch for file changes and auto-reindex
   --debounce-ms <MS>         Debounce timeout in milliseconds [default: 300]
   --http <ADDR>              Start Streamable HTTP server (requires 'http' feature)
-  --all-tools                Expose all 23 tools (default: 15 core tools)
+  --all-tools                Expose all 26 tools (default: 3 compound tools)
 ```
 
 ### Auto-Reindexing with `--watch`
@@ -85,13 +85,17 @@ The MCP server implements JSON-RPC 2.0 over stdin/stdout, following the MCP spec
 
 ## Available Tools
 
-By default, the MCP server lists **15 core tools** to minimize per-request token overhead (~64% reduction vs listing all 23). Pass `--all-tools` to the `serve` command to list all 23 tools. Extended tools are always **callable** regardless of this flag — `--all-tools` only controls whether they appear in the `tools/list` response.
+By default, the MCP server lists **3 compound tools** (`find`, `summarize`, `read`) to minimize per-request token overhead. Pass `--all-tools` to the `serve` command to list all 26 tools (3 compound + 23 granular). Granular tools are always **callable** regardless of this flag — `--all-tools` only controls whether they appear in the `tools/list` response.
 
 > **Workspace support:** In monorepo/workspace projects (Cargo, npm, Go), most tools automatically gain an optional `member` parameter (string) to scope the query to a specific workspace member by name. In single-project mode, the `member` parameter is not included to save tokens. If omitted, all members are searched.
 
-**Default tools (15):** `lookup_symbol`, `list_declarations`, `search_signatures`, `get_tree`, `get_imports`, `get_stats`, `get_file_summary`, `read_source`, `get_file_context`, `search_relevant`, `explain_symbol`, `batch_file_summaries`, `get_public_api`, `get_callers`, `get_related_tests`
+**Default compound tools (3):** `find`, `summarize`, `read`
 
-**Extended tools (8 — requires `--all-tools`):** `get_hotspots`, `get_health`, `get_type_flow`, `get_dependency_graph`, `get_diff_summary`, `get_token_estimate`, `list_workspace_members`, `regenerate_index`
+- `find(query, mode?)` — modes: `relevant` (default), `symbol`, `callers`, `signature`. Replaces: `search_relevant`, `lookup_symbol`, `get_callers`, `search_signatures`, `explain_symbol`
+- `summarize(path, scope?)` — scope: `all` (default), `public`. Auto-detects: glob -> batch, no "/" -> symbol name, file path -> file summary. Replaces: `get_file_summary`, `get_public_api`, `list_declarations`, `batch_file_summaries`, `get_file_context`, `explain_symbol`
+- `read(path, symbol?, symbols?, start_line?, end_line?)` — same as `read_source`. Replaces: `read_source`
+
+**Granular tools (23 — requires `--all-tools`):** `search_relevant`, `lookup_symbol`, `explain_symbol`, `get_file_summary`, `batch_file_summaries`, `get_file_context`, `get_public_api`, `get_callers`, `list_declarations`, `search_signatures`, `read_source`, `get_tree`, `get_stats`, `get_imports`, `get_related_tests`, `get_hotspots`, `get_health`, `get_type_flow`, `get_dependency_graph`, `get_diff_summary`, `get_token_estimate`, `list_workspace_members`, `regenerate_index`
 
 ---
 
@@ -228,6 +232,8 @@ Get the directory and file tree of the indexed codebase.
 
 ### `get_imports`
 
+> *Extended tool — only listed with `--all-tools`, but always callable.*
+
 Get all import statements for a specific file.
 
 **Parameters:**
@@ -237,6 +243,8 @@ Get all import statements for a specific file.
 | `path` | string | yes | Relative file path |
 
 ### `get_stats`
+
+> *Extended tool — only listed with `--all-tools`, but always callable.*
 
 Get index statistics. No parameters required.
 
@@ -478,6 +486,8 @@ Find declarations that reference a symbol. Searches signatures and import statem
 ```
 
 ### `get_related_tests`
+
+> *Extended tool — only listed with `--all-tools`, but always callable.*
 
 Find test functions for a symbol by naming convention and file association.
 

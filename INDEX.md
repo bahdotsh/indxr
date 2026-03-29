@@ -1,6 +1,6 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-28 18:50:11 UTC | Files: 72 | Lines: 35920
+> Generated: 2026-03-29 05:02:48 UTC | Files: 72 | Lines: 36242
 > Languages: JSON (3), Markdown (15), Python (11), Rust (41), Shell (1), TOML (1)
 
 ## Directory Structure
@@ -154,7 +154,8 @@ indxr/
 - `API_DELAY = 0.3`
 - `@dataclass class ToolCall`
 - `@dataclass class AgentResult`
-- `SYSTEM_PROMPT = ( "You are answering a question about a codebase. " "Use the provided tools to explore the code and find the answer. " "Be thorough but efficient — use the minimum tools needed to answer confidently. " "When you have enough information, stop calling tools and give your final answer. " "Answer concisely and precisely. Include file paths, function names, " "types, and other concrete details. Do not hedge or speculate. " "If you cannot determine the answer from the available tools, say so clearly." )`
+- `BASELINE_SYSTEM_PROMPT = ( "You are answering a question about a codebase. " "Use the provided tools to explore the code and find the answer. " "Be thorough but efficient — use the minimum tools needed to answer confidently. " "When you have enough information, stop calling tools and give your final answer. " "Answer concisely and precisely. Include file paths, function names, " "types, and other concrete details. Do not hedge or speculate. " "If you cannot determine the answer from the available tools, say so clearly." )`
+- `def make_indxr_system_prompt(tree_context: str) -> str`
 - `def run_agent(
     client,
     model: str,
@@ -163,6 +164,7 @@ indxr/
     question: str,
     max_rounds: int = 10,
     max_input_tokens: int = 50_000,
+    system_prompt: str = BASELINE_SYSTEM_PROMPT,
 ) -> AgentResult`
 
 **bench/output.py**
@@ -701,7 +703,7 @@ indxr/
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 13.4 KB | **Lines:** 212
+**Language:** Markdown | **Size:** 11.6 KB | **Lines:** 203
 
 **Declarations:**
 
@@ -730,7 +732,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 78.9 KB | **Lines:** 2885
+**Language:** Markdown | **Size:** 79.8 KB | **Lines:** 2894
 
 **Declarations:**
 
@@ -738,7 +740,7 @@ indxr/
 
 ## README.md
 
-**Language:** Markdown | **Size:** 11.0 KB | **Lines:** 264
+**Language:** Markdown | **Size:** 11.4 KB | **Lines:** 267
 
 **Declarations:**
 
@@ -789,7 +791,7 @@ indxr/
 
 ## bench/agent.py
 
-**Language:** Python | **Size:** 5.8 KB | **Lines:** 188
+**Language:** Python | **Size:** 7.0 KB | **Lines:** 213
 
 **Imports:**
 - `import time`
@@ -804,7 +806,7 @@ indxr/
 
 ## bench/output.py
 
-**Language:** Python | **Size:** 5.8 KB | **Lines:** 162
+**Language:** Python | **Size:** 7.0 KB | **Lines:** 179
 
 **Imports:**
 - `import json`
@@ -820,24 +822,26 @@ indxr/
 
 ## bench/runner.py
 
-**Language:** Python | **Size:** 10.2 KB | **Lines:** 292
+**Language:** Python | **Size:** 12.2 KB | **Lines:** 330
 
 **Imports:**
 - `import argparse`
 - `import json`
+- `import math`
 - `import os`
 - `import sys`
 - `import time`
 - `from dataclasses import asdict`
 - `from pathlib import Path`
-- `from .agent import run_agent`
+- `from .agent import run_agent, BASELINE_SYSTEM_PROMPT, make_indxr_system_prompt`
 - `from .tools_baseline import make_baseline_tools, BaselineToolkit`
-- `from .tools_indxr import IndxrToolkit`
-- *... and 3 more imports*
+- *... and 4 more imports*
 
 **Declarations:**
 
 `def _dry_run(questions, baseline_tools, indxr_tools)`
+
+`def _estimate_schema_tokens(tools: list[dict], system_prompt: str) -> int`
 
 ---
 
@@ -855,7 +859,7 @@ indxr/
 
 ## bench/stats.py
 
-**Language:** Python | **Size:** 4.4 KB | **Lines:** 146
+**Language:** Python | **Size:** 5.6 KB | **Lines:** 171
 
 **Imports:**
 - `import random`
@@ -899,7 +903,7 @@ indxr/
 
 ## bench_questions/indxr.json
 
-**Language:** JSON | **Size:** 21.6 KB | **Lines:** 407
+**Language:** JSON | **Size:** 22.0 KB | **Lines:** 437
 
 **Declarations:**
 
@@ -931,7 +935,7 @@ indxr/
 
 ## docs/agent-integration.md
 
-**Language:** Markdown | **Size:** 18.1 KB | **Lines:** 505
+**Language:** Markdown | **Size:** 17.7 KB | **Lines:** 499
 
 **Declarations:**
 
@@ -947,7 +951,7 @@ indxr/
 
 ## docs/cli-reference.md
 
-**Language:** Markdown | **Size:** 12.4 KB | **Lines:** 439
+**Language:** Markdown | **Size:** 12.5 KB | **Lines:** 439
 
 **Declarations:**
 
@@ -987,7 +991,7 @@ indxr/
 
 ## docs/mcp-server.md
 
-**Language:** Markdown | **Size:** 26.7 KB | **Lines:** 847
+**Language:** Markdown | **Size:** 27.6 KB | **Lines:** 857
 
 **Declarations:**
 
@@ -1291,7 +1295,7 @@ indxr/
 
 ## src/init.rs
 
-**Language:** Rust | **Size:** 53.3 KB | **Lines:** 1489
+**Language:** Rust | **Size:** 53.7 KB | **Lines:** 1502
 
 **Imports:**
 - `std::fs`
@@ -1616,7 +1620,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 94.9 KB | **Lines:** 2732
+**Language:** Rust | **Size:** 94.8 KB | **Lines:** 2731
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1947,7 +1951,7 @@ indxr/
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 74.9 KB | **Lines:** 2166
+**Language:** Rust | **Size:** 81.5 KB | **Lines:** 2334
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1964,7 +1968,7 @@ indxr/
 
 **Declarations:**
 
-`const EXTENDED_TOOLS: &[&str] = &[ "get_hotspots", "get_health", "get_type_flow", "get_dependency_graph", "get_diff_summary", "get_token_estimate", "list_workspace_members", "regenerate_index", ]`
+`const EXTENDED_TOOLS: &[&str] = &[ // Granular tools (all still callable, just not listed by default) "lookup_symbol", "list_declarations", "search_signatures", "get_tree", "get_file_summary", "read_source", "get_file_context", "search_relevant", "batch_file_summaries", "get_callers", "get_public_api", "explain_symbol", // Extended tools "get_hotspots", "get_health", "get_type_flow", "get_dependency_graph", "get_diff_summary", "get_token_estimate", "list_workspace_members", "regenerate_index", "get_stats", "get_imports", "get_related_tests", ]`
 
 `fn member_property() -> Value`
 
@@ -1978,6 +1982,10 @@ indxr/
 > Fields: `files_added: Vec<PathBuf>`, `files_removed: Vec<PathBuf>`, `files_modified: Vec<diff::FileDiff>`
 
 `fn merge_member_diffs( workspace: &WorkspaceIndex, old_files: &HashMap<PathBuf, FileIndex>, changed_paths: &[PathBuf], ) -> MergedStructuralDiff`
+
+`fn tool_find(workspace: &WorkspaceIndex, args: &Value) -> Value`
+
+`fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value`
 
 `fn tool_list_workspace_members(workspace: &WorkspaceIndex) -> Value`
 
