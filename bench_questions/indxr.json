@@ -1,0 +1,437 @@
+{
+  "version": 2,
+  "description": "indxr accuracy benchmark v2: agent-loop comparison on indxr's own codebase",
+  "repo": "self",
+  "questions": [
+    {
+      "id": "nav-001",
+      "category": "navigate",
+      "difficulty": "easy",
+      "question": "I need to change how tokens are estimated. Where is that logic?",
+      "ground_truth": "src/budget.rs contains the estimate_tokens function",
+      "scoring": "substring",
+      "scoring_targets": ["src/budget.rs"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-002",
+      "category": "navigate",
+      "difficulty": "easy",
+      "question": "I want to modify how MCP tool calls are routed. Where is the main dispatcher that maps tool names to handler functions?",
+      "ground_truth": "handle_tool_call in src/mcp/tools.rs",
+      "scoring": "all_of",
+      "scoring_targets": ["handle_tool_call", "src/mcp/tools.rs"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-003",
+      "category": "navigate",
+      "difficulty": "easy",
+      "question": "What's the main data structure that holds the parsed representation of a single source file? Where is it defined?",
+      "ground_truth": "FileIndex in src/model/mod.rs",
+      "scoring": "all_of",
+      "scoring_targets": ["FileIndex", "src/model"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-004",
+      "category": "navigate",
+      "difficulty": "medium",
+      "question": "I need to add a new declaration kind (like 'Hook' for React). Where is DeclKind defined and what are the current variants?",
+      "ground_truth": "DeclKind is in src/model/declarations.rs. Variants: Function, Struct, Enum, Trait, Impl, Constant, Static, TypeAlias, Module, Class, Field, Variant, Method, Interface, Namespace, etc.",
+      "scoring": "set_match",
+      "scoring_targets": ["src/model/declarations", "Function", "Struct", "Enum", "Trait", "Impl", "Constant", "TypeAlias", "Module", "Class", "Method", "Interface"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-005",
+      "category": "navigate",
+      "difficulty": "medium",
+      "question": "I'm refactoring src/mcp/helpers.rs. Which other files import from it so I know the blast radius?",
+      "ground_truth": "src/mcp/tools.rs and src/mcp/tests.rs import from helpers.rs",
+      "scoring": "set_match",
+      "scoring_targets": ["src/mcp/tools.rs", "src/mcp/tests.rs"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-006",
+      "category": "navigate",
+      "difficulty": "medium",
+      "question": "I want to add a field to the Declaration struct. Which files use it so I can assess the impact?",
+      "ground_truth": "Files that import/use Declaration include src/mcp/tools.rs, src/mcp/helpers.rs, src/filter.rs, src/budget.rs, src/diff.rs, src/dep_graph.rs",
+      "scoring": "set_match",
+      "scoring_targets": ["src/mcp/helpers.rs", "src/filter.rs", "src/diff.rs", "src/budget.rs"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-007",
+      "category": "navigate",
+      "difficulty": "easy",
+      "question": "What's the high-level project structure? What are the main modules in src/?",
+      "ground_truth": "cache/, model/, mcp/, output/, parser/, walker/, and standalone files like cli.rs, indexer.rs, budget.rs, filter.rs, diff.rs, watch.rs, workspace.rs, init.rs, etc.",
+      "scoring": "set_match",
+      "scoring_targets": ["cache", "model", "mcp", "output", "parser", "walker", "cli.rs", "indexer.rs", "budget.rs", "filter.rs", "diff.rs"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-008",
+      "category": "navigate",
+      "difficulty": "medium",
+      "question": "I need to trace how a WorkspaceIndex gets created. Which functions build or return one?",
+      "ground_truth": "build_workspace_index, detect_and_build_workspace, and regenerate_workspace_index in src/indexer.rs",
+      "scoring": "set_match",
+      "scoring_targets": ["build_workspace_index", "detect_and_build_workspace", "regenerate_workspace_index"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-009",
+      "category": "navigate",
+      "difficulty": "easy",
+      "question": "I need to add tree-sitter support for a new language. Where are the existing tree-sitter query files?",
+      "ground_truth": "src/parser/queries/ directory containing rust.rs, python.rs, javascript.rs, typescript.rs, go.rs, java.rs, c.rs, cpp.rs, mod.rs",
+      "scoring": "set_match",
+      "scoring_targets": ["src/parser/queries", "rust.rs", "python.rs", "javascript.rs", "go.rs"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-010",
+      "category": "navigate",
+      "difficulty": "medium",
+      "question": "What does the data model look like in src/model/? I need to understand all the core types before I start contributing.",
+      "ground_truth": "In src/model/mod.rs: CodebaseIndex, FileIndex, Import, TreeEntry, IndexStats, WorkspaceIndex, MemberIndex. In src/model/declarations.rs: Declaration, ComplexityMetrics, Relationship",
+      "scoring": "set_match",
+      "scoring_targets": ["CodebaseIndex", "FileIndex", "WorkspaceIndex", "Declaration", "Import", "MemberIndex", "TreeEntry"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-011",
+      "category": "navigate",
+      "difficulty": "medium",
+      "question": "I want to understand what indexer.rs depends on from the rest of the codebase. What does it import?",
+      "ground_truth": "It imports from crate::cache, crate::model, crate::output, crate::parser, crate::walker, crate::workspace",
+      "scoring": "set_match",
+      "scoring_targets": ["crate::cache", "crate::model", "crate::output", "crate::parser", "crate::walker", "crate::workspace"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-012",
+      "category": "navigate",
+      "difficulty": "medium",
+      "question": "Where are all the enum types in the project? I want to check if I need a new enum or can extend an existing one.",
+      "ground_truth": "Enums in src/model/declarations.rs (DeclKind, Visibility, RelKind), src/languages.rs (Language), src/cli.rs (Command, OutputFormat, etc.), src/dep_graph.rs, src/workspace.rs, src/error.rs",
+      "scoring": "set_match",
+      "scoring_targets": ["src/model", "src/languages.rs", "src/cli.rs", "src/dep_graph.rs", "src/workspace.rs"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-013",
+      "category": "navigate",
+      "difficulty": "easy",
+      "question": "What public API does src/budget.rs expose? I want to know what I can call from other modules.",
+      "ground_truth": "Two public functions: estimate_tokens(text: &str) -> usize and apply_token_budget(index: &mut CodebaseIndex, max_tokens: usize)",
+      "scoring": "set_match",
+      "scoring_targets": ["estimate_tokens", "apply_token_budget"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-014",
+      "category": "navigate",
+      "difficulty": "medium",
+      "question": "I want to add a new config option. What fields does IndexConfig currently have?",
+      "ground_truth": "root: PathBuf, cache_dir: PathBuf, max_file_size: u64, max_depth: Option<usize>, exclude: Vec<String>, no_gitignore: bool",
+      "scoring": "set_match",
+      "scoring_targets": ["root", "cache_dir", "max_file_size", "max_depth", "exclude", "no_gitignore"],
+      "scoring_anti_targets": ["languages", "config"]
+    },
+    {
+      "id": "nav-015",
+      "category": "navigate",
+      "difficulty": "medium",
+      "question": "I want to understand what MCP tools are available. How many tool handler functions are there in src/mcp/tools.rs, and what are some of them?",
+      "ground_truth": "About 23 tool_* functions including tool_lookup_symbol, tool_read_source, tool_get_file_summary, tool_search_relevant, tool_get_callers, tool_explain_symbol, tool_batch_file_summaries, tool_get_public_api, etc.",
+      "scoring": "set_match",
+      "scoring_targets": ["tool_lookup_symbol", "tool_read_source", "tool_get_file_summary", "tool_search_relevant", "tool_get_callers", "tool_explain_symbol", "tool_batch_file_summaries", "tool_get_public_api"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-016",
+      "category": "navigate",
+      "difficulty": "medium",
+      "question": "What does FileIndex actually contain? I need to know the struct fields to add a new one.",
+      "ground_truth": "path: PathBuf, language: Language, size: u64, lines: usize, imports: Vec<Import>, declarations: Vec<Declaration>",
+      "scoring": "set_match",
+      "scoring_targets": ["path", "language", "size", "lines", "imports", "declarations"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-017",
+      "category": "navigate",
+      "difficulty": "medium",
+      "question": "Which functions reference estimate_tokens? I changed its signature and need to update all call sites.",
+      "ground_truth": "Referenced in src/budget.rs (where it's defined) and src/mcp/tools.rs (where it's called for token estimation in tool responses)",
+      "scoring": "set_match",
+      "scoring_targets": ["budget", "tools.rs"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "nav-018",
+      "category": "navigate",
+      "difficulty": "easy",
+      "question": "What output formats does indxr support? I want to add a new one.",
+      "ground_truth": "Markdown, JSON, and YAML",
+      "scoring": "set_match",
+      "scoring_targets": ["Markdown", "JSON", "YAML"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "understand-001",
+      "category": "understand",
+      "difficulty": "medium",
+      "question": "How does the token budget pruning work? I need to understand the stages to add a new one. What gets cut first vs last?",
+      "ground_truth": "Progressive stages: 1) Truncate long doc comments, 2) Strip all doc comments, 3) Remove private declarations, 4) Remove children, 5) Drop least-important files. Ordered from least lossy to most lossy.",
+      "scoring": "set_match",
+      "scoring_targets": ["doc comment", "private", "children", "drop"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "understand-002",
+      "category": "understand",
+      "difficulty": "easy",
+      "question": "What happens if I send an unknown tool name to the MCP server? Does it crash or return an error?",
+      "ground_truth": "Returns a tool_error with message 'Unknown tool: <name>'. Does not crash or panic.",
+      "scoring": "all_of",
+      "scoring_targets": ["Unknown tool", "error"],
+      "scoring_anti_targets": ["panic", "crash", "exception"]
+    },
+    {
+      "id": "understand-003",
+      "category": "understand",
+      "difficulty": "medium",
+      "question": "I'm writing a client for the read_source tool. What parameters are required and what happens if I pass neither a symbol name nor line range?",
+      "ground_truth": "path is required. You must provide either 'symbol'/'symbols' or both 'start_line' and 'end_line'. Without either, it returns an error.",
+      "scoring": "all_of",
+      "scoring_targets": ["symbol", "start_line", "end_line"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "understand-004",
+      "category": "understand",
+      "difficulty": "medium",
+      "question": "How does file importance scoring work in the budget system? I want to boost test files — what factors currently affect the score?",
+      "ground_truth": "Entry point files score highest (main.rs=100, lib.rs=90, mod.rs=50). Depth penalty (depth*5). Public declaration count bonus (count*3). Line count penalty (lines/100).",
+      "scoring": "set_match",
+      "scoring_targets": ["main", "lib", "depth", "public"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "understand-005",
+      "category": "understand",
+      "difficulty": "medium",
+      "question": "Does the watch mode re-index on every single file save, or does it batch changes? I'm worried about performance with frequent saves.",
+      "ground_truth": "It coalesces events — after receiving a change, it drains all queued events with try_recv() and re-indexes only once per burst.",
+      "scoring": "all_of",
+      "scoring_targets": ["coalesce", "once"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "understand-006",
+      "category": "understand",
+      "difficulty": "medium",
+      "question": "How does the cache decide if a file needs re-parsing? I'm seeing stale results after editing files.",
+      "ground_truth": "Cache checks mtime (modification time) and file size. If either changed, the cached entry is considered invalid and the file gets re-parsed.",
+      "scoring": "all_of",
+      "scoring_targets": ["mtime", "size"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "understand-007",
+      "category": "understand",
+      "difficulty": "easy",
+      "question": "How does estimate_tokens work? What's the conversion formula from text to token count?",
+      "ground_truth": "Divides byte length by 4 using ceiling division: text.len().div_ceil(4). Roughly 4 characters per token.",
+      "scoring": "all_of",
+      "scoring_targets": ["4", "character"],
+      "scoring_anti_targets": ["3", "5", "8"]
+    },
+    {
+      "id": "understand-008",
+      "category": "understand",
+      "difficulty": "medium",
+      "question": "What does batch_file_summaries return when there are hundreds of matching files? Does it return all of them?",
+      "ground_truth": "No, it caps results at 30 files. Returns the count, total_matched (actual number), and the first 30 summaries.",
+      "scoring": "all_of",
+      "scoring_targets": ["30", "total_matched"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "understand-009",
+      "category": "understand",
+      "difficulty": "easy",
+      "question": "If the current token count is already within the budget, does apply_token_budget still strip doc comments and private declarations?",
+      "ground_truth": "No, it returns immediately without any truncation.",
+      "scoring": "all_of",
+      "scoring_targets": ["return", "immediately"],
+      "scoring_anti_targets": ["always runs", "still truncates"]
+    },
+    {
+      "id": "understand-010",
+      "category": "understand",
+      "difficulty": "medium",
+      "question": "If I request a symbol via read_source but also pass start_line, which takes priority?",
+      "ground_truth": "The symbol parameter takes priority. The code checks for symbol first in an if-else chain.",
+      "scoring": "substring",
+      "scoring_targets": ["symbol"],
+      "scoring_anti_targets": ["start_line takes priority", "line range takes priority", "error"]
+    },
+    {
+      "id": "understand-011",
+      "category": "understand",
+      "difficulty": "medium",
+      "question": "What does get_file_summary return? I need to know the JSON structure to parse it in my client.",
+      "ground_truth": "Returns: file (path), language, size, lines, imports (array), declarations (shallow), counts (kind -> count map), has_tests (bool), public_symbols (count)",
+      "scoring": "set_match",
+      "scoring_targets": ["file", "language", "imports", "declarations", "counts", "has_tests", "public_symbols"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "understand-012",
+      "category": "understand",
+      "difficulty": "easy",
+      "question": "What error does read_source give when the requested symbol doesn't exist in the file?",
+      "ground_truth": "Returns 'Symbol <name> not found in <path>'",
+      "scoring": "all_of",
+      "scoring_targets": ["not found", "Symbol"],
+      "scoring_anti_targets": ["panic", "crash"]
+    },
+    {
+      "id": "understand-013",
+      "category": "understand",
+      "difficulty": "medium",
+      "question": "What happens if a function is really long (say 500 lines) and I request it via read_source? Does it dump the whole thing?",
+      "ground_truth": "No, it truncates to 200 lines for single-symbol mode.",
+      "scoring": "all_of",
+      "scoring_targets": ["200", "truncat"],
+      "scoring_anti_targets": ["error", "reject"]
+    },
+    {
+      "id": "understand-014",
+      "category": "understand",
+      "difficulty": "medium",
+      "question": "How does the MCP server format error responses? I'm seeing isError in the JSON — how does tool_error structure its output?",
+      "ground_truth": "tool_error returns a JSON Value with isError: true and a text content block containing the error message string.",
+      "scoring": "all_of",
+      "scoring_targets": ["isError", "true", "text"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "understand-015",
+      "category": "understand",
+      "difficulty": "medium",
+      "question": "What caching strategy does indxr use? I want to understand the fast path vs the full content check.",
+      "ground_truth": "Uses mtime+size as a fast metadata check (avoids reading file content). Content hash (xxh3) is computed at insert time but not checked on reads — the metadata check is sufficient.",
+      "scoring": "all_of",
+      "scoring_targets": ["mtime", "hash"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "design-001",
+      "category": "design",
+      "difficulty": "medium",
+      "question": "Why is the MCP tool dispatcher split? regenerate_index and get_diff_summary are handled separately from handle_tool_call. What do they need that other tools don't?",
+      "ground_truth": "regenerate_index needs mutable access to WorkspaceIndex and WorkspaceConfig. get_diff_summary needs ParserRegistry. The generic handle_tool_call only takes &WorkspaceIndex (immutable).",
+      "scoring": "set_match",
+      "scoring_targets": ["mutable", "WorkspaceConfig", "ParserRegistry"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "design-002",
+      "category": "design",
+      "difficulty": "medium",
+      "question": "Why does the cache use both mtime+size checks AND xxh3 content hashing? Seems redundant — why not just use one?",
+      "ground_truth": "mtime+size is a fast metadata-only check that avoids reading file content from disk. The hash is computed at insert time for accuracy. This two-tier approach gives fast cache lookups while maintaining correctness.",
+      "scoring": "all_of",
+      "scoring_targets": ["fast", "metadata", "content"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "design-003",
+      "category": "design",
+      "difficulty": "medium",
+      "question": "Why is there a 200-line cap on read_source? Seems annoying when I want to read a big function.",
+      "ground_truth": "To prevent dumping large amounts of code into the LLM context, wasting tokens. Forces targeted reading.",
+      "scoring": "all_of",
+      "scoring_targets": ["context", "token"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "design-004",
+      "category": "design",
+      "difficulty": "hard",
+      "question": "In the budget system, why are doc comments stripped before private declarations? I'd have thought removing private stuff saves more tokens.",
+      "ground_truth": "Doc comments are the least lossy thing to remove — they don't affect structural information. Private declarations are actual code structure. The stages go from least lossy to most lossy.",
+      "scoring": "all_of",
+      "scoring_targets": ["least", "lossy"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "design-005",
+      "category": "design",
+      "difficulty": "medium",
+      "question": "In the budget system, why are deeper files scored as less important? Couldn't a deeply nested file be critical?",
+      "ground_truth": "Files near the project root tend to be architecturally significant (entry points, module definitions). Deeper files are typically implementation details or utilities.",
+      "scoring": "all_of",
+      "scoring_targets": ["root", "important"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "design-006",
+      "category": "design",
+      "difficulty": "hard",
+      "question": "In the watch module, the output path is canonicalized AFTER the first write, not before. Why? The comment in the code explains this.",
+      "ground_truth": "The file must exist before it can be canonicalized. And the canonical path is needed to filter out self-triggered re-indexes when the output file changes.",
+      "scoring": "all_of",
+      "scoring_targets": ["exist", "self-triggering"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "design-007",
+      "category": "design",
+      "difficulty": "medium",
+      "question": "In Stage 5 of apply_token_budget, why does the loop keep at least one file even when over budget? Why not drop everything?",
+      "ground_truth": "To ensure the output is never completely empty. At least the most important file is preserved so there's some useful structural info.",
+      "scoring": "all_of",
+      "scoring_targets": ["empty", "at least"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "design-008",
+      "category": "design",
+      "difficulty": "hard",
+      "question": "Why does handle_tool_call take &WorkspaceIndex (immutable reference) rather than &mut? What's the safety benefit?",
+      "ground_truth": "Immutable reference guarantees tool calls can't corrupt the index state. Only regenerate_index (which rebuilds the index) needs mutation.",
+      "scoring": "all_of",
+      "scoring_targets": ["immutable", "safe"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "design-009",
+      "category": "design",
+      "difficulty": "medium",
+      "question": "In apply_token_budget, files are sorted by file_importance in ascending order before Stage 5 drops them. Why ascending instead of descending?",
+      "ground_truth": "Files are dropped from the front (index 0). Ascending sort puts least important files first, so they get dropped first. Most important files survive.",
+      "scoring": "all_of",
+      "scoring_targets": ["least important", "first"],
+      "scoring_anti_targets": []
+    },
+    {
+      "id": "design-010",
+      "category": "design",
+      "difficulty": "medium",
+      "question": "Why does batch_file_summaries cap at 30 files? What goes wrong if it returns more?",
+      "ground_truth": "Each summary includes metadata, imports, and declarations. 30+ summaries would create a huge response that wastes tokens and is hard for the LLM to parse.",
+      "scoring": "all_of",
+      "scoring_targets": ["context", "token"],
+      "scoring_anti_targets": []
+    }
+  ]
+}

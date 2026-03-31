@@ -213,30 +213,29 @@ fn test_tool_definitions_all_tools() {
     assert!(names.contains(&"get_health"));
     assert!(names.contains(&"get_type_flow"));
     assert!(names.contains(&"list_workspace_members"));
-    assert_eq!(names.len(), 23);
+    assert_eq!(names.len(), 26); // 3 compound + 23 granular
 }
 
 #[test]
 fn test_tool_definitions_default_excludes_extended() {
-    // Default (all_tools=false) should exclude extended tools
+    // Default (all_tools=false) should only show compound tools
     let defs = tool_definitions(false, false);
     let tools = defs["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    // Core tools present
-    assert!(names.contains(&"lookup_symbol"));
-    assert!(names.contains(&"search_relevant"));
-    assert!(names.contains(&"read_source"));
-    assert!(names.contains(&"get_file_summary"));
-    // Extended tools absent
+    // Compound tools present
+    assert!(names.contains(&"find"));
+    assert!(names.contains(&"summarize"));
+    assert!(names.contains(&"read"));
+    // Granular tools absent (moved to --all-tools)
+    assert!(!names.contains(&"lookup_symbol"));
+    assert!(!names.contains(&"search_relevant"));
+    assert!(!names.contains(&"read_source"));
+    assert!(!names.contains(&"get_file_summary"));
     assert!(!names.contains(&"get_hotspots"));
     assert!(!names.contains(&"get_health"));
-    assert!(!names.contains(&"get_type_flow"));
-    assert!(!names.contains(&"get_dependency_graph"));
-    assert!(!names.contains(&"get_diff_summary"));
-    assert!(!names.contains(&"get_token_estimate"));
     assert!(!names.contains(&"list_workspace_members"));
     assert!(!names.contains(&"regenerate_index"));
-    assert_eq!(names.len(), 15);
+    assert_eq!(names.len(), 3);
 }
 
 #[test]
@@ -350,7 +349,7 @@ fn test_name_match_scores_higher_than_signature() {
     assert!(name_score > 0);
     assert!(sig_score > 0);
     // Both match, but name multiplier is higher
-    assert!(name_score > sig_score || name_score == sig_score);
+    assert!(name_score >= sig_score);
 }
 
 // -----------------------------------------------------------------------
@@ -2729,4 +2728,368 @@ fn test_workspace_is_single() {
 
     let single = wrap_workspace(make_test_index());
     assert!(single.is_single());
+}
+
+// ---------------------------------------------------------------------------
+// Compound tool tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_compound_find_relevant_mode() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "find", &json!({"query": "parse"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    // Should find parse_file via search_relevant
+    assert!(content["matches"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_compound_find_symbol_mode() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "parse_file", "mode": "symbol"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert!(content["matches"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_compound_find_callers_mode() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "parse_file", "mode": "callers"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    // cache.rs imports parse_file
+    assert!(content["count"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_compound_find_signature_mode() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "-> Result<", "mode": "signature"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert!(content["matches"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_compound_find_invalid_mode_returns_error() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "parse", "mode": "invalid_mode"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("Unknown find mode"));
+    assert!(result["isError"].as_bool().unwrap());
+}
+
+#[test]
+fn test_compound_find_relevant_with_kind_filter() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "find", &json!({"query": "Cache", "kind": "struct"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert!(content["matches"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_compound_find_missing_query_returns_error() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "find", &json!({}));
+    assert!(result["isError"].as_bool().unwrap());
+}
+
+#[test]
+fn test_compound_summarize_file_path() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "summarize", &json!({"path": "src/parser.rs"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(content["file"], "src/parser.rs");
+    assert!(!content["declarations"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_compound_summarize_glob_pattern() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "summarize", &json!({"path": "*.rs"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert!(content["count"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_compound_summarize_symbol_name() {
+    let ws = wrap_workspace(make_test_index());
+    // "Cache" has no "/" and no file extension → symbol
+    let result = handle_tool_call(&ws, "summarize", &json!({"path": "Cache"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(content["name"], "Cache");
+}
+
+#[test]
+fn test_compound_summarize_bare_filename_routes_to_file() {
+    // "main.rs" has no "/" but has a file extension → should route to get_file_summary, not explain_symbol
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "summarize", &json!({"path": "parser.rs"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    // Should NOT try to explain "parser.rs" as a symbol
+    // It will return a "File not found" error because our test paths are "src/parser.rs",
+    // but the important thing is it doesn't route to explain_symbol
+    assert!(!text.contains("\"name\":\"parser.rs\""));
+}
+
+#[test]
+fn test_compound_summarize_public_scope() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(
+        &ws,
+        "summarize",
+        &json!({"path": "src/parser.rs", "scope": "public"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    // get_public_api returns only public declarations
+    let decls = content["declarations"].as_array().unwrap();
+    assert!(!decls.is_empty());
+    // All returned declarations should be public (parse_file is public, internal_helper is not)
+    let names: Vec<&str> = decls.iter().map(|d| d["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"parse_file"));
+    assert!(!names.contains(&"internal_helper"));
+}
+
+#[test]
+fn test_compound_summarize_missing_path_returns_error() {
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "summarize", &json!({}));
+    assert!(result["isError"].as_bool().unwrap());
+}
+
+#[test]
+fn test_compound_read_forwards_to_read_source() {
+    use std::io::Write as IoWrite;
+
+    let mut index = make_test_index();
+    let dir = std::env::temp_dir().join("indxr_test_compound_read");
+    let _ = std::fs::create_dir_all(dir.join("src"));
+    let source = "// lines 1-9\n\n\n\n\n\n\n\n\npub fn parse_file() {\n    do_stuff();\n}\n";
+    let mut f = std::fs::File::create(dir.join("src/parser.rs")).unwrap();
+    f.write_all(source.as_bytes()).unwrap();
+    index.root = dir.clone();
+
+    let ws = wrap_workspace(index);
+    let result = handle_tool_call(
+        &ws,
+        "read",
+        &json!({"path": "src/parser.rs", "symbol": "parse_file"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("parse_file"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_compound_read_with_collapse() {
+    use std::io::Write as IoWrite;
+
+    let mut index = make_test_index();
+    let dir = std::env::temp_dir().join("indxr_test_compound_read_collapse");
+    let _ = std::fs::create_dir_all(dir.join("src"));
+    let source = "// lines 1-9\n\n\n\n\n\n\n\n\nfn parse_file() {\n    if true {\n        nested();\n    }\n}\n";
+    let mut f = std::fs::File::create(dir.join("src/parser.rs")).unwrap();
+    f.write_all(source.as_bytes()).unwrap();
+    index.root = dir.clone();
+
+    let ws = wrap_workspace(index);
+    let result = handle_tool_call(
+        &ws,
+        "read",
+        &json!({"path": "src/parser.rs", "symbol": "parse_file", "collapse": true}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert!(content["collapsed"].as_bool().unwrap());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------
+// looks_like_file edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_looks_like_file_recognized_extensions() {
+    use super::tools::looks_like_file;
+    assert!(looks_like_file("main.rs"));
+    assert!(looks_like_file("app.py"));
+    assert!(looks_like_file("index.ts"));
+    assert!(looks_like_file("file.test.rs")); // multiple dots
+    assert!(looks_like_file("config.toml"));
+    assert!(looks_like_file("styles.css"));
+}
+
+#[test]
+fn test_looks_like_file_not_files() {
+    use super::tools::looks_like_file;
+    assert!(!looks_like_file("Cache")); // symbol name
+    assert!(!looks_like_file("parse_file")); // symbol name
+    assert!(!looks_like_file("src")); // directory
+    assert!(!looks_like_file(".")); // current dir
+    assert!(!looks_like_file("")); // empty string
+    assert!(!looks_like_file(".gitignore")); // dotfile (no recognized ext)
+    assert!(!looks_like_file("Makefile")); // no extension
+}
+
+// ---------------------------------------------------------------------------
+// summarize: directory routing
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_compound_summarize_bare_directory_routes_to_file_summary() {
+    // "src" is a known directory prefix (files are "src/parser.rs", etc.)
+    // It should NOT route to explain_symbol.
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "summarize", &json!({"path": "src"}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    // Should not try to explain "src" as a symbol
+    assert!(!text.contains("\"name\":\"src\""));
+}
+
+#[test]
+fn test_compound_summarize_dot_routes_to_file_summary() {
+    // "." should route to get_file_summary, not explain_symbol
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(&ws, "summarize", &json!({"path": "."}));
+    let text = result["content"][0]["text"].as_str().unwrap();
+    assert!(!text.contains("\"name\":\".\""));
+}
+
+#[test]
+fn test_compound_find_kind_ignored_for_non_relevant_modes() {
+    // kind param should be silently ignored for non-relevant modes
+    let ws = wrap_workspace(make_test_index());
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "parse_file", "mode": "symbol", "kind": "struct"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    // Should still find parse_file (kind is ignored in symbol mode)
+    assert!(content["matches"].as_u64().unwrap() >= 1);
+}
+
+// ---------------------------------------------------------------------------
+// Compound tool: member forwarding in workspace mode
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_compound_find_forwards_member_symbol_mode() {
+    let ws = make_multi_member_workspace();
+    // "Auth" exists in both members, but scoping to "backend" should only find AuthState
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "Auth", "mode": "symbol", "member": "backend"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    let rows = content["rows"].as_array().unwrap();
+    let names: Vec<&str> = rows.iter().map(|r| r[2].as_str().unwrap()).collect();
+    assert!(names.contains(&"AuthState"));
+    assert!(!names.contains(&"useAuth"));
+}
+
+#[test]
+fn test_compound_find_forwards_member_relevant_mode() {
+    let ws = make_multi_member_workspace();
+    // "handle_login" only exists in backend — scoping to "frontend" should not find it
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "handle_login", "member": "frontend"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(content["matches"].as_u64().unwrap(), 0);
+}
+
+#[test]
+fn test_compound_find_forwards_member_callers_mode() {
+    let ws = make_multi_member_workspace();
+    // Scoping callers to "frontend" — backend's import of AuthState should not appear
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "useAuth", "mode": "callers", "member": "frontend"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    // App.tsx imports useAuth — should appear in frontend-scoped results
+    assert!(content["count"].as_u64().unwrap() >= 1);
+    let references = content["references"].as_array().unwrap();
+    let files: Vec<&str> = references
+        .iter()
+        .filter_map(|r| r["file"].as_str())
+        .collect();
+    assert!(files.iter().any(|f| f.contains("App.tsx")));
+}
+
+#[test]
+fn test_compound_find_forwards_member_signature_mode() {
+    let ws = make_multi_member_workspace();
+    // "-> Response" only exists in backend's handle_login
+    // Scoping to "frontend" should find nothing
+    let result = handle_tool_call(
+        &ws,
+        "find",
+        &json!({"query": "-> Response", "mode": "signature", "member": "frontend"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(content["matches"].as_u64().unwrap(), 0);
+}
+
+#[test]
+fn test_compound_summarize_forwards_member() {
+    let ws = make_multi_member_workspace();
+    // summarize with glob scoped to backend — should only find backend files
+    let result = handle_tool_call(
+        &ws,
+        "summarize",
+        &json!({"path": "src/*.rs", "member": "backend"}),
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let content: Value = serde_json::from_str(text).unwrap();
+    let summaries = content["summaries"].as_array().unwrap();
+    let files: Vec<&str> = summaries
+        .iter()
+        .map(|s| s["file"].as_str().unwrap())
+        .collect();
+    assert!(
+        files
+            .iter()
+            .any(|f| f.contains("handlers.rs") || f.contains("auth.rs"))
+    );
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.contains("App.tsx") || f.contains("hooks.ts"))
+    );
 }

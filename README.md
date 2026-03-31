@@ -17,7 +17,7 @@ AI coding agents waste thousands of tokens reading entire source files just to u
 ## Features
 
 - **27 languages** — tree-sitter AST parsing for 8 languages, regex extraction for 19 more
-- **23-tool MCP server** (15 default + 8 extended) — live codebase queries over JSON-RPC: symbol lookup, file summaries, caller tracing, signature search, complexity hotspots, type flow tracking, workspace support, and more
+- **26-tool MCP server** (3 compound default + 23 granular via `--all-tools`) — live codebase queries over JSON-RPC: symbol lookup, file summaries, caller tracing, signature search, complexity hotspots, type flow tracking, workspace support, and more
 - **Token-aware** — progressive truncation to fit context windows, ~5x reduction vs reading full files
 - **Git structural diffing** — declaration-level diffs (`+` added, `-` removed, `~` changed) against any git ref or GitHub PR
 - **Dependency graphs** — file and symbol dependency visualization as DOT, Mermaid, or JSON
@@ -81,9 +81,17 @@ Agents don't always pick MCP tools over file reads on their own. `indxr init` se
 
 ## MCP Server
 
-JSON-RPC 2.0 over stdin/stdout (or Streamable HTTP with `--features http`). By default 15 core tools are listed to minimize per-request token overhead; pass `--all-tools` to expose all 23.
+JSON-RPC 2.0 over stdin/stdout (or Streamable HTTP with `--features http`). By default 3 compound tools are listed to minimize per-request token overhead; pass `--all-tools` to expose all 26 (3 compound + 23 granular).
 
-### Default tools (15)
+### Default tools (3 compound)
+
+| Tool | Description |
+|---|---|
+| `find` | Find files/symbols by concept, name, callers, or signature pattern. Modes: `relevant` (default), `symbol`, `callers`, `signature` |
+| `summarize` | Understand files/symbols without reading source. Auto-detects: glob -> batch, no "/" -> symbol name, file path -> file summary. Scope: `all` (default), `public` |
+| `read` | Read source by symbol name or line range (same as `read_source`) |
+
+### Granular tools (23 — requires `--all-tools`)
 
 | Tool | Description |
 |---|---|
@@ -95,18 +103,13 @@ JSON-RPC 2.0 over stdin/stdout (or Streamable HTTP with `--features http`). By d
 | `get_file_context` | File summary + reverse dependencies + related files |
 | `get_public_api` | Public declarations with signatures for a file or directory |
 | `get_callers` | Find who references a symbol across all files |
-| `get_related_tests` | Find test functions by naming convention |
 | `list_declarations` | List declarations in a file with optional filters |
 | `search_signatures` | Search functions by signature pattern |
 | `read_source` | Read source by symbol name or line range |
 | `get_tree` | Directory/file tree |
-| `get_imports` | Import statements for a file |
 | `get_stats` | File count, line count, language breakdown |
-
-### Extended tools (8 — requires `--all-tools`)
-
-| Tool | Description |
-|---|---|
+| `get_imports` | Import statements for a file |
+| `get_related_tests` | Find test functions by naming convention |
 | `get_hotspots` | Most complex functions ranked by composite score |
 | `get_health` | Codebase health summary with aggregate complexity metrics |
 | `get_type_flow` | Track which functions produce/consume a given type across the codebase |
@@ -116,7 +119,7 @@ JSON-RPC 2.0 over stdin/stdout (or Streamable HTTP with `--features http`). By d
 | `list_workspace_members` | List monorepo workspace members (Cargo, npm, Go) |
 | `regenerate_index` | Re-index and update INDEX.md |
 
-> Extended tools are still callable even when not listed — `--all-tools` only controls whether they appear in `tools/list`.
+> Granular tools are always callable even when not listed — `--all-tools` only controls whether they appear in `tools/list`.
 
 In workspace mode (multiple members), tools automatically gain a `member` param to scope queries. List tools support `compact` mode for ~30% token savings. See [MCP Server docs](docs/mcp-server.md) for full parameter details.
 

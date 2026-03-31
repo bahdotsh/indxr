@@ -110,7 +110,7 @@ Both conditions use the same agent loop — the LLM decides which tools to call:
 | Condition | Available tools | What it simulates |
 |-----------|----------------|-------------------|
 | **Baseline** | `grep_codebase`, `read_file`, `list_directory` | Agent with standard code tools (grep + read) |
-| **indxr** | MCP tools (dynamically fetched from server; 15 default, 23 with `--all-tools`) | Agent with indxr structural tools |
+| **indxr** | MCP tools (dynamically fetched from server; 3 compound default, 26 with `--all-tools`) | Agent with indxr structural tools |
 
 Same model, same system prompt, same question, same `temperature=0`. The only difference is the toolbox.
 
@@ -182,7 +182,7 @@ python -m bench --model claude-haiku-4-5
 
 Prints a results table with per-question and per-category breakdown, then writes `benchmark_results_v2.json` with full per-run data including agent traces.
 
-**Note on token measurement:** The benchmark measures total API billing tokens (`input_tokens`) across all agent rounds. This includes system prompt, tool definitions, and growing conversation history — not just tool output. Because tool definitions are re-sent every round, the number of tools directly impacts total cost. indxr's default 15-tool set adds ~1,270 tokens/round of schema overhead vs ~370 for the 3 baseline tools. On small codebases where grep+read is already cheap, this overhead can offset the content savings. indxr's structural tools show the biggest wins on questions that require reading large files or multi-step exploration (e.g., counting public functions, tracing type flow).
+**Note on token measurement:** The benchmark measures total API billing tokens (`input_tokens`) across all agent rounds. This includes system prompt, tool definitions, and growing conversation history — not just tool output. Because tool definitions are re-sent every round, the number of tools directly impacts total cost. indxr's default 3 compound tools add minimal schema overhead vs the 3 baseline tools. On small codebases where grep+read is already cheap, this makes indxr's structural tools competitive even on simple questions. indxr's compound tools show the biggest wins on questions that require reading large files or multi-step exploration (e.g., counting public functions, tracing type flow).
 
 ### Adding questions for external repos
 

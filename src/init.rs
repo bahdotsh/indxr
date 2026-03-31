@@ -644,61 +644,53 @@ An MCP server called `indxr` is available. **Always use indxr tools before the R
 
 ### Token savings reference
 
+The MCP server defaults to **3 compound tools** (`find`, `summarize`, `read`). All 26 tools (3 compound + 23 granular) are available with `--all-tools`.
+
 | Action | Approx tokens | When to use |
 |--------|--------------|-------------|
-| `get_tree` | ~200-400 | First: understand directory layout |
-| `get_file_summary` | ~200-400 | Understand a file without reading it |
-| `batch_file_summaries` | ~400-1200 | Summarize multiple files in one call |
-| `get_file_context` | ~400-600 | Understand dependencies and reverse deps |
-| `lookup_symbol` | ~100-200 | Find a specific function/type across codebase |
-| `search_signatures` | ~100-300 | Find functions by signature pattern |
-| `search_relevant` | ~200-400 | Find files/symbols by concept or partial name (supports `kind` filter) |
-| `explain_symbol` | ~100-300 | Everything to USE a symbol without reading its body |
-| `get_public_api` | ~200-500 | Public API surface of a file or module |
-| `get_callers` | ~100-300 | Who references this symbol (imports + signatures) |
-| `get_related_tests` | ~100-200 | Find tests for a symbol by naming convention |
-| `get_diff_summary` | ~200-500 | Structural changes since a git ref (vs reading raw diffs) |
-| `get_hotspots` | ~200-500 | Most complex functions ranked by composite score |
-| `get_health` | ~200-400 | Codebase health summary with aggregate complexity metrics |
-| `get_type_flow` | ~200-500 | Track which functions produce/consume a type across the codebase |
-| `read_source` (symbol) | ~50-300 | Read one function/struct. Supports `symbols` array and `collapse`. |
-| `get_token_estimate` | ~100 | Check cost before reading. Supports `directory`/`glob`. |
+| `find(query)` | ~100-400 | Find files/symbols by concept, name, callers, or signature pattern |
+| `summarize(path)` | ~200-600 | Understand a file, batch of files, or symbol without reading source |
+| `read(path, symbol?)` | ~50-300 | Read one function/struct. Supports `symbols` array and `collapse`. |
 | `Read` (full file) | **500-10000+** | ONLY when editing or need exact formatting |
+
+**Typical exploration: ~500 tokens vs ~3000+ for reading a full file (6x reduction).**
 
 ### Exploration workflow (follow this order)
 
-1. `search_relevant` — find files/symbols related to your task by concept, partial name, or type pattern. **Start here when you know what you're looking for but not where it is.**
-2. `get_tree` — see directory/file layout. Use `path` param to scope to a subtree.
-3. `get_file_summary` — get a complete overview of any file without reading it. Use `batch_file_summaries` for multiple files.
-4. `get_file_context` — understand a file's reverse dependencies and related files.
-5. `lookup_symbol` — find declarations by name across all indexed files.
-6. `explain_symbol` — get full interface details for a symbol without reading its body.
-7. `search_signatures` — find functions/methods by signature substring.
-8. `get_callers` — find who references a symbol.
-9. `get_token_estimate` — before deciding to `Read` a file, check how many tokens it costs.
-10. `read_source` — read source code by symbol name or line range. Use `symbols` array to read multiple in one call.
-11. `get_public_api` — get only public declarations with signatures for a file or directory.
-12. `get_related_tests` — find test functions for a symbol.
-13. `list_declarations` — list all declarations in a file.
-14. `get_imports` — get import statements for a file.
-15. `get_stats` — codebase stats: file count, line count, language breakdown.
-16. `get_diff_summary` — get structural changes since a git ref.
-17. `get_hotspots` — get the most complex functions ranked by composite score.
-18. `get_health` — get codebase health summary: aggregate complexity, documentation coverage, test ratio.
-19. `get_type_flow` — track where a type flows across function boundaries. Shows producers and consumers.
-20. `regenerate_index` — re-index after code changes.
+The default 3 compound tools cover the most common exploration patterns:
+
+1. `find(query)` — find files/symbols by concept, partial name, or type pattern. **Start here when you know what you're looking for but not where it is.**
+   - Default mode (`relevant`): multi-signal relevance search across paths, names, signatures, and docs. Supports `kind` filter.
+   - `mode: "symbol"`: find declarations by name (case-insensitive substring).
+   - `mode: "callers"`: find who references a symbol (imports + signatures).
+   - `mode: "signature"`: find functions by signature pattern (e.g., `"-> Result<"`).
+2. `summarize(path)` — understand files and symbols without reading source code.
+   - File path (e.g., `"src/main.rs"`): complete file overview (declarations, imports, counts).
+   - Glob pattern (e.g., `"src/mcp/*.rs"`): batch summaries for multiple files.
+   - Symbol name (no `/`, e.g., `"Cache"`): full interface details (signature, doc comment, relationships).
+   - `scope: "public"`: show only public API surface.
+3. `read(path, symbol?)` — read source code by **symbol name** or explicit line range. Cap: 200 lines. Use `symbols` array to read multiple in one call (500 line cap). Use `collapse: true` to fold nested bodies.
+
+With `--all-tools`, all 23 granular tools are also exposed. Key granular tools:
+- `get_tree` — directory/file layout
+- `get_file_context` — reverse dependencies and related files
+- `get_token_estimate` — check token cost before reading
+- `get_diff_summary` — structural changes since a git ref or GitHub PR
+- `get_hotspots` — most complex functions ranked by composite score
+- `get_health` — codebase health summary
+- `get_type_flow` — track where a type flows across function boundaries
+- `regenerate_index` — re-index after code changes
 
 ### When to use the Read tool instead
 - You need to **edit** a file (Read is required before Edit)
-- You need exact formatting/whitespace that `read_source` doesn't preserve
+- You need exact formatting/whitespace that `read` doesn't preserve
 - The file is not a source file (e.g., config files, documentation)
 
 ### DO NOT
-- Read full source files just to understand what's in them — use `get_file_summary`
-- Read full source files to review code — use `get_file_summary` to triage, then `read_source` on specific symbols
+- Read full source files just to understand what's in them — use `summarize(path)`
+- Read full source files to review code — use `summarize(path)` to triage, then `read(path, symbol)` on specific symbols
 - Dump all files into context — use MCP tools to be surgical
-- Read a file without first checking `get_token_estimate` if you're unsure about its size
-- Use `git diff` to understand changes — use `get_diff_summary` instead
+- Use `git diff` to understand changes — use `get_diff_summary` instead (requires `--all-tools`)
 
 ### After making code changes
 Run `regenerate_index` to keep INDEX.md current.
@@ -725,7 +717,7 @@ fn claude_settings_content(include_rtk: bool) -> String {
         "matcher": "Read",
         "hooks": [{
             "type": "command",
-            "command": "echo 'IMPORTANT: Before reading full source files, use indxr MCP tools to minimize token usage:\n- get_file_summary: understand a file without reading it (~300 tokens vs ~3000+)\n- lookup_symbol / search_signatures: find specific functions/types\n- read_source: read only the exact function/symbol you need (~100 tokens vs full file)\nOnly use Read when you need to EDIT a file, need exact formatting, or the file is not source code (e.g., CLAUDE.md, Cargo.toml).'"
+            "command": "echo 'IMPORTANT: Before reading full source files, use indxr MCP tools to minimize token usage:\n- summarize(path): understand a file without reading it (~300 tokens vs ~3000+)\n- find(query): find specific functions/types by name, concept, or signature\n- read(path, symbol): read only the exact function/symbol you need (~100 tokens vs full file)\nOnly use Read when you need to EDIT a file, need exact formatting, or the file is not source code (e.g., CLAUDE.md, Cargo.toml).'"
         }]
     });
 
@@ -764,18 +756,17 @@ fn claude_settings_content(include_rtk: bool) -> String {
 fn rules_body(include_rtk: bool) -> String {
     let mut content = r#"# Codebase Navigation — Use indxr MCP tools
 
-An MCP server called `indxr` is available. Always use indxr tools before reading full files.
+An MCP server called `indxr` is available with 3 compound tools. Always use indxr tools before reading full files.
 
 ## Exploration workflow
-1. `search_relevant` — find files/symbols by concept or partial name
-2. `get_tree` — see directory/file layout
-3. `get_file_summary` / `batch_file_summaries` — understand files without reading them
-4. `explain_symbol` — get signature, docs, and relationships for a symbol
-5. `get_public_api` — public API surface of a file or module
-6. `get_callers` / `get_related_tests` — find references and tests
-7. `get_token_estimate` — check cost before deciding to read a full file
-8. `read_source` — read just one function/struct by name
-9. Read (full file) — ONLY when editing or need exact formatting
+1. `find(query)` — find files/symbols by concept, name, callers, or signature pattern
+   - Modes: `relevant` (default), `symbol`, `callers`, `signature`
+2. `summarize(path)` — understand files/symbols without reading source
+   - Auto-detects: file path → summary, glob → batch, symbol name → interface details
+   - `scope: "public"` for public API only
+3. `read(path, symbol?)` — read source by symbol name or line range
+   - Supports `symbols` array and `collapse: true`
+4. Read (full file) — ONLY when editing or need exact formatting
 
 ## When to read full files instead
 - You need to edit a file
@@ -783,9 +774,9 @@ An MCP server called `indxr` is available. Always use indxr tools before reading
 - The file is not source code (e.g., config files, documentation)
 
 ## Do NOT
-- Read full source files just to understand what's in them
-- Dump all files into context
-- Use `git diff` when `get_diff_summary` would suffice
+- Read full source files just to understand what's in them — use `summarize(path)`
+- Dump all files into context — use MCP tools to be surgical
+- Use `git diff` when `get_diff_summary` would suffice (requires `--all-tools`)
 
 ## After making code changes
 Run `regenerate_index` to keep the index current.
@@ -1490,7 +1481,7 @@ mod tests {
     fn test_agents_md_content_has_instructions() {
         let content = agents_md_content(false);
         assert!(content.contains("indxr MCP tools"));
-        assert!(content.contains("search_relevant"));
+        assert!(content.contains("find(query)"));
         assert!(!content.contains("RTK"));
     }
 

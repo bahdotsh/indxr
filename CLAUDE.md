@@ -8,71 +8,62 @@ An MCP server called `indxr` is available. **Always use indxr tools before the R
 
 ### Token savings reference
 
+The MCP server defaults to **3 compound tools** (`find`, `summarize`, `read`). All 26 tools (3 compound + 23 granular) are available with `--all-tools`.
+
 | Action | Approx tokens | When to use |
 |--------|--------------|-------------|
-| `get_tree` | ~200-400 | First: understand directory layout |
-| `get_file_summary` | ~200-400 | Understand a file without reading it |
-| `batch_file_summaries` | ~400-1200 | Summarize multiple files in one call (vs N calls) |
-| `get_file_context` | ~400-600 | Understand dependencies and reverse deps |
-| `lookup_symbol` | ~100-200 | Find a specific function/type across codebase |
-| `search_signatures` | ~100-300 | Find functions by signature pattern |
-| `search_relevant` | ~200-400 | Find files/symbols by concept or partial name (supports `kind` filter) |
-| `explain_symbol` | ~100-300 | Everything to USE a symbol without reading its body |
-| `get_public_api` | ~200-500 | Public API surface of a file or module |
-| `get_callers` | ~100-300 | Who references this symbol (imports + signatures) |
-| `get_related_tests` | ~100-200 | Find tests for a symbol by naming convention |
-| `get_diff_summary` | ~200-500 | Structural changes since a git ref or GitHub PR (vs reading raw diffs) |
-| `get_hotspots` | ~200-500 | Most complex functions ranked by composite score |
-| `get_health` | ~200-400 | Codebase health summary with aggregate complexity metrics |
-| `get_type_flow` | ~200-500 | Track which functions produce/consume a type across the codebase |
-| `get_dependency_graph` | ~200-500 | File or symbol dependency graph (DOT, Mermaid, JSON) |
-| `list_workspace_members` | ~100-200 | List monorepo workspace members (Cargo, npm, Go) |
-| `read_source` (symbol) | ~50-300 | Read one function/struct. Supports `symbols` array and `collapse`. |
-| `get_token_estimate` | ~100 | Check cost before reading. Supports `directory`/`glob`. |
+| `find(query)` | ~100-400 | Find files/symbols by concept, name, callers, or signature pattern |
+| `summarize(path)` | ~200-600 | Understand a file, batch of files, or symbol without reading source |
+| `read(path, symbol?)` | ~50-300 | Read one function/struct. Supports `symbols` array and `collapse`. |
 | `Read` (full file) | **500-10000+** | ONLY when editing or need exact formatting |
 
-**Typical exploration: ~650 tokens vs ~3000+ for reading a full file (5x reduction).**
+**Typical exploration: ~500 tokens vs ~3000+ for reading a full file (6x reduction).**
 
 ### Exploration workflow (follow this order)
 
-1. `search_relevant` — find files/symbols related to your task by concept, partial name, or type pattern. Searches across paths, names, signatures, and doc comments with ranked results. Supports `kind` filter (e.g., `kind: "fn"`). **Start here when you know what you're looking for but not where it is.**
-2. `get_tree` — see directory/file layout. Use `path` param to scope to a subtree.
-3. `get_file_summary` — get a complete overview of any file (declarations, imports, counts) WITHOUT reading it. Use `batch_file_summaries` for multiple files at once.
-4. `get_file_context` — understand a file's reverse dependencies (who imports it) and related files (tests, siblings).
-5. `lookup_symbol` — find declarations by name (case-insensitive substring) across all indexed files.
-6. `explain_symbol` — get full interface details for a symbol (signature, doc comment, relationships, metadata) without reading its body.
-7. `search_signatures` — find functions/methods by signature substring (e.g., `"-> Result<"`, `"&mut self"`).
-8. `get_callers` — find who references a symbol (checks imports and signatures across all files).
-9. `get_token_estimate` — before deciding to `Read` a file, check how many tokens it costs. Supports `directory` or `glob` for bulk estimation.
-10. `read_source` — read source code by **symbol name** or explicit line range. Cap: 200 lines. Use `symbols` array to read multiple in one call (500 line cap). Use `collapse: true` to fold nested bodies.
-11. `get_public_api` — get only public declarations with signatures for a file or directory. Minimal output for "how do I use this module?" questions.
-12. `get_related_tests` — find test functions for a symbol by naming convention and file association.
-13. `list_declarations` — list all declarations in a file. Use `kind` filter, `shallow` or `compact` mode to reduce output.
-14. `get_imports` — get import statements for a file.
-15. `get_stats` — codebase stats: file count, line count, language breakdown, indexing duration.
-16. `get_diff_summary` — get structural changes since a git ref or GitHub PR number. Shows added/removed/modified declarations without reading full diffs. Supports `pr` param as alternative to `since_ref`.
-17. `get_hotspots` — get the most complex functions/methods ranked by composite score. Supports `path`, `min_complexity`, `sort_by`, and `compact` params.
-18. `get_health` — get codebase health summary: aggregate complexity, documentation coverage, test ratio, hottest files. Supports `path` filter.
-19. `get_type_flow` — track where a type flows across function boundaries. Shows which functions produce (return) and consume (accept) a given type. Supports `path` filter, `include_fields`, `limit`, and `compact` params.
-20. `get_dependency_graph` — get file-level or symbol-level dependency graph. Supports `path`, `level` (file/symbol), `format` (dot/mermaid/json), and `depth` params.
-21. `list_workspace_members` — list detected workspace members (Cargo, npm, Go workspaces). Use this to discover member names for the `member` param.
-22. `regenerate_index` — re-index after code changes. Updates INDEX.md, refreshes in-memory index, and reports what changed (delta).
+The default 3 compound tools cover the most common exploration patterns:
+
+1. `find(query)` — find files/symbols by concept, partial name, or type pattern. **Start here when you know what you're looking for but not where it is.**
+   - Default mode (`relevant`): multi-signal relevance search across paths, names, signatures, and docs. Supports `kind` filter.
+   - `mode: "symbol"`: find declarations by name (case-insensitive substring).
+   - `mode: "callers"`: find who references a symbol (imports + signatures).
+   - `mode: "signature"`: find functions by signature pattern (e.g., `"-> Result<"`).
+2. `summarize(path)` — understand files and symbols without reading source code.
+   - File path (e.g., `"src/main.rs"`): complete file overview (declarations, imports, counts).
+   - Glob pattern (e.g., `"src/mcp/*.rs"`): batch summaries for multiple files.
+   - Symbol name (no `/`, e.g., `"Cache"`): full interface details (signature, doc comment, relationships).
+   - `scope: "public"`: show only public API surface.
+3. `read(path, symbol?)` — read source code by **symbol name** or explicit line range. Cap: 200 lines. Use `symbols` array to read multiple in one call (500 line cap). Use `collapse: true` to fold nested bodies.
+
+With `--all-tools`, all 23 granular tools are also exposed. Key granular tools:
+
+4. `get_tree` — see directory/file layout. Use `path` param to scope to a subtree.
+5. `get_file_context` — understand a file's reverse dependencies (who imports it) and related files (tests, siblings).
+6. `get_token_estimate` — before deciding to `Read` a file, check how many tokens it costs. Supports `directory` or `glob` for bulk estimation.
+7. `get_related_tests` — find test functions for a symbol by naming convention and file association.
+8. `get_diff_summary` — get structural changes since a git ref or GitHub PR number. Shows added/removed/modified declarations without reading full diffs.
+9. `get_hotspots` — get the most complex functions/methods ranked by composite score.
+10. `get_health` — get codebase health summary: aggregate complexity, documentation coverage, test ratio, hottest files.
+11. `get_type_flow` — track where a type flows across function boundaries.
+12. `get_dependency_graph` — get file-level or symbol-level dependency graph (DOT, Mermaid, JSON).
+13. `list_workspace_members` — list detected workspace members (Cargo, npm, Go workspaces).
+14. `regenerate_index` — re-index after code changes. Updates INDEX.md, refreshes in-memory index, and reports what changed (delta).
 
 > **Workspace support:** Most tools accept an optional `member` param to scope queries to a specific workspace member by name.
 
 ### Compact output mode
-Tools that return lists (`lookup_symbol`, `list_declarations`, `search_signatures`, `search_relevant`, `get_hotspots`, `get_type_flow`) support a `compact: true` param that returns columnar `{columns, rows}` format instead of objects, saving ~30% tokens.
+Granular tools that return lists (`lookup_symbol`, `list_declarations`, `search_signatures`, `search_relevant`, `get_hotspots`, `get_type_flow`) support a `compact: true` param that returns columnar `{columns, rows}` format instead of objects, saving ~30% tokens.
 
 ### When to use the Read tool instead
 - You need to **edit** a file (Read is required before Edit)
-- You need exact formatting/whitespace that `read_source` doesn't preserve
+- You need exact formatting/whitespace that `read` doesn't preserve
 - The file is not a source file (e.g., CLAUDE.md, Cargo.toml, docs, config files)
 
 ### DO NOT
-- Read full source files just to understand what's in them — use `get_file_summary`
-- Read full source files to review code — use `get_file_summary` to triage, then `read_source` on specific symbols
+- Read full source files just to understand what's in them — use `summarize(path)`
+- Read full source files to review code — use `summarize(path)` to triage, then `read(path, symbol)` on specific symbols
 - Dump all files into context — use MCP tools to be surgical
-- Read a file without first checking `get_token_estimate` if you're unsure about its size
+- Read a file without first checking `get_token_estimate` if you're unsure about its size (requires `--all-tools`)
 - Use `git diff` to understand changes — use `get_diff_summary` instead (~200-500 tokens vs thousands for raw diffs). It shows structural changes (added/removed/modified declarations) since any git ref
 
 ### After making code changes
@@ -121,8 +112,8 @@ indxr --no-cache                             # bypass cache
 indxr --cache-dir /tmp/cache                 # custom cache location
 
 # MCP server (stdio transport — default)
-indxr serve ./project                        # start MCP server (15 core tools)
-indxr serve ./project --all-tools            # expose all 23 tools (including extended)
+indxr serve ./project                        # start MCP server (3 compound tools)
+indxr serve ./project --all-tools            # expose all 26 tools (3 compound + 23 granular)
 indxr serve ./project --watch                # MCP server with auto-reindex on file changes
 indxr serve --watch --debounce-ms 500        # custom debounce timeout
 
@@ -191,7 +182,7 @@ Key source files:
 - `src/cli.rs` — clap argument definitions
 - `src/indexer.rs` — core indexing orchestration
 - `src/mcp/mod.rs` — MCP server loop, JSON-RPC protocol handling
-- `src/mcp/tools.rs` — tool definitions, dispatch, and 23 tool implementations (15 default, 8 extended via `--all-tools`)
+- `src/mcp/tools.rs` — tool definitions, dispatch, and 26 tool implementations (3 compound default, 23 granular via `--all-tools`)
 - `src/mcp/http.rs` — Streamable HTTP transport (axum, feature-gated behind `http`)
 - `src/mcp/helpers.rs` — shared structs, search/scoring/glob/string helpers
 - `src/mcp/tests.rs` — MCP module tests
