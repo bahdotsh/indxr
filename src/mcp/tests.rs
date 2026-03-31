@@ -3043,10 +3043,13 @@ fn test_compound_find_forwards_member_callers_mode() {
     let content: Value = serde_json::from_str(text).unwrap();
     // App.tsx imports useAuth — should appear in frontend-scoped results
     assert!(content["count"].as_u64().unwrap() >= 1);
-    let references = content["references"].as_array().unwrap();
-    let files: Vec<&str> = references
+    // Compound find callers now returns compact format (columns + rows)
+    let columns = content["columns"].as_array().unwrap();
+    let file_idx = columns.iter().position(|c| c.as_str() == Some("file")).unwrap();
+    let rows = content["rows"].as_array().unwrap();
+    let files: Vec<&str> = rows
         .iter()
-        .filter_map(|r| r["file"].as_str())
+        .filter_map(|r| r.as_array().and_then(|a| a[file_idx].as_str()))
         .collect();
     assert!(files.iter().any(|f| f.contains("App.tsx")));
 }
@@ -3077,10 +3080,13 @@ fn test_compound_summarize_forwards_member() {
     );
     let text = result["content"][0]["text"].as_str().unwrap();
     let content: Value = serde_json::from_str(text).unwrap();
-    let summaries = content["summaries"].as_array().unwrap();
-    let files: Vec<&str> = summaries
+    // Compound summarize with glob now returns compact format (columns + rows)
+    let columns = content["columns"].as_array().unwrap();
+    let file_idx = columns.iter().position(|c| c.as_str() == Some("file")).unwrap();
+    let rows = content["rows"].as_array().unwrap();
+    let files: Vec<&str> = rows
         .iter()
-        .map(|s| s["file"].as_str().unwrap())
+        .filter_map(|r| r.as_array().and_then(|a| a[file_idx].as_str()))
         .collect();
     assert!(
         files

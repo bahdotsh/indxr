@@ -422,6 +422,10 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value {
                         "glob": {
                             "type": "string",
                             "description": "Glob pattern (e.g. 'src/**/*.rs')"
+                        },
+                        "compact": {
+                            "type": "boolean",
+                            "description": "Return columnar {columns, rows} format (default false)"
                         }
                     },
                     "required": []
@@ -440,6 +444,10 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value {
                         "limit": {
                             "type": "number",
                             "description": "Max results (default 20)"
+                        },
+                        "compact": {
+                            "type": "boolean",
+                            "description": "Return columnar {columns, rows} format (default false)"
                         }
                     },
                     "required": ["symbol"]
@@ -812,7 +820,7 @@ fn tool_find(workspace: &WorkspaceIndex, args: &Value) -> Value {
             tool_lookup_symbol(workspace, &inner)
         }
         "callers" => {
-            let mut inner = json!({"symbol": query});
+            let mut inner = json!({"symbol": query, "compact": true});
             forward_member(args, &mut inner);
             tool_get_callers(workspace, &inner)
         }
@@ -851,7 +859,7 @@ fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value {
 
     // Glob pattern → batch_file_summaries
     if path.contains('*') || path.contains('?') {
-        let mut inner = json!({"glob": path});
+        let mut inner = json!({"glob": path, "compact": true});
         forward_member(args, &mut inner);
         return tool_batch_file_summaries(workspace, &inner);
     }
@@ -2004,6 +2012,14 @@ pub(super) fn tool_batch_file_summaries(workspace: &WorkspaceIndex, args: &Value
     let files = &files[..files.len().min(cap)];
     let summaries: Vec<Value> = files.iter().map(|f| file_summary_data(f)).collect();
 
+    if is_compact(args) {
+        let cols = &["file", "language", "lines", "has_tests", "public_symbols"];
+        let mut compact = to_compact_rows(cols, &summaries);
+        compact["count"] = json!(summaries.len());
+        compact["total_matched"] = json!(total);
+        return tool_result(compact);
+    }
+
     tool_result(json!({
         "count": summaries.len(),
         "total_matched": total,
@@ -2072,6 +2088,22 @@ pub(super) fn tool_get_callers(workspace: &WorkspaceIndex, args: &Value) -> Valu
     }
 
     references.truncate(limit);
+
+    if is_compact(args) {
+        // Normalize import refs to match signature ref columns
+        for r in &mut references {
+            if r.get("name").is_none() {
+                r["name"] = r.get("import").cloned().unwrap_or(Value::Null);
+                r["kind"] = json!("import");
+            }
+        }
+        let cols = &["file", "name", "kind", "line", "match_type"];
+        let mut compact = to_compact_rows(cols, &references);
+        compact["symbol"] = json!(symbol);
+        compact["count"] = json!(references.len());
+        return tool_result(compact);
+    }
+
     tool_result(json!({
         "symbol": symbol,
         "count": references.len(),
