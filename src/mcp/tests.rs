@@ -3045,7 +3045,10 @@ fn test_compound_find_forwards_member_callers_mode() {
     assert!(content["count"].as_u64().unwrap() >= 1);
     // Compound find callers now returns compact format (columns + rows)
     let columns = content["columns"].as_array().unwrap();
-    let file_idx = columns.iter().position(|c| c.as_str() == Some("file")).unwrap();
+    let file_idx = columns
+        .iter()
+        .position(|c| c.as_str() == Some("file"))
+        .unwrap();
     let rows = content["rows"].as_array().unwrap();
     let files: Vec<&str> = rows
         .iter()
@@ -3082,7 +3085,10 @@ fn test_compound_summarize_forwards_member() {
     let content: Value = serde_json::from_str(text).unwrap();
     // Compound summarize with glob now returns compact format (columns + rows)
     let columns = content["columns"].as_array().unwrap();
-    let file_idx = columns.iter().position(|c| c.as_str() == Some("file")).unwrap();
+    let file_idx = columns
+        .iter()
+        .position(|c| c.as_str() == Some("file"))
+        .unwrap();
     let rows = content["rows"].as_array().unwrap();
     let files: Vec<&str> = rows
         .iter()
@@ -3098,4 +3104,81 @@ fn test_compound_summarize_forwards_member() {
             .iter()
             .any(|f| f.contains("App.tsx") || f.contains("hooks.ts"))
     );
+}
+
+#[test]
+fn test_tool_get_callers_compact() {
+    let index = make_test_index();
+    let ws = wrap_workspace(index);
+    // cache.rs imports parse_file, so get_callers should find it
+    let result = tool_get_callers(&ws, &json!({"symbol": "parse_file", "compact": true}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(content["symbol"], "parse_file");
+    assert!(content["count"].as_u64().unwrap() >= 1);
+    // Compact format: columns + rows
+    let columns = content["columns"].as_array().unwrap();
+    assert!(columns.contains(&json!("file")));
+    assert!(columns.contains(&json!("name")));
+    assert!(columns.contains(&json!("kind")));
+    assert!(columns.contains(&json!("match_type")));
+    let rows = content["rows"].as_array().unwrap();
+    assert!(!rows.is_empty());
+    // Import refs should have kind = "import" and null line
+    let kind_idx = columns.iter().position(|c| c == "kind").unwrap();
+    let line_idx = columns.iter().position(|c| c == "line").unwrap();
+    let match_idx = columns.iter().position(|c| c == "match_type").unwrap();
+    let import_row = rows
+        .iter()
+        .find(|r| r.as_array().unwrap()[match_idx] == "import")
+        .expect("should have an import reference");
+    assert_eq!(import_row.as_array().unwrap()[kind_idx], "import");
+    assert!(import_row.as_array().unwrap()[line_idx].is_null());
+}
+
+#[test]
+fn test_tool_get_callers_non_compact() {
+    let index = make_test_index();
+    let ws = wrap_workspace(index);
+    // Without compact, should return "references" array of objects
+    let result = tool_get_callers(&ws, &json!({"symbol": "parse_file"}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert!(content["references"].is_array());
+    let refs = content["references"].as_array().unwrap();
+    assert!(!refs.is_empty());
+    assert!(refs[0]["file"].is_string());
+}
+
+#[test]
+fn test_tool_batch_file_summaries_compact() {
+    let index = make_test_index();
+    let ws = wrap_workspace(index);
+    let result = tool_batch_file_summaries(&ws, &json!({"glob": "src/*.rs", "compact": true}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert!(content["count"].as_u64().unwrap() >= 1);
+    // Compact format: columns + rows
+    let columns = content["columns"].as_array().unwrap();
+    assert!(columns.contains(&json!("file")));
+    assert!(columns.contains(&json!("language")));
+    assert!(columns.contains(&json!("lines")));
+    let rows = content["rows"].as_array().unwrap();
+    assert!(!rows.is_empty());
+    // Should NOT have "summaries" key
+    assert!(content.get("summaries").is_none());
+}
+
+#[test]
+fn test_tool_batch_file_summaries_non_compact() {
+    let index = make_test_index();
+    let ws = wrap_workspace(index);
+    // Without compact, should return "summaries" array of objects
+    let result = tool_batch_file_summaries(&ws, &json!({"glob": "src/*.rs"}));
+    let content: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert!(content["summaries"].is_array());
+    let summaries = content["summaries"].as_array().unwrap();
+    assert!(!summaries.is_empty());
+    assert!(summaries[0]["file"].is_string());
 }

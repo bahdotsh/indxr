@@ -2092,7 +2092,7 @@ pub(super) fn tool_get_callers(workspace: &WorkspaceIndex, args: &Value) -> Valu
     if is_compact(args) {
         // Normalize import refs to match signature ref columns
         for r in &mut references {
-            if r.get("name").is_none() {
+            if r.get("match_type").and_then(|v| v.as_str()) == Some("import") {
                 r["name"] = r.get("import").cloned().unwrap_or(Value::Null);
                 r["kind"] = json!("import");
             }
