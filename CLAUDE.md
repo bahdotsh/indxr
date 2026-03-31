@@ -35,19 +35,31 @@ The default 3 compound tools cover the most common exploration patterns:
    - `scope: "public"`: show only public API surface.
 3. `read(path, symbol?)` — read source code by **symbol name** or explicit line range. Cap: 200 lines. Use `symbols` array to read multiple in one call (500 line cap). Use `collapse: true` to fold nested bodies.
 
-With `--all-tools`, all 23 granular tools are also exposed. Key granular tools:
+With `--all-tools`, all 23 granular tools are also exposed:
 
-4. `get_tree` — see directory/file layout. Use `path` param to scope to a subtree.
-5. `get_file_context` — understand a file's reverse dependencies (who imports it) and related files (tests, siblings).
-6. `get_token_estimate` — before deciding to `Read` a file, check how many tokens it costs. Supports `directory` or `glob` for bulk estimation.
-7. `get_related_tests` — find test functions for a symbol by naming convention and file association.
-8. `get_diff_summary` — get structural changes since a git ref or GitHub PR number. Shows added/removed/modified declarations without reading full diffs.
-9. `get_hotspots` — get the most complex functions/methods ranked by composite score.
-10. `get_health` — get codebase health summary: aggregate complexity, documentation coverage, test ratio, hottest files.
-11. `get_type_flow` — track where a type flows across function boundaries.
-12. `get_dependency_graph` — get file-level or symbol-level dependency graph (DOT, Mermaid, JSON).
-13. `list_workspace_members` — list detected workspace members (Cargo, npm, Go workspaces).
-14. `regenerate_index` — re-index after code changes. Updates INDEX.md, refreshes in-memory index, and reports what changed (delta).
+4. `lookup_symbol` — look up a symbol by exact or partial name. Returns declaration details.
+5. `list_declarations` — list all declarations in a file, optionally filtered by kind.
+6. `search_signatures` — find functions by signature pattern (e.g., `"-> Result<"`).
+7. `search_relevant` — multi-signal relevance search across paths, names, signatures, and docs.
+8. `get_tree` — see directory/file layout. Use `path` param to scope to a subtree.
+9. `get_file_summary` — get a single file's overview (declarations, imports, counts).
+10. `read_source` — read source code by symbol name or line range (granular version of `read`).
+11. `batch_file_summaries` — get summaries for multiple files in one call via glob pattern.
+12. `get_file_context` — understand a file's reverse dependencies (who imports it) and related files (tests, siblings).
+13. `get_callers` — find who references a symbol (imports + call sites).
+14. `get_public_api` — list public declarations for a file or directory.
+15. `explain_symbol` — full interface details for a symbol (signature, doc comment, relationships).
+16. `get_token_estimate` — before deciding to `Read` a file, check how many tokens it costs. Supports `directory`, `glob`, or `symbol` for bulk/targeted estimation.
+17. `get_related_tests` — find test functions for a symbol by naming convention and file association.
+18. `get_diff_summary` — get structural changes since a git ref or GitHub PR number. Shows added/removed/modified declarations without reading full diffs.
+19. `get_hotspots` — get the most complex functions/methods ranked by composite score.
+20. `get_health` — get codebase health summary: aggregate complexity, documentation coverage, test ratio, hottest files.
+21. `get_type_flow` — track where a type flows across function boundaries.
+22. `get_dependency_graph` — get file-level or symbol-level dependency graph (DOT, Mermaid, JSON).
+23. `get_stats` — codebase statistics: file count, line count, language breakdown.
+24. `get_imports` — list import statements for a file.
+25. `list_workspace_members` — list detected workspace members (Cargo, npm, Go workspaces).
+26. `regenerate_index` — re-index after code changes. Updates INDEX.md, refreshes in-memory index, and reports what changed (delta).
 
 > **Workspace support:** Most tools accept an optional `member` param to scope queries to a specific workspace member by name.
 
@@ -125,9 +137,11 @@ indxr serve --http 127.0.0.1:8080 --watch    # HTTP + auto-reindex on file chang
 indxr watch                                  # watch cwd, keep INDEX.md updated
 indxr watch ./project                        # watch a specific project
 indxr watch -o custom.md --debounce-ms 500   # custom output and debounce
+indxr watch --quiet                          # suppress progress output
 
 # Agent setup
 indxr init                                   # set up all agent configs (.mcp.json, CLAUDE.md, etc.)
+indxr init --all                             # explicitly set up for all supported agents
 indxr init --claude                          # Claude Code only
 indxr init --cursor --windsurf               # Cursor + Windsurf only
 indxr init --codex                           # OpenAI Codex CLI only
@@ -136,12 +150,16 @@ indxr init --global --cursor                 # global Cursor only
 indxr init --no-index --no-hooks             # config files only, no INDEX.md or hooks
 indxr init --no-rtk                          # skip RTK hook setup
 indxr init --force                           # overwrite existing files
+indxr init --max-file-size 256               # custom max file size (default: 512 KB)
 
 # Workspace / monorepo
 indxr members                                # list detected workspace members
 indxr serve --member core                    # serve only the "core" member
 indxr watch --member core,cli                # watch specific members
+indxr diff --member core                     # diff scoped to a member
 indxr serve --no-workspace                   # disable workspace detection
+indxr watch --no-workspace                   # disable workspace detection for watch
+indxr diff --no-workspace                    # disable workspace detection for diff
 
 # Complexity hotspots
 indxr --hotspots                             # top 30 most complex functions
@@ -157,11 +175,14 @@ indxr --graph dot --graph-depth 2            # limit edge hops
 
 # Other
 indxr --max-depth 3                          # limit directory depth
-indxr --max-file-size 256                    # skip files > N KB
+indxr --max-file-size 256                    # skip files > N KB (default: 512)
 indxr -e "*.generated.*" -e "vendor/**"      # exclude patterns
 indxr --no-gitignore                         # don't respect .gitignore
 indxr --quiet                                # suppress progress output
 indxr --stats                                # print indexing stats to stderr
+
+# Note: serve, watch, and diff subcommands also accept shared indexing options:
+#   --max-depth, --max-file-size, -e/--exclude, --no-gitignore, --cache-dir, --member, --no-workspace
 ```
 
 ## Architecture
@@ -181,10 +202,13 @@ Key source files:
 - `src/main.rs` — entry point, CLI dispatch
 - `src/cli.rs` — clap argument definitions
 - `src/indexer.rs` — core indexing orchestration
+- `src/languages.rs` — `Language` enum, extension-based detection, tree-sitter/regex classification
+- `src/error.rs` — custom error types (`IndxrError`)
 - `src/mcp/mod.rs` — MCP server loop, JSON-RPC protocol handling
 - `src/mcp/tools.rs` — tool definitions, dispatch, and 26 tool implementations (3 compound default, 23 granular via `--all-tools`)
 - `src/mcp/http.rs` — Streamable HTTP transport (axum, feature-gated behind `http`)
 - `src/mcp/helpers.rs` — shared structs, search/scoring/glob/string helpers
+- `src/mcp/type_flow.rs` — type flow analysis for `get_type_flow` MCP tool
 - `src/mcp/tests.rs` — MCP module tests
 - `src/budget.rs` — token estimation and progressive truncation
 - `src/filter.rs` — path/kind/visibility/symbol filtering
@@ -194,7 +218,7 @@ Key source files:
 - `src/model/` — data model (CodebaseIndex, FileIndex, Declaration)
 - `src/parser/complexity.rs` — per-function complexity metrics and hotspot analysis (tree-sitter languages)
 - `src/parser/` — tree-sitter + regex parsers per language
-- `src/output/` — markdown/json/yaml formatters
+- `src/output/` — markdown and yaml formatters (JSON output is handled inline via `serde_json` in `main.rs`)
 - `src/walker/` — directory traversal
 - `src/init.rs` — `indxr init` command (agent config scaffolding)
 - `src/watch.rs` — file watching, debounced re-indexing (`indxr watch` + `serve --watch`)

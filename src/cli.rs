@@ -175,7 +175,7 @@ pub enum Command {
 
         /// Expose all tools (including specialized ones like get_hotspots,
         /// get_health, get_type_flow, get_dependency_graph, get_diff_summary,
-        /// get_token_estimate). By default only the core 15 tools are listed
+        /// get_token_estimate). By default only the 3 compound tools are listed
         /// to reduce per-request token overhead.
         #[arg(long)]
         all_tools: bool,

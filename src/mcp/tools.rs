@@ -28,7 +28,7 @@ use super::type_flow::*;
 ///
 /// The default surface is 3 compound tools (`find`, `summarize`, `read`)
 /// that internally dispatch to the granular tools below. This keeps schema
-/// overhead at ~420 tokens/round vs ~1,100+ for 12 granular tools.
+/// overhead at ~420 tokens/round vs ~1,100+ for 23 granular tools.
 const EXTENDED_TOOLS: &[&str] = &[
     // Granular tools (all still callable, just not listed by default)
     "lookup_symbol",

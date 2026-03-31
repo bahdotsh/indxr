@@ -39,7 +39,7 @@ These languages are parsed using [tree-sitter](https://tree-sitter.github.io/tre
 
 ### TypeScript
 
-**Extensions:** `.ts`, `.tsx`
+**Extensions:** `.ts`, `.tsx`, `.mts`, `.cts`
 
 **Extracts:**
 - Functions (named, arrow, exported)
@@ -54,7 +54,7 @@ These languages are parsed using [tree-sitter](https://tree-sitter.github.io/tre
 
 ### JavaScript
 
-**Extensions:** `.js`, `.jsx`, `.mjs`, `.cjs`
+**Extensions:** `.js`, `.jsx`, `.mjs`, `.cjs`, `.flow`
 
 **Extracts:**
 - Functions (named, arrow, exported)
@@ -284,8 +284,8 @@ These languages use pattern matching for lightweight structural extraction. Less
 
 ### Gradle
 
-**Extensions:** `.gradle`
-**Recognized filenames:** `build.gradle`, `settings.gradle`
+**Extensions:** `.gradle`, `.gradle.kts`
+**Recognized filenames:** `build.gradle`, `settings.gradle`, `build.gradle.kts`, `settings.gradle.kts`
 
 **Extracts:**
 - Plugin applications

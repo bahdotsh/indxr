@@ -65,7 +65,7 @@ The cache file includes a version marker. If the version doesn't match (e.g., af
 
 | Codebase | Files | Cold (no cache) | Warm (cached) | Speedup |
 |----------|-------|-----------------|---------------|---------|
-| Small (23 files) | 4.6K lines | 17ms | 5ms | 3.4x |
+| Small (indxr, 47 files) | 19K lines | 17ms | 5ms | 3.4x |
 | Medium (132 files) | 22K lines | 20ms | 6ms | 3.3x |
 | Large (243 files) | 124K lines | 73ms | ~10ms | 7.3x |
 
