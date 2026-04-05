@@ -27,6 +27,7 @@ pub async fn complete(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())
+        .kill_on_drop(true)
         .spawn()
         .with_context(|| format!("Failed to spawn LLM command: {cmd}"))?;
 

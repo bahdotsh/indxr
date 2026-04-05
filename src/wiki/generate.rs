@@ -620,9 +620,17 @@ impl<'a> WikiGenerator<'a> {
         ctx
     }
 
+    /// Approximate character limit for page context.  Same budget as the
+    /// planning context — keeps the LLM input within typical context windows.
+    const PAGE_CONTEXT_CHAR_LIMIT: usize = 100_000;
+
     /// Build the context for generating a single page.
+    /// Truncates declaration details when the context exceeds
+    /// [`Self::PAGE_CONTEXT_CHAR_LIMIT`], keeping file headers so the LLM
+    /// still knows which files are involved.
     fn build_page_context(&self, plan: &PagePlan, all_pages_str: &str) -> String {
         let mut ctx = String::new();
+        let mut truncated = false;
 
         ctx.push_str("# Page Plan\n");
         ctx.push_str(&format!("- ID: {}\n", plan.id));
@@ -645,6 +653,19 @@ impl<'a> WikiGenerator<'a> {
                     file.lines,
                     file.size,
                 ));
+
+                // Skip detailed listings once we exceed the budget
+                if ctx.len() >= Self::PAGE_CONTEXT_CHAR_LIMIT {
+                    if !truncated {
+                        truncated = true;
+                        eprintln!(
+                            "Warning: page context exceeds {}k chars, \
+                             omitting details for remaining source files",
+                            Self::PAGE_CONTEXT_CHAR_LIMIT / 1000
+                        );
+                    }
+                    continue;
+                }
 
                 // Imports
                 if !file.imports.is_empty() {
@@ -743,10 +764,9 @@ fn format_declarations(decls: &[Declaration], out: &mut String, depth: usize) {
         if let Some(ref doc) = decl.doc_comment {
             let short = doc.lines().next().unwrap_or("").trim();
             if !short.is_empty() {
-                let truncated = if short.len() > 100 {
-                    format!("{}...", &short[..100])
-                } else {
-                    short.to_string()
+                let truncated = match short.char_indices().nth(100) {
+                    Some((idx, _)) => format!("{}...", &short[..idx]),
+                    None => short.to_string(),
                 };
                 out.push_str(&format!(" — {}", truncated));
             }

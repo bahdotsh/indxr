@@ -68,6 +68,14 @@ impl WikiStore {
         let mut pages = Vec::new();
         for entry in &manifest.pages {
             let page_path = wiki_dir.join(&entry.file);
+            // Defence-in-depth: skip entries that resolve outside the wiki dir
+            if !page_path.starts_with(wiki_dir) {
+                eprintln!(
+                    "Warning: skipping manifest entry with path outside wiki dir: {}",
+                    entry.file
+                );
+                continue;
+            }
             if page_path.exists() {
                 let text = fs::read_to_string(&page_path)
                     .with_context(|| format!("Failed to read wiki page: {}", entry.file))?;

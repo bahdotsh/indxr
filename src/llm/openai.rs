@@ -52,7 +52,7 @@ pub async fn complete(
 
     let body = serde_json::json!({
         "model": model,
-        "max_tokens": max_tokens,
+        "max_completion_tokens": max_tokens,
         "messages": oai_messages,
     });
 
