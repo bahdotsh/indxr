@@ -161,11 +161,10 @@ pub(crate) fn compound_into_wiki(
 
     if let Some((best_score, target_id)) = best {
         if best_score >= 20 {
-            let old = store
-                .pages
-                .iter()
-                .find(|p| p.frontmatter.id == target_id)
-                .unwrap();
+            let old = match store.get_page(&target_id) {
+                Some(p) => p,
+                None => anyhow::bail!("Internal error: scored page '{}' not found", target_id),
+            };
             let mut new_content = old.content.clone();
             new_content.push_str(&format!(
                 "\n\n---\n\n### Compounded insight\n\n{}",
@@ -208,14 +207,28 @@ pub(crate) fn compound_into_wiki(
     }
 
     // Create new topic page
-    let page_id = if let Some(t) = title {
+    let base_id = if let Some(t) = title {
         sanitize_id(t)
     } else {
         sanitize_id(&derive_topic_id(synthesis))
     };
-    if page_id.is_empty() {
+    if base_id.is_empty() {
         anyhow::bail!("Could not derive a valid page ID. Provide a --title.");
     }
+
+    // Avoid collisions: if the ID already exists, append a numeric suffix
+    let page_id = if store.get_page(&base_id).is_none() {
+        base_id
+    } else {
+        let mut suffix = 2;
+        loop {
+            let candidate = format!("{}-{}", base_id, suffix);
+            if store.get_page(&candidate).is_none() {
+                break candidate;
+            }
+            suffix += 1;
+        }
+    };
 
     let page_title = title.map(|s| s.to_string()).unwrap_or_else(|| {
         let words: Vec<String> = synthesis
@@ -268,7 +281,7 @@ pub(crate) fn compound_into_wiki(
 }
 
 /// Score pages for synthesis routing (shared between MCP tool and CLI).
-fn score_pages(
+pub(crate) fn score_pages(
     store: &store::WikiStore,
     synthesis: &str,
     source_pages: &[&str],
@@ -314,7 +327,7 @@ fn score_pages(
     scored
 }
 
-fn derive_topic_id(synthesis: &str) -> String {
+pub(crate) fn derive_topic_id(synthesis: &str) -> String {
     let synthesis_lower = synthesis.to_lowercase();
     let significant_words: Vec<&str> = synthesis_lower
         .split_whitespace()

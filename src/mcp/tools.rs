@@ -3000,75 +3000,6 @@ pub(super) fn tool_wiki_status(
     }))
 }
 
-/// Score each wiki page against a synthesis text by keyword overlap.
-/// Returns `(score, page)` pairs with score > 0, sorted descending by score.
-/// Skips Index pages.
-#[cfg(feature = "wiki")]
-fn score_synthesis_against_pages<'a>(
-    pages: &'a [crate::wiki::page::WikiPage],
-    synthesis: &str,
-    source_pages: &[&str],
-) -> Vec<(usize, &'a crate::wiki::page::WikiPage)> {
-    let synthesis_lower = synthesis.to_lowercase();
-    let synthesis_words: Vec<&str> = synthesis_lower.split_whitespace().collect();
-
-    let mut scored: Vec<(usize, &crate::wiki::page::WikiPage)> = pages
-        .iter()
-        .filter(|page| page.frontmatter.page_type != crate::wiki::page::PageType::Index)
-        .filter_map(|page| {
-            let mut score = 0usize;
-
-            // Boost if this page was a source
-            if source_pages.contains(&page.frontmatter.id.as_str()) {
-                score += 50;
-            }
-
-            // Title word overlap
-            let title_lower = page.frontmatter.title.to_lowercase();
-            for word in &synthesis_words {
-                if word.len() >= 4 && title_lower.contains(word) {
-                    score += 10;
-                }
-            }
-
-            // Content word overlap (sample first ~1000 chars, skipping the heading)
-            let content_body = page
-                .content
-                .strip_prefix('#')
-                .and_then(|s| s.find('\n').map(|i| &s[i + 1..]))
-                .unwrap_or(&page.content);
-            let sample_end = crate::wiki::floor_char_boundary(content_body, 1000);
-            let content_sample = content_body[..sample_end].to_lowercase();
-            for word in &synthesis_words {
-                if word.len() >= 4 && content_sample.contains(word) {
-                    score += 2;
-                }
-            }
-
-            if score > 0 { Some((score, page)) } else { None }
-        })
-        .collect();
-
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
-    scored
-}
-
-/// Derive a suggested page ID from the first few significant words of a synthesis.
-#[cfg(feature = "wiki")]
-fn derive_topic_id(synthesis: &str) -> String {
-    let synthesis_lower = synthesis.to_lowercase();
-    let significant_words: Vec<&str> = synthesis_lower
-        .split_whitespace()
-        .filter(|w| w.len() >= 4)
-        .take(3)
-        .collect();
-    if significant_words.is_empty() {
-        "topic-new".to_string()
-    } else {
-        format!("topic-{}", significant_words.join("-"))
-    }
-}
-
 #[cfg(feature = "wiki")]
 pub(super) fn tool_wiki_suggest_contribution(
     store: &crate::wiki::store::WikiStore,
@@ -3084,10 +3015,11 @@ pub(super) fn tool_wiki_suggest_contribution(
         .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
 
-    let scored = score_synthesis_against_pages(&store.pages, synthesis, &source_pages);
+    let scored = crate::wiki::score_pages(store, synthesis, &source_pages);
 
-    if let Some(&(best_score, page)) = scored.first() {
+    if let Some(&(best_score, ref page_id)) = scored.first() {
         if best_score >= 20 {
+            let page = store.get_page(page_id).unwrap();
             return tool_result(json!({
                 "suggestion": "update",
                 "target_page": page.frontmatter.id,
@@ -3099,7 +3031,7 @@ pub(super) fn tool_wiki_suggest_contribution(
     }
 
     let best_score = scored.first().map(|(s, _)| *s).unwrap_or(0);
-    let suggested_id = derive_topic_id(synthesis);
+    let suggested_id = crate::wiki::derive_topic_id(synthesis);
 
     tool_result(json!({
         "suggestion": "create",
@@ -3115,149 +3047,30 @@ pub(super) fn tool_wiki_suggest_contribution(
 
 #[cfg(feature = "wiki")]
 pub(super) fn tool_wiki_compound(store: &mut crate::wiki::store::WikiStore, args: &Value) -> Value {
-    use crate::wiki::extract_wiki_links;
-    use crate::wiki::page::{Frontmatter, PageType, WikiPage, sanitize_id};
-
     let synthesis = match args.get("synthesis").and_then(|v| v.as_str()) {
         Some(s) if !s.is_empty() => s,
         _ => return tool_error("Missing required parameter: synthesis"),
     };
-    let source_pages: Vec<&str> = args
+    let source_pages: Vec<String> = args
         .get("source_pages")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
-    let title_arg = args.get("title").and_then(|v| v.as_str());
+    let title = args.get("title").and_then(|v| v.as_str());
 
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-
-    let scored = score_synthesis_against_pages(&store.pages, synthesis, &source_pages);
-    let best = scored
-        .first()
-        .map(|&(score, page)| (score, page.frontmatter.id.clone()));
-
-    if let Some((best_score, target_id)) = best {
-        if best_score >= 20 {
-            // Append to existing page
-            let old = store
-                .pages
-                .iter()
-                .find(|p| p.frontmatter.id == target_id)
-                .unwrap();
-            let mut new_content = old.content.clone();
-            new_content.push_str(&format!(
-                "\n\n---\n\n### Compounded insight\n\n{}",
-                synthesis
-            ));
-            let mut links_to = old.frontmatter.links_to.clone();
-            for sp in &source_pages {
-                let sp_str = sp.to_string();
-                if !links_to.contains(&sp_str) && *sp != target_id {
-                    links_to.push(sp_str);
-                }
-            }
-            // Also extract any [[page-id]] links from the synthesis
-            for link in extract_wiki_links(synthesis) {
-                if !links_to.contains(&link) {
-                    links_to.push(link);
-                }
-            }
-
-            let page = WikiPage {
-                frontmatter: Frontmatter {
-                    id: target_id.clone(),
-                    title: old.frontmatter.title.clone(),
-                    page_type: old.frontmatter.page_type.clone(),
-                    source_files: old.frontmatter.source_files.clone(),
-                    generated_at_ref: old.frontmatter.generated_at_ref.clone(),
-                    generated_at: now,
-                    links_to,
-                    covers: old.frontmatter.covers.clone(),
-                    contradictions: old.frontmatter.contradictions.clone(),
-                },
-                content: new_content,
-            };
-            store.upsert_page(page);
-
-            if let Err(e) = store.save_incremental(&target_id) {
-                return tool_error(&format!("Failed to save wiki page: {}", e));
-            }
-
-            let page = store.get_page(&target_id).unwrap();
-            return tool_result(json!({
-                "action": "compounded",
-                "page_id": target_id,
-                "title": page.frontmatter.title,
-                "score": best_score,
-                "total_wiki_pages": store.pages.len(),
-            }));
-        }
+    match crate::wiki::compound_into_wiki(store, synthesis, &source_pages, title) {
+        Ok(result) => tool_result(json!({
+            "action": result.action,
+            "page_id": result.id,
+            "title": result.title,
+            "total_wiki_pages": store.pages.len(),
+        })),
+        Err(e) => tool_error(&e.to_string()),
     }
-
-    // No good match — create a new topic page
-    let page_id = if let Some(t) = title_arg {
-        sanitize_id(t)
-    } else {
-        sanitize_id(&derive_topic_id(synthesis))
-    };
-    if page_id.is_empty() {
-        return tool_error("Could not derive a valid page ID. Provide a `title` parameter.");
-    }
-
-    let title = title_arg.map(|s| s.to_string()).unwrap_or_else(|| {
-        // Title-case the significant words
-        let words: Vec<String> = synthesis
-            .split_whitespace()
-            .filter(|w| w.len() >= 4)
-            .take(5)
-            .map(|w| {
-                let mut c = w.chars();
-                match c.next() {
-                    None => String::new(),
-                    Some(f) => f.to_uppercase().to_string() + c.as_str(),
-                }
-            })
-            .collect();
-        if words.is_empty() {
-            "New Topic".to_string()
-        } else {
-            words.join(" ")
-        }
-    });
-
-    let mut links_to: Vec<String> = source_pages.iter().map(|s| s.to_string()).collect();
-    for link in extract_wiki_links(synthesis) {
-        if !links_to.contains(&link) {
-            links_to.push(link);
-        }
-    }
-
-    let page = WikiPage {
-        frontmatter: Frontmatter {
-            id: page_id.clone(),
-            title: title.clone(),
-            page_type: PageType::Topic,
-            source_files: Vec::new(),
-            generated_at_ref: store.manifest.generated_at_ref.clone(),
-            generated_at: now,
-            links_to,
-            covers: Vec::new(),
-            contradictions: Vec::new(),
-        },
-        content: format!("# {}\n\n{}", title, synthesis),
-    };
-    store.upsert_page(page);
-
-    if let Err(e) = store.save_incremental(&page_id) {
-        return tool_error(&format!("Failed to save wiki page: {}", e));
-    }
-
-    tool_result(json!({
-        "action": "created",
-        "page_id": page_id,
-        "title": title,
-        "total_wiki_pages": store.pages.len(),
-    }))
 }
 
 #[cfg(feature = "wiki")]
