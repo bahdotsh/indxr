@@ -3,7 +3,7 @@ pub mod page;
 mod prompts;
 pub mod store;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -13,6 +13,121 @@ use crate::cli::WikiAction;
 use crate::diff;
 use crate::llm::LlmClient;
 use crate::model::WorkspaceIndex;
+
+/// Shared health report for wiki status, used by both CLI and MCP tool.
+pub(crate) struct WikiHealthReport {
+    pub pages: usize,
+    pub pages_by_type: HashMap<String, usize>,
+    pub generated_at_ref: String,
+    pub generated_at: String,
+    pub commits_behind: usize,
+    pub staleness: String,
+    pub covered_files: usize,
+    pub total_files: usize,
+    pub coverage_pct: String,
+    /// Pages whose source files changed since last generation.
+    pub affected_pages: Vec<String>,
+    /// Files not covered by any wiki page.
+    pub uncovered_files: Vec<String>,
+}
+
+pub(crate) fn compute_wiki_health(
+    store: &store::WikiStore,
+    workspace: &WorkspaceIndex,
+) -> WikiHealthReport {
+    let mut pages_by_type: HashMap<String, usize> = HashMap::new();
+    for page in &store.pages {
+        *pages_by_type
+            .entry(page.frontmatter.page_type.as_str().to_string())
+            .or_insert(0) += 1;
+    }
+
+    let since_ref = &store.manifest.generated_at_ref;
+    let behind = if !since_ref.is_empty() {
+        commits_behind(&workspace.root, since_ref).unwrap_or(0)
+    } else {
+        0
+    };
+
+    let staleness = if behind == 0 {
+        "up to date".to_string()
+    } else {
+        format!("{} commit(s) behind HEAD", behind)
+    };
+
+    // Affected pages
+    let affected_pages = if behind > 0 && !since_ref.is_empty() {
+        if let Ok(changed) = diff::get_changed_files(&workspace.root, since_ref) {
+            let changed_strs: HashSet<String> = changed
+                .iter()
+                .filter_map(|p| p.to_str().map(|s| s.to_string()))
+                .collect();
+            store
+                .pages
+                .iter()
+                .filter(|page| {
+                    page.frontmatter
+                        .source_files
+                        .iter()
+                        .any(|sf| changed_strs.contains(sf.as_str()))
+                })
+                .map(|page| page.frontmatter.title.clone())
+                .collect()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Coverage
+    let covered: HashSet<&str> = store
+        .pages
+        .iter()
+        .flat_map(|p| p.frontmatter.source_files.iter().map(|s| s.as_str()))
+        .collect();
+
+    let all_files: Vec<String> = workspace
+        .members
+        .iter()
+        .flat_map(|m| {
+            m.index
+                .files
+                .iter()
+                .map(|f| f.path.to_string_lossy().to_string())
+        })
+        .collect();
+    let total_files = all_files.len();
+    let uncovered_files: Vec<String> = all_files
+        .iter()
+        .filter(|f| !covered.contains(f.as_str()))
+        .cloned()
+        .collect();
+    let covered_files = total_files - uncovered_files.len();
+
+    let coverage_pct = if total_files > 0 {
+        format!(
+            "{:.0}%",
+            (covered_files as f64 / total_files as f64) * 100.0
+        )
+    } else {
+        "100%".to_string()
+    };
+
+    WikiHealthReport {
+        pages: store.pages.len(),
+        pages_by_type,
+        generated_at_ref: store.manifest.generated_at_ref.clone(),
+        generated_at: store.manifest.generated_at.clone(),
+        commits_behind: behind,
+        staleness,
+        covered_files,
+        total_files,
+        coverage_pct,
+        affected_pages,
+        uncovered_files,
+    }
+}
 
 use generate::WikiGenerator;
 
@@ -99,105 +214,39 @@ pub async fn run_wiki_command(
             }
 
             let store = store::WikiStore::load(&wiki_dir)?;
-            eprintln!("Wiki: {}", wiki_dir.display());
-            eprintln!("Pages: {}", store.pages.len());
-            eprintln!("Generated at ref: {}", store.manifest.generated_at_ref);
-            eprintln!("Generated at: {}", store.manifest.generated_at);
+            let health = compute_wiki_health(&store, &workspace);
 
-            // Count by type
-            let mut by_type = std::collections::HashMap::new();
-            for page in &store.pages {
-                *by_type
-                    .entry(page.frontmatter.page_type.to_string())
-                    .or_insert(0usize) += 1;
-            }
-            for (ptype, count) in &by_type {
+            eprintln!("Wiki: {}", wiki_dir.display());
+            eprintln!("Pages: {}", health.pages);
+            eprintln!("Generated at ref: {}", health.generated_at_ref);
+            eprintln!("Generated at: {}", health.generated_at);
+
+            for (ptype, count) in &health.pages_by_type {
                 eprintln!("  {}: {}", ptype, count);
             }
 
-            // Staleness: commits behind HEAD
-            let since_ref = &store.manifest.generated_at_ref;
-            if !since_ref.is_empty() {
-                if let Ok(behind) = commits_behind(&workspace.root, since_ref) {
-                    if behind == 0 {
-                        eprintln!("\nStaleness: up to date");
-                    } else {
-                        eprintln!("\nStaleness: {} commit(s) behind HEAD", behind);
-
-                        // Show which pages would be affected
-                        if let Ok(changed) = diff::get_changed_files(&workspace.root, since_ref) {
-                            let changed_strs: HashSet<String> = changed
-                                .iter()
-                                .filter_map(|p| p.to_str().map(|s| s.to_string()))
-                                .collect();
-
-                            let mut affected: Vec<&str> = Vec::new();
-                            for page in &store.pages {
-                                if page
-                                    .frontmatter
-                                    .source_files
-                                    .iter()
-                                    .any(|sf| changed_strs.contains(sf.as_str()))
-                                {
-                                    affected.push(&page.frontmatter.title);
-                                }
-                            }
-
-                            if !affected.is_empty() {
-                                eprintln!("Affected pages ({}):", affected.len());
-                                for title in &affected {
-                                    eprintln!("  - {}", title);
-                                }
-                            }
-                        }
-                    }
+            eprintln!("\nStaleness: {}", health.staleness);
+            if !health.affected_pages.is_empty() {
+                eprintln!("Affected pages ({}):", health.affected_pages.len());
+                for title in &health.affected_pages {
+                    eprintln!("  - {}", title);
                 }
             }
 
-            // Coverage: which workspace files are covered by wiki pages
-            let covered: HashSet<&str> = store
-                .pages
-                .iter()
-                .flat_map(|p| p.frontmatter.source_files.iter().map(|s| s.as_str()))
-                .collect();
-
-            let all_files: Vec<String> = workspace
-                .members
-                .iter()
-                .flat_map(|m| {
-                    m.index
-                        .files
-                        .iter()
-                        .map(|f| f.path.to_string_lossy().to_string())
-                })
-                .collect();
-            let total_files = all_files.len();
-
-            let uncovered: Vec<&String> = all_files
-                .iter()
-                .filter(|f| !covered.contains(f.as_str()))
-                .collect();
-
             eprintln!(
-                "\nSource file coverage: {}/{} ({:.0}%)",
-                total_files - uncovered.len(),
-                total_files,
-                if total_files > 0 {
-                    ((total_files - uncovered.len()) as f64 / total_files as f64) * 100.0
-                } else {
-                    100.0
-                }
+                "\nSource file coverage: {}/{} ({})",
+                health.covered_files, health.total_files, health.coverage_pct,
             );
 
-            if !uncovered.is_empty() && uncovered.len() <= 20 {
+            if !health.uncovered_files.is_empty() && health.uncovered_files.len() <= 20 {
                 eprintln!("Uncovered files:");
-                for f in &uncovered {
+                for f in &health.uncovered_files {
                     eprintln!("  - {}", f);
                 }
-            } else if !uncovered.is_empty() {
+            } else if !health.uncovered_files.is_empty() {
                 eprintln!(
                     "  ({} uncovered files — run with --verbose to list)",
-                    uncovered.len()
+                    health.uncovered_files.len()
                 );
             }
 

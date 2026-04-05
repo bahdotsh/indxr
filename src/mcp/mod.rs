@@ -127,9 +127,18 @@ pub(crate) fn handle_tools_list(
     id: Value,
     workspace: &WorkspaceIndex,
     all_tools: bool,
+    wiki_store: &WikiStoreOption,
 ) -> JsonRpcResponse {
     let is_workspace = workspace.members.len() > 1;
-    ok_response(id, tool_definitions(is_workspace, all_tools))
+    #[cfg(feature = "wiki")]
+    let wiki_available = wiki_store.is_some();
+    #[cfg(not(feature = "wiki"))]
+    let wiki_available = false;
+    let _ = wiki_store; // suppress unused warning when wiki feature is off
+    ok_response(
+        id,
+        tool_definitions(is_workspace, all_tools, wiki_available),
+    )
 }
 
 pub(crate) fn handle_tools_call(
@@ -218,7 +227,7 @@ pub(crate) fn process_jsonrpc_request(
 
     let response = match request.method.as_str() {
         "initialize" => handle_initialize(id, transport),
-        "tools/list" => handle_tools_list(id, workspace, all_tools),
+        "tools/list" => handle_tools_list(id, workspace, all_tools, wiki_store),
         "tools/call" => handle_tools_call(id, workspace, config, registry, &params, wiki_store),
         _ => err_response(id, -32601, format!("Method not found: {}", request.method)),
     };

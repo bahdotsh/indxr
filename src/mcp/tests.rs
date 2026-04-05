@@ -23,6 +23,7 @@ fn test_wiki_store() -> WikiStoreOption {
 }
 
 #[cfg(not(feature = "wiki"))]
+#[allow(clippy::unused_unit)]
 fn test_wiki_store() -> WikiStoreOption {
     ()
 }
@@ -205,7 +206,7 @@ fn test_simple_glob_match() {
 #[test]
 fn test_tool_definitions_all_tools() {
     // With all_tools=true, all 23 tools should be present
-    let defs = tool_definitions(false, true);
+    let defs = tool_definitions(false, true, false);
     let tools = defs["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"get_token_estimate"));
@@ -223,18 +224,13 @@ fn test_tool_definitions_all_tools() {
     assert!(names.contains(&"get_health"));
     assert!(names.contains(&"get_type_flow"));
     assert!(names.contains(&"list_workspace_members"));
-    let expected_base = 26; // 3 compound + 23 granular
-    #[cfg(feature = "wiki")]
-    let expected = expected_base + 3; // + wiki_search, wiki_read, wiki_status
-    #[cfg(not(feature = "wiki"))]
-    let expected = expected_base;
-    assert_eq!(names.len(), expected);
+    assert_eq!(names.len(), 26); // 3 compound + 23 granular (no wiki)
 }
 
 #[test]
 fn test_tool_definitions_default_excludes_extended() {
     // Default (all_tools=false) should only show compound tools
-    let defs = tool_definitions(false, false);
+    let defs = tool_definitions(false, false, false);
     let tools = defs["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     // Compound tools present
@@ -250,18 +246,17 @@ fn test_tool_definitions_default_excludes_extended() {
     assert!(!names.contains(&"get_health"));
     assert!(!names.contains(&"list_workspace_members"));
     assert!(!names.contains(&"regenerate_index"));
-    let expected_base = 3; // compound tools only
-    #[cfg(feature = "wiki")]
-    let expected = expected_base + 3; // + wiki tools (always shown)
-    #[cfg(not(feature = "wiki"))]
-    let expected = expected_base;
-    assert_eq!(names.len(), expected);
+    // Wiki tools absent (no wiki available)
+    assert!(!names.contains(&"wiki_search"));
+    assert!(!names.contains(&"wiki_read"));
+    assert!(!names.contains(&"wiki_status"));
+    assert_eq!(names.len(), 3); // compound tools only
 }
 
 #[test]
 fn test_tool_definitions_member_param_only_in_workspace() {
     // Single-project: no member param
-    let defs = tool_definitions(false, true);
+    let defs = tool_definitions(false, true, false);
     let tools = defs["tools"].as_array().unwrap();
     for tool in tools {
         let name = tool["name"].as_str().unwrap();
@@ -273,7 +268,7 @@ fn test_tool_definitions_member_param_only_in_workspace() {
     }
 
     // Multi-member workspace: member param added
-    let defs = tool_definitions(true, true);
+    let defs = tool_definitions(true, true, false);
     let tools = defs["tools"].as_array().unwrap();
     let skip = ["list_workspace_members", "regenerate_index"];
     for tool in tools {
@@ -312,7 +307,6 @@ fn test_extended_tools_callable_when_hidden() {
             r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{}","arguments":{{}}}}}}"#,
             tool_name
         );
-        let wiki = test_wiki_store();
         let result = process_jsonrpc_message(
             &msg,
             &mut ws,
@@ -320,7 +314,7 @@ fn test_extended_tools_callable_when_hidden() {
             &registry,
             Transport::Stdio,
             false,
-            &wiki,
+            &test_wiki_store(),
         );
         let resp = result.unwrap().unwrap();
         let json = serde_json::to_value(&resp).unwrap();
@@ -3438,5 +3432,57 @@ mod wiki_tests {
         let by_type = content["pages_by_type"].as_object().unwrap();
         assert_eq!(by_type["architecture"].as_u64().unwrap(), 1);
         assert_eq!(by_type["module"].as_u64().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_wiki_tools_listed_when_available() {
+        let defs = tool_definitions(false, false, true);
+        let tools = defs["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"wiki_search"));
+        assert!(names.contains(&"wiki_read"));
+        assert!(names.contains(&"wiki_status"));
+        assert_eq!(names.len(), 6); // 3 compound + 3 wiki
+    }
+
+    #[test]
+    fn test_wiki_tools_hidden_when_unavailable() {
+        let defs = tool_definitions(false, false, false);
+        let tools = defs["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(!names.contains(&"wiki_search"));
+        assert!(!names.contains(&"wiki_read"));
+        assert!(!names.contains(&"wiki_status"));
+    }
+
+    #[test]
+    fn test_wiki_search_unicode_content() {
+        let store = WikiStore {
+            root: PathBuf::from("/tmp/test-wiki"),
+            manifest: WikiManifest {
+                version: 1,
+                generated_at_ref: "abc1234".to_string(),
+                generated_at: "2026-04-05T10:00:00Z".to_string(),
+                pages: vec![],
+            },
+            pages: vec![WikiPage {
+                frontmatter: Frontmatter {
+                    id: "unicode-test".to_string(),
+                    title: "Unicode Test".to_string(),
+                    page_type: PageType::Module,
+                    source_files: vec![],
+                    generated_at_ref: "abc1234".to_string(),
+                    generated_at: "2026-04-05T10:00:00Z".to_string(),
+                    links_to: vec![],
+                    covers: vec![],
+                },
+                content: "# Ünïcödé Tëst\n\nThis module uses résumé and naïve approaches with Ñoño patterns.".to_string(),
+            }],
+        };
+        // Should not panic on non-ASCII content
+        let result = tool_wiki_search(&store, &json!({"query": "résumé"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(content["matches"].as_u64().unwrap() > 0);
     }
 }

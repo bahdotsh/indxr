@@ -65,7 +65,7 @@ fn member_property() -> Value {
     })
 }
 
-pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value {
+pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_available: bool) -> Value {
     let mut defs = json!({
         "tools": [
             // -- Compound tools (default surface: 3 tools, ~420 tok/round) --
@@ -606,50 +606,53 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value {
         ]
     });
 
-    // Append wiki tools when the wiki feature is compiled in.
+    // Append wiki tools when the wiki feature is compiled in and a wiki exists.
     #[cfg(feature = "wiki")]
-    if let Some(tools) = defs["tools"].as_array_mut() {
-        tools.push(json!({
-            "name": "wiki_search",
-            "description": "Search the codebase knowledge wiki by keyword or concept. Returns matching pages with excerpts. Use this to understand modules, architecture, or design decisions before diving into source code.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search term or concept"
+    if wiki_available {
+        if let Some(tools) = defs["tools"].as_array_mut() {
+            tools.push(json!({
+                "name": "wiki_search",
+                "description": "Search the codebase knowledge wiki by keyword or concept. Returns matching pages with excerpts. Use this to understand modules, architecture, or design decisions before diving into source code.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search term or concept"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max results (default: 5)"
+                        }
                     },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Max results (default: 5)"
-                    }
-                },
-                "required": ["query"]
-            }
-        }));
-        tools.push(json!({
-            "name": "wiki_read",
-            "description": "Read a wiki page by ID (e.g. 'architecture', 'mod-mcp'). Returns full page content with metadata.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "page": {
-                        "type": "string",
-                        "description": "Page ID or partial title to search"
-                    }
-                },
-                "required": ["page"]
-            }
-        }));
-        tools.push(json!({
-            "name": "wiki_status",
-            "description": "Check wiki health: page count, how stale it is, source file coverage.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {}
-            }
-        }));
+                    "required": ["query"]
+                }
+            }));
+            tools.push(json!({
+                "name": "wiki_read",
+                "description": "Read a wiki page by ID (e.g. 'architecture', 'mod-mcp'). Returns full page content with metadata.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "page": {
+                            "type": "string",
+                            "description": "Page ID or partial title to search"
+                        }
+                    },
+                    "required": ["page"]
+                }
+            }));
+            tools.push(json!({
+                "name": "wiki_status",
+                "description": "Check wiki health: page count, how stale it is, source file coverage.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }));
+        }
     }
+    let _ = wiki_available; // suppress unused warning when wiki feature is off
 
     // Post-process: conditionally add `member` property and filter extended tools.
     let mp = member_property();
@@ -2624,31 +2627,33 @@ pub(super) fn tool_wiki_search(store: &crate::wiki::store::WikiStore, args: &Val
 
 #[cfg(feature = "wiki")]
 fn extract_excerpt(content: &str, query: &str, max_chars: usize) -> String {
+    // Work entirely on the lowercased string for position finding to avoid
+    // cross-string byte offset issues with non-ASCII characters.
     let content_lower = content.to_lowercase();
     if let Some(pos) = content_lower.find(query) {
-        let start = content[..pos]
+        let start = content_lower[..pos]
             .rfind('\n')
             .map(|i| i + 1)
             .unwrap_or(pos.saturating_sub(max_chars / 2));
-        let end = (pos + query.len() + max_chars / 2).min(content.len());
-        let end = content[..end]
+        let end = (pos + query.len() + max_chars / 2).min(content_lower.len());
+        let end = content_lower[..end]
             .rfind('\n')
             .unwrap_or(end)
             .max(pos + query.len());
-        let mut excerpt = content[start..end].trim().to_string();
+        let mut excerpt = content_lower[start..end].trim().to_string();
         if start > 0 {
             excerpt.insert_str(0, "...");
         }
-        if end < content.len() {
+        if end < content_lower.len() {
             excerpt.push_str("...");
         }
         excerpt
     } else {
         // No exact match — return first N chars
-        let end = max_chars.min(content.len());
-        let end = content[..end].rfind('\n').unwrap_or(end);
-        let mut excerpt = content[..end].trim().to_string();
-        if end < content.len() {
+        let end = max_chars.min(content_lower.len());
+        let end = content_lower[..end].rfind('\n').unwrap_or(end);
+        let mut excerpt = content_lower[..end].trim().to_string();
+        if end < content_lower.len() {
             excerpt.push_str("...");
         }
         excerpt
@@ -2729,66 +2734,19 @@ pub(super) fn tool_wiki_status(
     store: &crate::wiki::store::WikiStore,
     workspace: &WorkspaceIndex,
 ) -> Value {
-    use std::collections::HashSet;
-
-    let mut by_type: HashMap<String, usize> = HashMap::new();
-    for page in &store.pages {
-        *by_type
-            .entry(page.frontmatter.page_type.as_str().to_string())
-            .or_insert(0) += 1;
-    }
-
-    let since_ref = &store.manifest.generated_at_ref;
-    let commits_behind = if !since_ref.is_empty() {
-        crate::wiki::commits_behind(&workspace.root, since_ref).unwrap_or(0)
-    } else {
-        0
-    };
-
-    // Coverage
-    let covered: HashSet<&str> = store
-        .pages
-        .iter()
-        .flat_map(|p| p.frontmatter.source_files.iter().map(|s| s.as_str()))
-        .collect();
-
-    let all_files: Vec<String> = workspace
-        .members
-        .iter()
-        .flat_map(|m| {
-            m.index
-                .files
-                .iter()
-                .map(|f| f.path.to_string_lossy().to_string())
-        })
-        .collect();
-    let total_files = all_files.len();
-    let covered_count = all_files
-        .iter()
-        .filter(|f| covered.contains(f.as_str()))
-        .count();
-
-    let staleness = if commits_behind == 0 {
-        "up to date".to_string()
-    } else {
-        format!("{} commit(s) behind HEAD", commits_behind)
-    };
+    let health = crate::wiki::compute_wiki_health(store, workspace);
 
     tool_result(json!({
-        "pages": store.pages.len(),
-        "pages_by_type": by_type,
-        "generated_at_ref": store.manifest.generated_at_ref,
-        "generated_at": store.manifest.generated_at,
-        "staleness": staleness,
-        "commits_behind": commits_behind,
+        "pages": health.pages,
+        "pages_by_type": health.pages_by_type,
+        "generated_at_ref": health.generated_at_ref,
+        "generated_at": health.generated_at,
+        "staleness": health.staleness,
+        "commits_behind": health.commits_behind,
         "coverage": {
-            "covered_files": covered_count,
-            "total_files": total_files,
-            "percentage": if total_files > 0 {
-                format!("{:.0}%", (covered_count as f64 / total_files as f64) * 100.0)
-            } else {
-                "100%".to_string()
-            }
+            "covered_files": health.covered_files,
+            "total_files": health.total_files,
+            "percentage": health.coverage_pct
         }
     }))
 }
