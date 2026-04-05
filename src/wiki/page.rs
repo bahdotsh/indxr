@@ -46,12 +46,30 @@ pub enum PageType {
 
 impl std::fmt::Display for PageType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str_title())
+    }
+}
+
+impl PageType {
+    /// Lowercase string form for use in prompts and serialization.
+    pub fn as_str(&self) -> &'static str {
         match self {
-            PageType::Architecture => write!(f, "Architecture"),
-            PageType::Module => write!(f, "Module"),
-            PageType::Entity => write!(f, "Entity"),
-            PageType::Topic => write!(f, "Topic"),
-            PageType::Index => write!(f, "Index"),
+            PageType::Architecture => "architecture",
+            PageType::Module => "module",
+            PageType::Entity => "entity",
+            PageType::Topic => "topic",
+            PageType::Index => "index",
+        }
+    }
+
+    /// Title-case string form for display.
+    fn as_str_title(&self) -> &'static str {
+        match self {
+            PageType::Architecture => "Architecture",
+            PageType::Module => "Module",
+            PageType::Entity => "Entity",
+            PageType::Topic => "Topic",
+            PageType::Index => "Index",
         }
     }
 }

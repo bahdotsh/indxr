@@ -328,6 +328,7 @@ impl<'a> WikiGenerator<'a> {
         timestamp: &str,
     ) -> Result<WikiPage> {
         let mut ctx = String::new();
+        let mut truncated = false;
 
         ctx.push_str("# Current Wiki Page Content\n\n");
         ctx.push_str(&existing.content);
@@ -352,6 +353,20 @@ impl<'a> WikiGenerator<'a> {
                     file.lines,
                     file.size,
                 ));
+
+                // Skip detailed listings once we exceed the budget
+                if ctx.len() >= Self::PAGE_CONTEXT_CHAR_LIMIT {
+                    if !truncated {
+                        truncated = true;
+                        eprintln!(
+                            "Warning: update context exceeds {}k chars, \
+                             omitting details for remaining source files",
+                            Self::PAGE_CONTEXT_CHAR_LIMIT / 1000
+                        );
+                    }
+                    continue;
+                }
+
                 if !file.imports.is_empty() {
                     ctx.push_str("**Imports:**\n");
                     for imp in &file.imports {
@@ -421,8 +436,10 @@ impl<'a> WikiGenerator<'a> {
 
         // Parse JSON from response (handle potential markdown fencing)
         let json_str = extract_json(&response);
-        let plans: Vec<PagePlan> =
-            serde_json::from_str(json_str).context("Failed to parse wiki plan JSON from LLM")?;
+        let plans: Vec<PagePlan> = serde_json::from_str(json_str).with_context(|| {
+            let snippet: String = json_str.chars().take(200).collect();
+            format!("Failed to parse wiki plan JSON from LLM. Response starts with: {snippet}")
+        })?;
 
         if plans.is_empty() {
             anyhow::bail!("LLM returned an empty wiki plan — no pages to generate");
@@ -459,8 +476,7 @@ impl<'a> WikiGenerator<'a> {
         git_ref: &str,
         timestamp: &str,
     ) -> Result<WikiPage> {
-        let page_type_str = format!("{:?}", plan.page_type).to_lowercase();
-        let system = prompts::page_system_prompt(&page_type_str);
+        let system = prompts::page_system_prompt(plan.page_type.as_str());
 
         let context = self.build_page_context(plan, all_pages_str);
 
