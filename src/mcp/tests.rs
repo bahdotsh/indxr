@@ -3454,7 +3454,8 @@ mod wiki_tests {
         assert!(names.contains(&"wiki_read"));
         assert!(names.contains(&"wiki_status"));
         assert!(names.contains(&"wiki_suggest_contribution"));
-        assert_eq!(names.len(), 10); // 3 compound + 7 wiki
+        assert!(names.contains(&"wiki_compound"));
+        assert_eq!(names.len(), 11); // 3 compound + 8 wiki
     }
 
     #[test]
@@ -3907,5 +3908,178 @@ mod wiki_tests {
             .unwrap();
         assert_eq!(page.frontmatter.contradictions.len(), 1);
         assert!(page.frontmatter.contradictions[0].resolved_at.is_some());
+    }
+
+    /// Helper: create a test wiki store backed by a real temp directory (for tests that write).
+    fn make_test_wiki_store_on_disk(tmp: &std::path::Path) -> WikiStore {
+        let wiki_dir = tmp.join("wiki");
+        std::fs::create_dir_all(&wiki_dir).unwrap();
+        let mut store = make_test_wiki_store();
+        store.root = wiki_dir;
+        // Save the initial state so save_incremental can work
+        store.save().unwrap();
+        store
+    }
+
+    #[test]
+    fn test_wiki_compound_appends_to_existing_page() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = make_test_wiki_store_on_disk(tmp.path());
+        let initial_count = store.pages.len();
+
+        // "mod-mcp" is a source page (score += 50), plus word overlap with "server" and "tools"
+        let result = tool_wiki_compound(
+            &mut store,
+            &json!({
+                "synthesis": "The MCP server dispatches tools via JSON-RPC protocol handlers.",
+                "source_pages": ["mod-mcp"]
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["action"], "compounded");
+        assert_eq!(content["page_id"], "mod-mcp");
+        assert_eq!(
+            content["total_wiki_pages"].as_u64().unwrap(),
+            initial_count as u64
+        );
+
+        // Verify the synthesis was appended to the page content
+        let page = store.get_page("mod-mcp").unwrap();
+        assert!(page.content.contains("Compounded insight"));
+        assert!(page.content.contains("JSON-RPC protocol handlers"));
+    }
+
+    #[test]
+    fn test_wiki_compound_creates_new_page() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = make_test_wiki_store_on_disk(tmp.path());
+        let initial_count = store.pages.len();
+
+        // No matching pages for this synthesis
+        let result = tool_wiki_compound(
+            &mut store,
+            &json!({
+                "synthesis": "Kubernetes orchestration patterns with Helm charts for deployment.",
+                "title": "Kubernetes Deployment"
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["action"], "created");
+        assert_eq!(content["page_id"], "kubernetesdeployment");
+        assert_eq!(content["title"], "Kubernetes Deployment");
+        assert_eq!(
+            content["total_wiki_pages"].as_u64().unwrap(),
+            (initial_count + 1) as u64
+        );
+
+        // Page should exist in store
+        let page = store.get_page("kubernetesdeployment").unwrap();
+        assert!(page.content.contains("Kubernetes orchestration"));
+    }
+
+    #[test]
+    fn test_wiki_compound_score_threshold_boundary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = make_test_wiki_store_on_disk(tmp.path());
+        let initial_count = store.pages.len();
+
+        // Only has a few word overlaps but no source_page boost — should score below 20
+        // "parser" overlaps with title "Parser Module" (+10), "languages" overlaps content (+2) = 12
+        let result = tool_wiki_compound(
+            &mut store,
+            &json!({
+                "synthesis": "The parser handles multiple languages.",
+                "title": "Parser Languages"
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        // Score 12 < 20 threshold, so it should create a new page
+        assert_eq!(content["action"], "created");
+        assert_eq!(
+            content["total_wiki_pages"].as_u64().unwrap(),
+            (initial_count + 1) as u64
+        );
+    }
+
+    #[test]
+    fn test_wiki_compound_page_id_collision() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = make_test_wiki_store_on_disk(tmp.path());
+
+        // Create a page that will collide with derived ID
+        let result1 = tool_wiki_compound(
+            &mut store,
+            &json!({
+                "synthesis": "Kubernetes deployment strategies for microservices.",
+                "title": "K8s Strategies"
+            }),
+        );
+        let content1: Value =
+            serde_json::from_str(result1["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content1["action"], "created");
+        assert_eq!(content1["page_id"], "k8sstrategies");
+
+        // Create another page with the same title — should get a suffixed ID
+        let result2 = tool_wiki_compound(
+            &mut store,
+            &json!({
+                "synthesis": "Advanced Kubernetes deployment strategies.",
+                "title": "K8s Strategies"
+            }),
+        );
+        let content2: Value =
+            serde_json::from_str(result2["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content2["action"], "created");
+        assert_eq!(content2["page_id"], "k8sstrategies-2");
+
+        // Both pages should exist
+        assert!(store.get_page("k8sstrategies").is_some());
+        assert!(store.get_page("k8sstrategies-2").is_some());
+    }
+
+    #[test]
+    fn test_wiki_compound_missing_synthesis() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = make_test_wiki_store_on_disk(tmp.path());
+        let result = tool_wiki_compound(&mut store, &json!({}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Missing required parameter: synthesis"));
+    }
+
+    #[test]
+    fn test_wiki_compound_empty_synthesis() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = make_test_wiki_store_on_disk(tmp.path());
+        let result = tool_wiki_compound(&mut store, &json!({"synthesis": ""}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Missing required parameter: synthesis"));
+    }
+
+    #[test]
+    fn test_wiki_compound_extracts_wiki_links() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = make_test_wiki_store_on_disk(tmp.path());
+
+        let result = tool_wiki_compound(
+            &mut store,
+            &json!({
+                "synthesis": "The MCP server works closely with the parser. See [[mod-parser]] for details.",
+                "source_pages": ["mod-mcp"]
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["action"], "compounded");
+
+        // The page should now link to mod-parser (extracted from [[mod-parser]])
+        let page = store.get_page("mod-mcp").unwrap();
+        assert!(
+            page.frontmatter
+                .links_to
+                .contains(&"mod-parser".to_string())
+        );
     }
 }

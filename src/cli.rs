@@ -354,6 +354,21 @@ pub enum WikiAction {
 
     /// Show wiki status (page count, staleness, coverage)
     Status,
+
+    /// Compound synthesized knowledge into the wiki
+    Compound {
+        /// Read synthesis text from file or stdin ("-")
+        #[arg(value_name = "FILE")]
+        file: String,
+
+        /// Wiki pages that contributed to the synthesis (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        source_pages: Vec<String>,
+
+        /// Title for new page if created
+        #[arg(long)]
+        title: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]

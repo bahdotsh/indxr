@@ -71,6 +71,7 @@ If a wiki has been generated (`indxr wiki generate`), these tools are available 
 30. `wiki_contribute(page, content, title?, page_type?, source_files?)` — write knowledge back to the wiki. Creates a new page or updates an existing one. Use `[[page-id]]` links in content for automatic cross-referencing. **Use this to file synthesized answers, analyses, or discovered connections that should persist beyond the current conversation.**
 31. `wiki_generate()` — initialize a new wiki and return codebase structural context for planning pages. The agent plans which pages to create from the context, then calls `wiki_contribute` for each page. No API keys needed.
 32. `wiki_update(since?)` — analyze code changes and return affected wiki pages with diff context. The agent rewrites each affected page and saves via `wiki_contribute`. No API keys needed.
+33. `wiki_compound(synthesis, source_pages?, title?)` — compound new knowledge into the wiki. Automatically routes the synthesis to the best matching page or creates a new topic page. **Use this after answering questions that drew from multiple wiki pages — it makes the wiki grow richer with every interaction.**
 
 > **Workspace support:** Most tools accept an optional `member` param to scope queries to a specific workspace member by name.
 
@@ -149,6 +150,15 @@ indxr watch                                  # watch cwd, keep INDEX.md updated
 indxr watch ./project                        # watch a specific project
 indxr watch -o custom.md --debounce-ms 500   # custom output and debounce
 indxr watch --quiet                          # suppress progress output
+
+# Wiki (requires --features wiki)
+indxr wiki generate                          # generate wiki from scratch
+indxr wiki update                            # update wiki from code changes
+indxr wiki status                            # show wiki health
+indxr wiki compound notes.txt                # compound knowledge from file
+echo "synthesis" | indxr wiki compound -     # compound from stdin
+indxr wiki compound - --source-pages mod-parser,mod-mcp  # with source page refs
+indxr wiki compound notes.txt --title "Design Decisions"  # with custom title
 
 # Agent setup
 indxr init                                   # set up all agent configs (.mcp.json, CLAUDE.md, etc.)

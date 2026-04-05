@@ -135,6 +135,212 @@ pub(crate) fn compute_wiki_health(
     }
 }
 
+/// Result of a compound operation.
+pub(crate) struct CompoundResult {
+    pub action: String,
+    pub id: String,
+    pub title: String,
+}
+
+/// Compound synthesized knowledge into the wiki. Scores the synthesis against
+/// existing pages and either appends to the best match or creates a new topic page.
+pub(crate) fn compound_into_wiki(
+    store: &mut store::WikiStore,
+    synthesis: &str,
+    source_pages: &[String],
+    title: Option<&str>,
+) -> Result<CompoundResult> {
+    use page::{Frontmatter, PageType, WikiPage, sanitize_id};
+
+    let source_refs: Vec<&str> = source_pages.iter().map(|s| s.as_str()).collect();
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+
+    // Score existing pages
+    let scored = score_pages(store, synthesis, &source_refs);
+    let best = scored.first().map(|(score, id)| (*score, id.clone()));
+
+    if let Some((best_score, target_id)) = best {
+        if best_score >= 20 {
+            let old = match store.get_page(&target_id) {
+                Some(p) => p,
+                None => anyhow::bail!("Internal error: scored page '{}' not found", target_id),
+            };
+            let mut new_content = old.content.clone();
+            new_content.push_str(&format!(
+                "\n\n---\n\n### Compounded insight\n\n{}",
+                synthesis
+            ));
+            let mut links_to = old.frontmatter.links_to.clone();
+            for sp in source_pages {
+                if !links_to.contains(sp) && *sp != target_id {
+                    links_to.push(sp.clone());
+                }
+            }
+            for link in extract_wiki_links(synthesis) {
+                if !links_to.contains(&link) {
+                    links_to.push(link);
+                }
+            }
+            let title_str = old.frontmatter.title.clone();
+            let page = WikiPage {
+                frontmatter: Frontmatter {
+                    id: target_id.clone(),
+                    title: title_str.clone(),
+                    page_type: old.frontmatter.page_type.clone(),
+                    source_files: old.frontmatter.source_files.clone(),
+                    generated_at_ref: old.frontmatter.generated_at_ref.clone(),
+                    generated_at: now,
+                    links_to,
+                    covers: old.frontmatter.covers.clone(),
+                    contradictions: old.frontmatter.contradictions.clone(),
+                },
+                content: new_content,
+            };
+            store.upsert_page(page);
+            store.save_incremental(&target_id)?;
+            return Ok(CompoundResult {
+                action: "compounded".to_string(),
+                id: target_id,
+                title: title_str,
+            });
+        }
+    }
+
+    // Create new topic page
+    let base_id = if let Some(t) = title {
+        sanitize_id(t)
+    } else {
+        sanitize_id(&derive_topic_id(synthesis))
+    };
+    if base_id.is_empty() {
+        anyhow::bail!("Could not derive a valid page ID. Provide a --title.");
+    }
+
+    // Avoid collisions: if the ID already exists, append a numeric suffix
+    let page_id = if store.get_page(&base_id).is_none() {
+        base_id
+    } else {
+        let mut suffix = 2;
+        loop {
+            let candidate = format!("{}-{}", base_id, suffix);
+            if store.get_page(&candidate).is_none() {
+                break candidate;
+            }
+            suffix += 1;
+        }
+    };
+
+    let page_title = title.map(|s| s.to_string()).unwrap_or_else(|| {
+        let words: Vec<String> = synthesis
+            .split_whitespace()
+            .filter(|w| w.len() >= 4)
+            .take(5)
+            .map(|w| {
+                let mut c = w.chars();
+                match c.next() {
+                    None => String::new(),
+                    Some(f) => f.to_uppercase().to_string() + c.as_str(),
+                }
+            })
+            .collect();
+        if words.is_empty() {
+            "New Topic".to_string()
+        } else {
+            words.join(" ")
+        }
+    });
+
+    let mut links_to: Vec<String> = source_pages.to_vec();
+    for link in extract_wiki_links(synthesis) {
+        if !links_to.contains(&link) {
+            links_to.push(link);
+        }
+    }
+
+    let page = WikiPage {
+        frontmatter: Frontmatter {
+            id: page_id.clone(),
+            title: page_title.clone(),
+            page_type: PageType::Topic,
+            source_files: Vec::new(),
+            generated_at_ref: store.manifest.generated_at_ref.clone(),
+            generated_at: now,
+            links_to,
+            covers: Vec::new(),
+            contradictions: Vec::new(),
+        },
+        content: format!("# {}\n\n{}", page_title, synthesis),
+    };
+    store.upsert_page(page);
+    store.save_incremental(&page_id)?;
+    Ok(CompoundResult {
+        action: "created".to_string(),
+        id: page_id,
+        title: page_title,
+    })
+}
+
+/// Score pages for synthesis routing (shared between MCP tool and CLI).
+pub(crate) fn score_pages(
+    store: &store::WikiStore,
+    synthesis: &str,
+    source_pages: &[&str],
+) -> Vec<(usize, String)> {
+    let synthesis_lower = synthesis.to_lowercase();
+    let synthesis_words: Vec<&str> = synthesis_lower.split_whitespace().collect();
+
+    let mut scored: Vec<(usize, String)> = store
+        .pages
+        .iter()
+        .filter(|p| p.frontmatter.page_type != page::PageType::Index)
+        .filter_map(|p| {
+            let mut score = 0usize;
+            if source_pages.contains(&p.frontmatter.id.as_str()) {
+                score += 50;
+            }
+            let title_lower = p.frontmatter.title.to_lowercase();
+            for word in &synthesis_words {
+                if word.len() >= 4 && title_lower.contains(word) {
+                    score += 10;
+                }
+            }
+            let content_body = p
+                .content
+                .strip_prefix('#')
+                .and_then(|s| s.find('\n').map(|i| &s[i + 1..]))
+                .unwrap_or(&p.content);
+            let sample_end = floor_char_boundary(content_body, 1000);
+            let content_sample = content_body[..sample_end].to_lowercase();
+            for word in &synthesis_words {
+                if word.len() >= 4 && content_sample.contains(word) {
+                    score += 2;
+                }
+            }
+            if score > 0 {
+                Some((score, p.frontmatter.id.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored
+}
+
+pub(crate) fn derive_topic_id(synthesis: &str) -> String {
+    let synthesis_lower = synthesis.to_lowercase();
+    let significant_words: Vec<&str> = synthesis_lower
+        .split_whitespace()
+        .filter(|w| w.len() >= 4)
+        .take(3)
+        .collect();
+    if significant_words.is_empty() {
+        "topic-new".to_string()
+    } else {
+        format!("topic-{}", significant_words.join("-"))
+    }
+}
+
 pub async fn run_wiki_command(
     action: &WikiAction,
     workspace: WorkspaceIndex,
@@ -254,6 +460,36 @@ pub async fn run_wiki_command(
                     health.uncovered_files.len()
                 );
             }
+
+            Ok(())
+        }
+        WikiAction::Compound {
+            file,
+            source_pages,
+            title,
+        } => {
+            let wiki_dir = resolve_wiki_dir(wiki_dir_override, &workspace.root);
+            let mut store = store::WikiStore::load(&wiki_dir)?;
+            if store.pages.is_empty() {
+                anyhow::bail!(
+                    "No wiki found at {}. Run `indxr wiki generate` first.",
+                    wiki_dir.display()
+                );
+            }
+
+            let synthesis = if file == "-" {
+                std::io::read_to_string(std::io::stdin())?
+            } else {
+                std::fs::read_to_string(file)?
+            };
+
+            let result =
+                compound_into_wiki(&mut store, &synthesis, source_pages, title.as_deref())?;
+
+            eprintln!(
+                "Wiki {}: \"{}\" (page: {})",
+                result.action, result.title, result.id
+            );
 
             Ok(())
         }
