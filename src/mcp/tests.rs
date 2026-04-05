@@ -3454,7 +3454,8 @@ mod wiki_tests {
         assert!(names.contains(&"wiki_read"));
         assert!(names.contains(&"wiki_status"));
         assert!(names.contains(&"wiki_suggest_contribution"));
-        assert_eq!(names.len(), 10); // 3 compound + 7 wiki
+        assert!(names.contains(&"wiki_compound"));
+        assert_eq!(names.len(), 11); // 3 compound + 8 wiki
     }
 
     #[test]
