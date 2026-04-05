@@ -1,0 +1,134 @@
+mod generate;
+pub mod page;
+mod prompts;
+pub mod store;
+
+use std::path::PathBuf;
+
+use anyhow::Result;
+
+use crate::cli::WikiAction;
+use crate::llm::LlmClient;
+use crate::model::WorkspaceIndex;
+
+use generate::WikiGenerator;
+
+pub async fn run_wiki_command(
+    action: &WikiAction,
+    workspace: WorkspaceIndex,
+    wiki_dir_override: &Option<PathBuf>,
+    model_override: Option<&str>,
+) -> Result<()> {
+    match action {
+        WikiAction::Generate {
+            max_response_tokens,
+            dry_run,
+        } => {
+            let wiki_dir = resolve_wiki_dir(wiki_dir_override, &workspace.root);
+            let llm = LlmClient::from_env(model_override)?
+                .with_max_tokens(*max_response_tokens);
+
+            eprintln!("Using model: {}", llm.model());
+            eprintln!("Wiki output: {}", wiki_dir.display());
+
+            let generator = WikiGenerator::new(&llm, &workspace);
+            let store = generator.generate_full(&wiki_dir, *dry_run).await?;
+
+            if !dry_run {
+                store.save()?;
+                eprintln!(
+                    "\nWiki generated: {} pages written to {}",
+                    store.pages.len(),
+                    wiki_dir.display()
+                );
+            }
+
+            Ok(())
+        }
+        WikiAction::Update {
+            since,
+            max_response_tokens,
+        } => {
+            let wiki_dir = resolve_wiki_dir(wiki_dir_override, &workspace.root);
+            let llm = LlmClient::from_env(model_override)?
+                .with_max_tokens(*max_response_tokens);
+
+            let store = store::WikiStore::load(&wiki_dir)?;
+            if store.pages.is_empty() {
+                anyhow::bail!(
+                    "No wiki found at {}. Run `indxr wiki generate` first.",
+                    wiki_dir.display()
+                );
+            }
+
+            let since_ref = since
+                .as_deref()
+                .unwrap_or(&store.manifest.generated_at_ref);
+
+            eprintln!("Updating wiki from ref: {}", since_ref);
+            eprintln!("Using model: {}", llm.model());
+
+            // Phase 2 incremental update will go here.
+            // For now, regenerate affected pages.
+            let generator = WikiGenerator::new(&llm, &workspace);
+            let new_store = generator.generate_full(&wiki_dir, false).await?;
+            new_store.save()?;
+
+            eprintln!(
+                "\nWiki updated: {} pages at {}",
+                new_store.pages.len(),
+                wiki_dir.display()
+            );
+            let _ = since_ref;
+
+            Ok(())
+        }
+        WikiAction::Status => {
+            let wiki_dir = resolve_wiki_dir(wiki_dir_override, &workspace.root);
+
+            if !wiki_dir.exists() {
+                eprintln!("No wiki found at {}", wiki_dir.display());
+                eprintln!("Run `indxr wiki generate` to create one.");
+                return Ok(());
+            }
+
+            let store = store::WikiStore::load(&wiki_dir)?;
+            eprintln!("Wiki: {}", wiki_dir.display());
+            eprintln!("Pages: {}", store.pages.len());
+            eprintln!("Generated at ref: {}", store.manifest.generated_at_ref);
+            eprintln!("Generated at: {}", store.manifest.generated_at);
+
+            // Count by type
+            let mut by_type = std::collections::HashMap::new();
+            for page in &store.pages {
+                *by_type
+                    .entry(format!("{:?}", page.frontmatter.page_type))
+                    .or_insert(0usize) += 1;
+            }
+            for (ptype, count) in &by_type {
+                eprintln!("  {}: {}", ptype, count);
+            }
+
+            // Coverage
+            let covered: std::collections::HashSet<&str> = store
+                .pages
+                .iter()
+                .flat_map(|p| p.frontmatter.source_files.iter().map(|s| s.as_str()))
+                .collect();
+            let total_files = workspace.stats.total_files;
+            eprintln!(
+                "Source file coverage: {}/{}",
+                covered.len(),
+                total_files
+            );
+
+            Ok(())
+        }
+    }
+}
+
+fn resolve_wiki_dir(override_dir: &Option<PathBuf>, workspace_root: &std::path::Path) -> PathBuf {
+    override_dir
+        .clone()
+        .unwrap_or_else(|| workspace_root.join(".indxr").join("wiki"))
+}
