@@ -105,7 +105,7 @@ pub async fn run_wiki_command(
             let mut by_type = std::collections::HashMap::new();
             for page in &store.pages {
                 *by_type
-                    .entry(format!("{:?}", page.frontmatter.page_type))
+                    .entry(page.frontmatter.page_type.to_string())
                     .or_insert(0usize) += 1;
             }
             for (ptype, count) in &by_type {

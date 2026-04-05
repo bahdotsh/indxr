@@ -1,8 +1,13 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result, bail};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-use super::Message;
+use super::{Message, TransientLlmError};
+
+/// Timeout for external LLM command execution (5 minutes).
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub async fn complete(
     cmd: &str,
@@ -32,14 +37,23 @@ pub async fn complete(
         // stdin is dropped here, closing the pipe
     }
 
-    let output = child
-        .wait_with_output()
-        .await
-        .context("Failed to wait for LLM command")?;
+    // wait_with_output consumes child; on timeout the future is dropped,
+    // closing pipes and signaling the subprocess to exit.
+    let output = match tokio::time::timeout(COMMAND_TIMEOUT, child.wait_with_output()).await {
+        Ok(result) => result.context("Failed to wait for LLM command")?,
+        Err(_) => {
+            return Err(TransientLlmError(format!(
+                "LLM command timed out after {}s",
+                COMMAND_TIMEOUT.as_secs()
+            ))
+            .into());
+        }
+    };
 
     if !output.status.success() {
         let code = output.status.code().unwrap_or(-1);
-        bail!("LLM command exited with status {code}");
+        // Treat command failures as transient (could be temporary resource issues)
+        return Err(TransientLlmError(format!("LLM command exited with status {code}")).into());
     }
 
     let text = String::from_utf8(output.stdout)

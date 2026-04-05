@@ -132,7 +132,8 @@ pub fn get_file_at_ref(root: &Path, file_path: &Path, git_ref: &str) -> Result<O
 /// producing a [`StructuralDiff`].
 ///
 /// * `current_files` -- the freshly-parsed file indices from the current
-///   working tree.
+///   working tree.  Accepts any iterable of `&FileIndex` (e.g. `&[FileIndex]`,
+///   `&Vec<FileIndex>`, `Vec<&FileIndex>`).
 /// * `old_files` -- a map from relative path to the [`FileIndex`] that was
 ///   parsed from the old ref.  Only files that existed at the old ref need to
 ///   appear here.
@@ -140,14 +141,14 @@ pub fn get_file_at_ref(root: &Path, file_path: &Path, git_ref: &str) -> Result<O
 ///   changed.  Files present in `current_files` but absent from `old_files`
 ///   are treated as added; files in `old_files` but absent from `current_files`
 ///   are treated as removed; files in both are diffed at the declaration level.
-pub fn compute_structural_diff(
-    current_files: &[FileIndex],
+pub fn compute_structural_diff<'a>(
+    current_files: impl IntoIterator<Item = &'a FileIndex>,
     old_files: &HashMap<PathBuf, FileIndex>,
     changed_paths: &[PathBuf],
 ) -> StructuralDiff {
     // Build a lookup from path -> &FileIndex for the current files.
     let current_map: HashMap<&PathBuf, &FileIndex> =
-        current_files.iter().map(|fi| (&fi.path, fi)).collect();
+        current_files.into_iter().map(|fi| (&fi.path, fi)).collect();
 
     let current_paths: HashSet<&PathBuf> = current_map.keys().copied().collect();
     let old_paths: HashSet<&PathBuf> = old_files.keys().collect();

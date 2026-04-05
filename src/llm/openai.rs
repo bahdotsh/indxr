@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use super::{Message, Role};
+use super::{Message, Role, TransientLlmError};
 
 #[derive(Deserialize)]
 struct ChatResponse {
@@ -70,10 +70,15 @@ pub async fn complete(
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        if let Ok(err) = serde_json::from_str::<OpenAiError>(&text) {
-            bail!("OpenAI API error ({}): {}", status, err.error.message);
+        let msg = if let Ok(err) = serde_json::from_str::<OpenAiError>(&text) {
+            format!("OpenAI API error ({}): {}", status, err.error.message)
+        } else {
+            format!("OpenAI API error ({}): {}", status, text)
+        };
+        if status == 429 || status.is_server_error() {
+            return Err(TransientLlmError(msg).into());
         }
-        bail!("OpenAI API error ({}): {}", status, text);
+        bail!("{}", msg);
     }
 
     let response: ChatResponse = resp

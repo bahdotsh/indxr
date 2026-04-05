@@ -44,6 +44,18 @@ pub enum PageType {
     Index,
 }
 
+impl std::fmt::Display for PageType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PageType::Architecture => write!(f, "Architecture"),
+            PageType::Module => write!(f, "Module"),
+            PageType::Entity => write!(f, "Entity"),
+            PageType::Topic => write!(f, "Topic"),
+            PageType::Index => write!(f, "Index"),
+        }
+    }
+}
+
 impl PageType {
     /// Subdirectory within the wiki root for this page type.
     pub fn subdir(&self) -> Option<&'static str> {

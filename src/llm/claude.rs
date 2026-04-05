@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use super::Message;
+use super::{Message, TransientLlmError};
 
 #[derive(Deserialize)]
 struct ClaudeResponse {
@@ -54,10 +54,15 @@ pub async fn complete(
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        if let Ok(err) = serde_json::from_str::<ClaudeErrorResponse>(&text) {
-            bail!("Claude API error ({}): {}", status, err.error.message);
+        let msg = if let Ok(err) = serde_json::from_str::<ClaudeErrorResponse>(&text) {
+            format!("Claude API error ({}): {}", status, err.error.message)
+        } else {
+            format!("Claude API error ({}): {}", status, text)
+        };
+        if status == 429 || status.is_server_error() {
+            return Err(TransientLlmError(msg).into());
         }
-        bail!("Claude API error ({}): {}", status, text);
+        bail!("{}", msg);
     }
 
     let response: ClaudeResponse = resp

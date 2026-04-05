@@ -125,8 +125,8 @@ impl<'a> WikiGenerator<'a> {
                 .await?;
             store.upsert_page(page);
 
-            // Incremental save — partial progress survives LLM failures
-            store.save()?;
+            // Incremental save — writes only this page + manifest
+            store.save_incremental(&plan.id)?;
         }
 
         // Stage 3: Generate index page
@@ -166,7 +166,7 @@ impl<'a> WikiGenerator<'a> {
         );
 
         // 2. Build structural diff for context
-        let all_files = self.collect_all_files();
+        let all_files = self.collect_all_file_refs();
         let registry = ParserRegistry::new();
         let mut old_files: HashMap<PathBuf, FileIndex> = HashMap::new();
         for path in &changed_paths {
@@ -179,7 +179,7 @@ impl<'a> WikiGenerator<'a> {
             }
         }
 
-        let structural_diff = diff::compute_structural_diff(&all_files, &old_files, &changed_paths);
+        let structural_diff = diff::compute_structural_diff(all_files, &old_files, &changed_paths);
         let diff_markdown = diff::format_diff_markdown(&structural_diff);
 
         // 3. Collect all changed file paths as strings for matching
@@ -254,8 +254,9 @@ impl<'a> WikiGenerator<'a> {
                     &timestamp,
                 )
                 .await?;
+            let updated_id = existing_page.frontmatter.id.clone();
             store.upsert_page(updated);
-            store.save()?;
+            store.save_incremental(&updated_id)?;
             pages_updated += 1;
         }
 
@@ -391,12 +392,12 @@ impl<'a> WikiGenerator<'a> {
         })
     }
 
-    /// Collect all FileIndex entries across workspace members (borrowed references).
-    fn collect_all_files(&self) -> Vec<FileIndex> {
+    /// Collect borrowed references to all FileIndex entries across workspace members.
+    fn collect_all_file_refs(&self) -> Vec<&'a FileIndex> {
         self.workspace
             .members
             .iter()
-            .flat_map(|m| m.index.files.clone())
+            .flat_map(|m| m.index.files.iter())
             .collect()
     }
 
@@ -787,20 +788,33 @@ fn extract_json(text: &str) -> &str {
 }
 
 /// Extract [[page-id]] wiki links from content, sanitizing each link.
+/// Skips links inside fenced code blocks.
 fn extract_wiki_links(content: &str) -> Vec<String> {
     let mut links = Vec::new();
-    let mut rest = content;
-    while let Some(start) = rest.find("[[") {
-        let after = &rest[start + 2..];
-        if let Some(end) = after.find("]]") {
-            let raw = &after[..end];
-            let sanitized = page::sanitize_id(raw);
-            if !sanitized.is_empty() && !links.contains(&sanitized) {
-                links.push(sanitized);
+    let mut in_code_block = false;
+
+    for line in content.lines() {
+        if line.trim_start().starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            continue;
+        }
+
+        let mut rest = line;
+        while let Some(start) = rest.find("[[") {
+            let after = &rest[start + 2..];
+            if let Some(end) = after.find("]]") {
+                let raw = &after[..end];
+                let sanitized = page::sanitize_id(raw);
+                if !sanitized.is_empty() && !links.contains(&sanitized) {
+                    links.push(sanitized);
+                }
+                rest = &after[end + 2..];
+            } else {
+                break;
             }
-            rest = &after[end + 2..];
-        } else {
-            break;
         }
     }
     links
@@ -834,5 +848,12 @@ mod tests {
         let content = "See [[MCP-Server]] and [[../../etc/passwd]] and [[]] end.";
         let links = extract_wiki_links(content);
         assert_eq!(links, vec!["mcp-server", "etcpasswd"]);
+    }
+
+    #[test]
+    fn test_extract_wiki_links_skips_code_blocks() {
+        let content = "See [[architecture]] for details.\n\n```\nExample: [[not-a-link]]\n```\n\nAlso [[mod-parser]].";
+        let links = extract_wiki_links(content);
+        assert_eq!(links, vec!["architecture", "mod-parser"]);
     }
 }

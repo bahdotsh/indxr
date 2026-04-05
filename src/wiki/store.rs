@@ -88,25 +88,48 @@ impl WikiStore {
         })
     }
 
-    /// Save the wiki to disk — writes all pages and the manifest.
+    /// Save the entire wiki to disk — writes all pages and the manifest.
     pub fn save(&self) -> Result<()> {
-        // Create subdirectories
+        self.ensure_subdirs()?;
+
+        for page in &self.pages {
+            self.write_page(page)?;
+        }
+
+        self.save_manifest()
+    }
+
+    /// Save a single page and update the manifest.
+    /// More efficient than `save()` during incremental generation.
+    pub fn save_incremental(&self, page_id: &str) -> Result<()> {
+        self.ensure_subdirs()?;
+
+        if let Some(page) = self.pages.iter().find(|p| p.frontmatter.id == page_id) {
+            self.write_page(page)?;
+        }
+
+        self.save_manifest()
+    }
+
+    fn ensure_subdirs(&self) -> Result<()> {
         for subdir in &["modules", "entities", "topics"] {
             fs::create_dir_all(self.root.join(subdir))?;
         }
+        Ok(())
+    }
 
-        // Write each page
-        for page in &self.pages {
-            let rel_path = page_relative_path(page);
-            let full_path = self.root.join(&rel_path);
-            if let Some(parent) = full_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let rendered = page.render()?;
-            fs::write(&full_path, rendered)?;
+    fn write_page(&self, page: &WikiPage) -> Result<()> {
+        let rel_path = page_relative_path(page);
+        let full_path = self.root.join(&rel_path);
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent)?;
         }
+        let rendered = page.render()?;
+        fs::write(&full_path, rendered)?;
+        Ok(())
+    }
 
-        // Build and write manifest
+    fn save_manifest(&self) -> Result<()> {
         let manifest = WikiManifest {
             version: 1,
             generated_at_ref: self.manifest.generated_at_ref.clone(),

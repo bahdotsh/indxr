@@ -7,6 +7,18 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
+/// A transient LLM error that should be retried (429, 5xx, process crash).
+#[derive(Debug)]
+pub(crate) struct TransientLlmError(pub String);
+
+impl std::fmt::Display for TransientLlmError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TransientLlmError {}
+
 /// A single message in an LLM conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -125,7 +137,11 @@ impl LlmClient {
     pub fn with_config(config: LlmConfig) -> Self {
         Self {
             config,
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(120))
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .unwrap_or_default(),
             max_retries: 2,
         }
     }
@@ -155,7 +171,11 @@ impl LlmClient {
             match self.complete_once(system, messages).await {
                 Ok(text) => return Ok(text),
                 Err(e) => {
+                    let transient = e.downcast_ref::<TransientLlmError>().is_some();
                     eprintln!("  LLM call failed: {e:#}");
+                    if !transient {
+                        return Err(e);
+                    }
                     last_err = Some(e);
                 }
             }
