@@ -225,6 +225,30 @@ pub enum Command {
         path: PathBuf,
     },
 
+    /// Generate and maintain a persistent codebase knowledge wiki (requires 'wiki' feature)
+    #[cfg(feature = "wiki")]
+    Wiki {
+        #[command(subcommand)]
+        action: WikiAction,
+
+        #[command(flatten)]
+        opts: IndexOpts,
+
+        /// LLM model to use (default: auto-detected from provider)
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Wiki output directory
+        #[arg(long)]
+        wiki_dir: Option<std::path::PathBuf>,
+
+        /// External command for LLM completions (receives JSON on stdin, returns text on stdout).
+        /// Useful for coding agents — the agent can act as the LLM backend.
+        /// Also configurable via INDXR_LLM_COMMAND env var.
+        #[arg(long)]
+        exec: Option<String>,
+    },
+
     /// Initialize indxr configuration files for AI agent integration
     Init {
         /// Root directory to initialize
@@ -276,6 +300,35 @@ pub enum Command {
         #[arg(long, default_value = "512")]
         max_file_size: u64,
     },
+}
+
+#[cfg(feature = "wiki")]
+#[derive(Subcommand, Debug)]
+pub enum WikiAction {
+    /// Generate the wiki from scratch
+    Generate {
+        /// Maximum tokens per LLM response
+        #[arg(long, default_value = "4096")]
+        max_response_tokens: usize,
+
+        /// Plan wiki structure without generating pages
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Update wiki pages affected by recent code changes
+    Update {
+        /// Git ref to diff against (default: ref stored in wiki manifest)
+        #[arg(long, value_name = "REF")]
+        since: Option<String>,
+
+        /// Maximum tokens per LLM response
+        #[arg(long, default_value = "4096")]
+        max_response_tokens: usize,
+    },
+
+    /// Show wiki status (page count, staleness, coverage)
+    Status,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]

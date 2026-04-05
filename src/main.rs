@@ -9,6 +9,8 @@ mod github;
 mod indexer;
 mod init;
 mod languages;
+#[cfg(feature = "wiki")]
+mod llm;
 mod mcp;
 mod model;
 mod output;
@@ -16,6 +18,8 @@ mod parser;
 mod utils;
 mod walker;
 mod watch;
+#[cfg(feature = "wiki")]
+mod wiki;
 mod workspace;
 
 use std::collections::HashMap;
@@ -157,6 +161,34 @@ fn main() -> Result<()> {
         };
 
         return init::run_init(opts);
+    }
+
+    // Handle wiki subcommand
+    #[cfg(feature = "wiki")]
+    if let Some(Command::Wiki {
+        action,
+        opts,
+        model,
+        wiki_dir,
+        exec,
+    }) = &cli.command
+    {
+        let config = index_config_from(opts);
+        let (ws_index, _ws_config) = indexer::detect_and_build_workspace(
+            &opts.path,
+            &config,
+            opts.no_workspace,
+            opts.member.as_deref(),
+        )?;
+
+        let rt = tokio::runtime::Runtime::new()?;
+        return rt.block_on(wiki::run_wiki_command(
+            action,
+            ws_index,
+            wiki_dir,
+            model.as_deref(),
+            exec.as_deref(),
+        ));
     }
 
     // Handle members subcommand
@@ -431,22 +463,7 @@ fn handle_git_diff(
         }
     }
 
-    // Build a temporary CodebaseIndex for diff computation
-    let temp_index = CodebaseIndex {
-        root: root.to_path_buf(),
-        root_name: String::new(),
-        generated_at: String::new(),
-        files: current_files.to_vec(),
-        tree: Vec::new(),
-        stats: IndexStats {
-            total_files: 0,
-            total_lines: 0,
-            languages: HashMap::new(),
-            duration_ms: 0,
-        },
-    };
-
-    let structural_diff = diff::compute_structural_diff(&temp_index, &old_files, &changed_paths);
+    let structural_diff = diff::compute_structural_diff(current_files, &old_files, &changed_paths);
 
     match format {
         OutputFormat::Json => {
