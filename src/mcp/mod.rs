@@ -211,7 +211,7 @@ pub(crate) fn handle_tools_call(
         if tool_name == "wiki_update" {
             return match wiki_store.as_ref() {
                 Some(store) => {
-                    let result = tool_wiki_update(store, workspace, &arguments);
+                    let result = tool_wiki_update(store, workspace, registry, &arguments);
                     ok_response(id, result)
                 }
                 None => ok_response(
@@ -221,23 +221,19 @@ pub(crate) fn handle_tools_call(
             };
         }
 
-        if matches!(
-            tool_name,
-            "wiki_search" | "wiki_read" | "wiki_status" | "wiki_contribute"
-        ) {
-            // wiki_contribute needs &mut, handle it separately
-            if tool_name == "wiki_contribute" {
-                return match wiki_store.as_mut() {
-                    Some(store) => {
-                        let result = tool_wiki_contribute(store, &arguments);
-                        ok_response(id, result)
-                    }
-                    None => ok_response(
-                        id,
-                        tool_error("No wiki found. Run `wiki_generate` to create one first."),
-                    ),
-                };
-            }
+        // wiki_contribute needs &mut store
+        if tool_name == "wiki_contribute" {
+            return match wiki_store.as_mut() {
+                Some(store) => ok_response(id, tool_wiki_contribute(store, &arguments)),
+                None => ok_response(
+                    id,
+                    tool_error("No wiki found. Run `wiki_generate` to create one first."),
+                ),
+            };
+        }
+
+        // Read-only wiki tools
+        if matches!(tool_name, "wiki_search" | "wiki_read" | "wiki_status") {
             return match wiki_store.as_ref() {
                 Some(store) => {
                     let result = match tool_name {

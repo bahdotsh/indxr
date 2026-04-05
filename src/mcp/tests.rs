@@ -3450,9 +3450,14 @@ mod wiki_tests {
         let defs = tool_definitions(false, false, false);
         let tools = defs["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        // wiki_generate should always be listed (it's how you create a wiki)
+        assert!(names.contains(&"wiki_generate"));
+        // The rest require an existing wiki
         assert!(!names.contains(&"wiki_search"));
         assert!(!names.contains(&"wiki_read"));
         assert!(!names.contains(&"wiki_status"));
+        assert!(!names.contains(&"wiki_contribute"));
+        assert!(!names.contains(&"wiki_update"));
     }
 
     #[test]
@@ -3745,7 +3750,8 @@ mod wiki_tests {
         index.root = root.clone();
         let ws = wrap_workspace(index);
         // Use HEAD so there are no changes
-        let result = tool_wiki_update(&store, &ws, &json!({"since": "HEAD"}));
+        let registry = ParserRegistry::new();
+        let result = tool_wiki_update(&store, &ws, &registry, &json!({"since": "HEAD"}));
         let text = result["content"][0]["text"].as_str().unwrap();
         let content: Value = serde_json::from_str(text).unwrap();
         assert_eq!(content["action"], "no_changes");
@@ -3757,7 +3763,8 @@ mod wiki_tests {
         store.manifest.generated_at_ref = String::new();
         let index = make_test_index();
         let ws = wrap_workspace(index);
-        let result = tool_wiki_update(&store, &ws, &json!({}));
+        let registry = ParserRegistry::new();
+        let result = tool_wiki_update(&store, &ws, &registry, &json!({}));
         let text = result["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("No git ref to diff against"));
     }

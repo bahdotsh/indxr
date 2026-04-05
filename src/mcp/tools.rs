@@ -606,82 +606,12 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
         ]
     });
 
-    // Append wiki tools when the wiki feature is compiled in and a wiki exists.
+    // Append wiki tools when the wiki feature is compiled in.
+    // wiki_generate is always listed (it's how you create a wiki).
+    // The rest require an existing wiki.
     #[cfg(feature = "wiki")]
-    if wiki_available {
+    {
         if let Some(tools) = defs["tools"].as_array_mut() {
-            tools.push(json!({
-                "name": "wiki_search",
-                "description": "Search the codebase knowledge wiki by keyword or concept. Returns matching pages with excerpts. Use this to understand modules, architecture, or design decisions before diving into source code.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search term or concept"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Max results (default: 5)"
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }));
-            tools.push(json!({
-                "name": "wiki_read",
-                "description": "Read a wiki page by ID (e.g. 'architecture', 'mod-mcp'). Returns full page content with metadata.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "page": {
-                            "type": "string",
-                            "description": "Page ID or partial title to search"
-                        }
-                    },
-                    "required": ["page"]
-                }
-            }));
-            tools.push(json!({
-                "name": "wiki_status",
-                "description": "Check wiki health: page count, how stale it is, source file coverage.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {}
-                }
-            }));
-            tools.push(json!({
-                "name": "wiki_contribute",
-                "description": "Write knowledge back to the wiki. Create a new page or update an existing one. Use this to file synthesized answers, analyses, or discovered connections that should persist beyond this conversation.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "page": {
-                            "type": "string",
-                            "description": "Page ID (slug). If it exists, the page is updated; if not, a new page is created."
-                        },
-                        "title": {
-                            "type": "string",
-                            "description": "Human-readable title (required for new pages, optional for updates)"
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "Markdown content for the page"
-                        },
-                        "page_type": {
-                            "type": "string",
-                            "enum": ["architecture", "module", "entity", "topic"],
-                            "description": "Page type (default: topic). Only used when creating new pages."
-                        },
-                        "source_files": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Source files this page relates to (optional)"
-                        }
-                    },
-                    "required": ["page", "content"]
-                }
-            }));
             tools.push(json!({
                 "name": "wiki_generate",
                 "description": "Initialize a new wiki and return the codebase structural context for planning pages. After calling this, plan which pages to create (architecture, module, entity, topic) based on the returned context, then call wiki_contribute for each page. Finish with an index page. Fails if a wiki already exists unless force=true.",
@@ -695,19 +625,95 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
                     }
                 }
             }));
-            tools.push(json!({
-                "name": "wiki_update",
-                "description": "Analyze code changes since last wiki generation and return affected pages with diff context. For each affected page, rewrite its content based on the diff and current content, then call wiki_contribute to save. No API keys needed — you drive the updates.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "since": {
-                            "type": "string",
-                            "description": "Git ref to diff against (default: wiki's stored ref)"
+        }
+        if wiki_available {
+            if let Some(tools) = defs["tools"].as_array_mut() {
+                tools.push(json!({
+                    "name": "wiki_search",
+                    "description": "Search the codebase knowledge wiki by keyword or concept. Returns matching pages with excerpts. Use this to understand modules, architecture, or design decisions before diving into source code.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Search term or concept"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Max results (default: 5)"
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }));
+                tools.push(json!({
+                    "name": "wiki_read",
+                    "description": "Read a wiki page by ID (e.g. 'architecture', 'mod-mcp'). Returns full page content with metadata.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "page": {
+                                "type": "string",
+                                "description": "Page ID or partial title to search"
+                            }
+                        },
+                        "required": ["page"]
+                    }
+                }));
+                tools.push(json!({
+                    "name": "wiki_status",
+                    "description": "Check wiki health: page count, how stale it is, source file coverage.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }));
+                tools.push(json!({
+                    "name": "wiki_contribute",
+                    "description": "Write knowledge back to the wiki. Create a new page or update an existing one. Use this to file synthesized answers, analyses, or discovered connections that should persist beyond this conversation.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "page": {
+                                "type": "string",
+                                "description": "Page ID (slug). If it exists, the page is updated; if not, a new page is created."
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "Human-readable title (required for new pages, optional for updates)"
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Markdown content for the page"
+                            },
+                            "page_type": {
+                                "type": "string",
+                                "enum": ["architecture", "module", "entity", "topic"],
+                                "description": "Page type (default: topic). Only used when creating new pages."
+                            },
+                            "source_files": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Source files this page relates to (optional)"
+                            }
+                        },
+                        "required": ["page", "content"]
+                    }
+                }));
+                tools.push(json!({
+                    "name": "wiki_update",
+                    "description": "Analyze code changes since last wiki generation and return affected pages with diff context. For each affected page, rewrite its content based on the diff and current content, then call wiki_contribute to save. No API keys needed — you drive the updates.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "since": {
+                                "type": "string",
+                                "description": "Git ref to diff against (default: wiki's stored ref)"
+                            }
                         }
                     }
-                }
-            }));
+                }));
+            }
         }
     }
     let _ = wiki_available; // suppress unused warning when wiki feature is off
@@ -3034,13 +3040,13 @@ pub(super) fn tool_wiki_generate(workspace: &WorkspaceIndex, args: &Value) -> Va
 pub(super) fn tool_wiki_update(
     store: &crate::wiki::store::WikiStore,
     workspace: &WorkspaceIndex,
+    registry: &crate::parser::ParserRegistry,
     args: &Value,
 ) -> Value {
     use std::collections::HashSet;
 
     use crate::diff;
     use crate::languages::Language;
-    use crate::parser::ParserRegistry;
     use crate::wiki::page::PageType;
 
     let since_ref = args
@@ -3075,7 +3081,6 @@ pub(super) fn tool_wiki_update(
         .iter()
         .flat_map(|m| m.index.files.iter())
         .collect();
-    let registry = ParserRegistry::new();
     let mut old_files = std::collections::HashMap::new();
     for path in &changed_paths {
         if let Ok(Some(old_content)) = diff::get_file_at_ref(&workspace.root, path, &since_ref) {
