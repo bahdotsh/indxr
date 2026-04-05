@@ -650,6 +650,38 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
                     "properties": {}
                 }
             }));
+            tools.push(json!({
+                "name": "wiki_contribute",
+                "description": "Write knowledge back to the wiki. Create a new page or update an existing one. Use this to file synthesized answers, analyses, or discovered connections that should persist beyond this conversation.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "page": {
+                            "type": "string",
+                            "description": "Page ID (slug). If it exists, the page is updated; if not, a new page is created."
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Human-readable title (required for new pages, optional for updates)"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Markdown content for the page"
+                        },
+                        "page_type": {
+                            "type": "string",
+                            "enum": ["architecture", "module", "entity", "topic"],
+                            "description": "Page type (default: topic). Only used when creating new pages."
+                        },
+                        "source_files": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Source files this page relates to (optional)"
+                        }
+                    },
+                    "required": ["page", "content"]
+                }
+            }));
         }
     }
     let _ = wiki_available; // suppress unused warning when wiki feature is off
@@ -2789,5 +2821,127 @@ pub(super) fn tool_wiki_status(
             "total_files": health.total_files,
             "percentage": health.coverage_pct
         }
+    }))
+}
+
+#[cfg(feature = "wiki")]
+pub(super) fn tool_wiki_contribute(
+    store: &mut crate::wiki::store::WikiStore,
+    args: &Value,
+) -> Value {
+    use crate::wiki::extract_wiki_links;
+    use crate::wiki::page::{Frontmatter, PageType, WikiPage, sanitize_id};
+
+    let page_id_raw = match args.get("page").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return tool_error("Missing required parameter: page"),
+    };
+    let page_id = sanitize_id(page_id_raw);
+    if page_id.is_empty() {
+        return tool_error("Invalid page ID: must contain at least one alphanumeric character");
+    }
+
+    let content = match args.get("content").and_then(|v| v.as_str()) {
+        Some(c) => c.to_string(),
+        None => return tool_error("Missing required parameter: content"),
+    };
+
+    let links_to = extract_wiki_links(&content);
+    let source_files: Vec<String> = args
+        .get("source_files")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+
+    let existing = store.pages.iter().find(|p| p.frontmatter.id == page_id);
+    let action;
+
+    if let Some(old) = existing {
+        // Update existing page — preserve page_type, merge source_files
+        let mut merged_sources = old.frontmatter.source_files.clone();
+        for sf in &source_files {
+            if !merged_sources.contains(sf) {
+                merged_sources.push(sf.clone());
+            }
+        }
+        let title = args
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| old.frontmatter.title.clone());
+
+        let page = WikiPage {
+            frontmatter: Frontmatter {
+                id: page_id.clone(),
+                title,
+                page_type: old.frontmatter.page_type.clone(),
+                source_files: merged_sources,
+                generated_at_ref: old.frontmatter.generated_at_ref.clone(),
+                generated_at: now.clone(),
+                links_to,
+                covers: old.frontmatter.covers.clone(),
+            },
+            content,
+        };
+        store.upsert_page(page);
+        action = "updated";
+    } else {
+        // Create new page
+        let title = match args.get("title").and_then(|v| v.as_str()) {
+            Some(t) => t.to_string(),
+            None => {
+                return tool_error("Missing required parameter: title (required for new pages)");
+            }
+        };
+
+        let page_type = match args.get("page_type").and_then(|v| v.as_str()) {
+            Some("architecture") => PageType::Architecture,
+            Some("module") => PageType::Module,
+            Some("entity") => PageType::Entity,
+            Some("topic") | None => PageType::Topic,
+            Some(other) => {
+                return tool_error(&format!(
+                    "Invalid page_type: '{}'. Must be one of: architecture, module, entity, topic",
+                    other
+                ));
+            }
+        };
+
+        let page = WikiPage {
+            frontmatter: Frontmatter {
+                id: page_id.clone(),
+                title: title.clone(),
+                page_type,
+                source_files,
+                generated_at_ref: store.manifest.generated_at_ref.clone(),
+                generated_at: now.clone(),
+                links_to,
+                covers: Vec::new(),
+            },
+            content,
+        };
+        store.upsert_page(page);
+        action = "created";
+    };
+
+    // Persist to disk
+    if let Err(e) = store.save_incremental(&page_id) {
+        return tool_error(&format!("Failed to save wiki page: {}", e));
+    }
+
+    let page = store.get_page(&page_id).unwrap();
+    tool_result(json!({
+        "action": action,
+        "page_id": page_id,
+        "title": page.frontmatter.title,
+        "type": page.frontmatter.page_type.as_str(),
+        "links_to": page.frontmatter.links_to,
+        "total_wiki_pages": store.pages.len(),
     }))
 }

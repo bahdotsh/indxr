@@ -898,7 +898,7 @@ fn floor_char_boundary(s: &str, max: usize) -> usize {
 
 /// Extract [[page-id]] wiki links from content, sanitizing each link.
 /// Skips links inside fenced code blocks.
-fn extract_wiki_links(content: &str) -> Vec<String> {
+pub(crate) fn extract_wiki_links(content: &str) -> Vec<String> {
     let mut links = Vec::new();
     let mut in_code_block = false;
 

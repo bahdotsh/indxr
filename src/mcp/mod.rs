@@ -24,7 +24,7 @@ use self::tools::{
 };
 
 #[cfg(feature = "wiki")]
-use self::tools::{tool_wiki_read, tool_wiki_search, tool_wiki_status};
+use self::tools::{tool_wiki_contribute, tool_wiki_read, tool_wiki_search, tool_wiki_status};
 
 /// Wiki store state, conditionally compiled.
 #[cfg(feature = "wiki")]
@@ -196,7 +196,23 @@ pub(crate) fn handle_tools_call(
     #[cfg(feature = "wiki")]
     {
         use self::helpers::tool_error;
-        if matches!(tool_name, "wiki_search" | "wiki_read" | "wiki_status") {
+        if matches!(
+            tool_name,
+            "wiki_search" | "wiki_read" | "wiki_status" | "wiki_contribute"
+        ) {
+            // wiki_contribute needs &mut, handle it separately
+            if tool_name == "wiki_contribute" {
+                return match wiki_store.as_mut() {
+                    Some(store) => {
+                        let result = tool_wiki_contribute(store, &arguments);
+                        ok_response(id, result)
+                    }
+                    None => ok_response(
+                        id,
+                        tool_error("No wiki found. Run `indxr wiki generate` to create one."),
+                    ),
+                };
+            }
             return match wiki_store.as_ref() {
                 Some(store) => {
                     let result = match tool_name {

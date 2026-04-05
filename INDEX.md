@@ -1,6 +1,6 @@
 # Codebase Index: indxr
 
-> Generated: 2026-04-05 17:00:57 UTC | Files: 76 | Lines: 42317
+> Generated: 2026-04-05 17:37:36 UTC | Files: 76 | Lines: 42699
 > Languages: JSON (4), Markdown (17), Python (2), Rust (51), Shell (1), TOML (1)
 
 ## Directory Structure
@@ -559,6 +559,7 @@ indxr/
 - `pub(super) fn tool_wiki_search(store: &crate::wiki::store::WikiStore, args: &Value) -> Value`
 - `pub(super) fn tool_wiki_read(store: &crate::wiki::store::WikiStore, args: &Value) -> Value`
 - `pub(super) fn tool_wiki_status( store: &crate::wiki::store::WikiStore, workspace: &WorkspaceIndex, ) -> Value`
+- `pub(super) fn tool_wiki_contribute( store: &mut crate::wiki::store::WikiStore, args: &Value, ) -> Value`
 
 **src/mcp/type_flow.rs**
 - `pub(super) struct TypeInfo`
@@ -721,7 +722,7 @@ indxr/
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 14.3 KB | **Lines:** 235
+**Language:** Markdown | **Size:** 14.6 KB | **Lines:** 236
 
 **Declarations:**
 
@@ -750,7 +751,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 88.5 KB | **Lines:** 3229
+**Language:** Markdown | **Size:** 88.8 KB | **Lines:** 3235
 
 **Declarations:**
 
@@ -1519,7 +1520,7 @@ indxr/
 
 ## src/mcp/http.rs
 
-**Language:** Rust | **Size:** 40.0 KB | **Lines:** 1178
+**Language:** Rust | **Size:** 40.4 KB | **Lines:** 1186
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1537,7 +1538,7 @@ indxr/
 **Declarations:**
 
 `struct AppState`
-> Fields: `index: RwLock<WorkspaceIndex>`, `config: WorkspaceConfig`, `registry: ParserRegistry`, `notify_tx: broadcast::Sender<SseEvent>`, `sessions: AsyncRwLock<HashMap<String, SessionInfo>>`, `all_tools: bool`, `wiki_store: super::WikiStoreOption`
+> Fields: `index: RwLock<WorkspaceIndex>`, `config: WorkspaceConfig`, `registry: ParserRegistry`, `notify_tx: broadcast::Sender<SseEvent>`, `sessions: AsyncRwLock<HashMap<String, SessionInfo>>`, `all_tools: bool`, `wiki_store: RwLock<super::WikiStoreOption>`
 
 `struct SessionInfo`
 > Fields: `last_accessed: Instant`, `close_tx: watch::Sender<bool>`
@@ -1581,7 +1582,7 @@ indxr/
 
 ## src/mcp/mod.rs
 
-**Language:** Rust | **Size:** 18.3 KB | **Lines:** 572
+**Language:** Rust | **Size:** 19.8 KB | **Lines:** 613
 
 **Imports:**
 - `std::io::{self, BufRead, Write}`
@@ -1612,6 +1613,10 @@ indxr/
 
 `pub(crate) type WikiStoreOption = ()`
 
+`fn reload_wiki_store(root: &std::path::Path) -> WikiStoreOption`
+
+`fn reload_wiki_store(_root: &std::path::Path) -> WikiStoreOption`
+
 `pub(crate) struct JsonRpcRequest`
 > Fields: `jsonrpc: String`, `id: Option<Value>`, `method: String`, `params: Option<Value>`
 
@@ -1632,16 +1637,16 @@ indxr/
 
 `pub(crate) fn handle_tools_list( id: Value, workspace: &WorkspaceIndex, all_tools: bool, wiki_store: &WikiStoreOption, ) -> JsonRpcResponse`
 
-`pub(crate) fn handle_tools_call( id: Value, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, params: &Value, wiki_store: &WikiStoreOption, ) -> JsonRpcResponse`
+`pub(crate) fn handle_tools_call( id: Value, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, params: &Value, wiki_store: &mut WikiStoreOption, ) -> JsonRpcResponse`
 
 `enum ServerEvent`
 > Variants: `StdinLine`, `StdinClosed`, `FileChanged`
 
-`pub(crate) fn process_jsonrpc_request( request: JsonRpcRequest, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, all_tools: bool, wiki_store: &WikiStoreOption, ) -> Option<JsonRpcResponse>`
+`pub(crate) fn process_jsonrpc_request( request: JsonRpcRequest, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, all_tools: bool, wiki_store: &mut WikiStoreOption, ) -> Option<JsonRpcResponse>`
 
-`pub(crate) fn process_jsonrpc_message( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, all_tools: bool, wiki_store: &WikiStoreOption, ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse>`
+`pub(crate) fn process_jsonrpc_message( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, all_tools: bool, wiki_store: &mut WikiStoreOption, ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse>`
 
-`fn handle_stdin_line( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, writer: &mut impl Write, all_tools: bool, wiki_store: &WikiStoreOption, ) -> anyhow::Result<()>`
+`fn handle_stdin_line( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, writer: &mut impl Write, all_tools: bool, wiki_store: &mut WikiStoreOption, ) -> anyhow::Result<()>`
 
 `mod coalesce_tests`
 
@@ -1649,7 +1654,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 123.8 KB | **Lines:** 3488
+**Language:** Rust | **Size:** 129.0 KB | **Lines:** 3614
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2044,7 +2049,7 @@ indxr/
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 96.2 KB | **Lines:** 2752
+**Language:** Rust | **Size:** 103.3 KB | **Lines:** 2945
 
 **Imports:**
 - `std::collections::HashMap`
@@ -3005,7 +3010,7 @@ indxr/
 
 `fn floor_char_boundary(s: &str, max: usize) -> usize`
 
-`fn extract_wiki_links(content: &str) -> Vec<String>`
+`pub(crate) fn extract_wiki_links(content: &str) -> Vec<String>`
 
 `mod tests`
 
@@ -3013,9 +3018,10 @@ indxr/
 
 ## src/wiki/mod.rs
 
-**Language:** Rust | **Size:** 8.9 KB | **Lines:** 288
+**Language:** Rust | **Size:** 9.2 KB | **Lines:** 295
 
 **Imports:**
+- `pub(crate) use generate::extract_wiki_links`
 - `std::collections::{HashMap, HashSet}`
 - `std::path::PathBuf`
 - `std::process::Command`

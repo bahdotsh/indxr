@@ -3,6 +3,8 @@ pub mod page;
 mod prompts;
 pub mod store;
 
+pub(crate) use generate::extract_wiki_links;
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;

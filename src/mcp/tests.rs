@@ -3442,7 +3442,7 @@ mod wiki_tests {
         assert!(names.contains(&"wiki_search"));
         assert!(names.contains(&"wiki_read"));
         assert!(names.contains(&"wiki_status"));
-        assert_eq!(names.len(), 6); // 3 compound + 3 wiki
+        assert_eq!(names.len(), 7); // 3 compound + 4 wiki
     }
 
     #[test]
@@ -3484,5 +3484,147 @@ mod wiki_tests {
         let content: Value =
             serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
         assert!(content["matches"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn test_wiki_contribute_create_new_page() {
+        let mut store = make_test_wiki_store();
+        let initial_count = store.pages.len();
+        let result = tool_wiki_contribute(
+            &mut store,
+            &json!({
+                "page": "error-handling",
+                "title": "Error Handling Patterns",
+                "content": "# Error Handling\n\nThis codebase uses `anyhow` for error propagation.\n\nSee also [[architecture]] for the overall design.",
+                "page_type": "topic",
+                "source_files": ["src/error.rs"]
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["action"], "created");
+        assert_eq!(content["page_id"], "error-handling");
+        assert_eq!(content["title"], "Error Handling Patterns");
+        assert_eq!(content["type"], "topic");
+        assert_eq!(
+            content["total_wiki_pages"].as_u64().unwrap(),
+            (initial_count + 1) as u64
+        );
+        // Check wiki links were extracted
+        let links = content["links_to"].as_array().unwrap();
+        assert!(links.iter().any(|l| l == "architecture"));
+
+        // Page should be findable in store
+        let page = store.get_page("error-handling").unwrap();
+        assert_eq!(page.frontmatter.title, "Error Handling Patterns");
+        assert_eq!(page.frontmatter.source_files, vec!["src/error.rs"]);
+    }
+
+    #[test]
+    fn test_wiki_contribute_update_existing_page() {
+        let mut store = make_test_wiki_store();
+        let result = tool_wiki_contribute(
+            &mut store,
+            &json!({
+                "page": "mod-mcp",
+                "content": "# MCP Server (Updated)\n\nNow with wiki_contribute support.\n\nSee [[mod-parser]] for parser details.",
+                "source_files": ["src/mcp/wiki.rs"]
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["action"], "updated");
+        assert_eq!(content["page_id"], "mod-mcp");
+
+        let page = store.get_page("mod-mcp").unwrap();
+        assert!(page.content.contains("wiki_contribute support"));
+        // Original source files should be preserved + new one merged
+        assert!(
+            page.frontmatter
+                .source_files
+                .contains(&"src/mcp/mod.rs".to_string())
+        );
+        assert!(
+            page.frontmatter
+                .source_files
+                .contains(&"src/mcp/tools.rs".to_string())
+        );
+        assert!(
+            page.frontmatter
+                .source_files
+                .contains(&"src/mcp/wiki.rs".to_string())
+        );
+        // Links should reflect new content
+        assert!(
+            page.frontmatter
+                .links_to
+                .contains(&"mod-parser".to_string())
+        );
+        // page_type should be preserved
+        assert_eq!(page.frontmatter.page_type, PageType::Module);
+    }
+
+    #[test]
+    fn test_wiki_contribute_missing_page_param() {
+        let mut store = make_test_wiki_store();
+        let result = tool_wiki_contribute(&mut store, &json!({"content": "test"}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Missing required parameter: page"));
+    }
+
+    #[test]
+    fn test_wiki_contribute_missing_content_param() {
+        let mut store = make_test_wiki_store();
+        let result = tool_wiki_contribute(&mut store, &json!({"page": "test"}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Missing required parameter: content"));
+    }
+
+    #[test]
+    fn test_wiki_contribute_new_page_requires_title() {
+        let mut store = make_test_wiki_store();
+        let result = tool_wiki_contribute(
+            &mut store,
+            &json!({"page": "new-page", "content": "some content"}),
+        );
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Missing required parameter: title"));
+    }
+
+    #[test]
+    fn test_wiki_contribute_invalid_page_id() {
+        let mut store = make_test_wiki_store();
+        let result = tool_wiki_contribute(
+            &mut store,
+            &json!({"page": "../../etc", "title": "Bad", "content": "test"}),
+        );
+        let text = result["content"][0]["text"].as_str().unwrap();
+        // sanitize_id("../../etc") = "etc" which is valid, so this should succeed
+        let content: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(content["page_id"], "etc");
+    }
+
+    #[test]
+    fn test_wiki_contribute_default_page_type() {
+        let mut store = make_test_wiki_store();
+        let result = tool_wiki_contribute(
+            &mut store,
+            &json!({
+                "page": "my-analysis",
+                "title": "My Analysis",
+                "content": "Some analysis."
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["type"], "topic");
+    }
+
+    #[test]
+    fn test_wiki_contribute_listed_in_tools() {
+        let defs = tool_definitions(false, false, true);
+        let tools = defs["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"wiki_contribute"));
     }
 }
