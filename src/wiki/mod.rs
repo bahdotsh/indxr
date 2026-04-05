@@ -276,6 +276,11 @@ fn resolve_wiki_dir(override_dir: &Option<PathBuf>, workspace_root: &std::path::
 
 /// Count how many commits exist between `since_ref` and HEAD.
 pub(crate) fn commits_behind(root: &std::path::Path, since_ref: &str) -> Result<usize> {
+    // Validate that since_ref looks like a hex commit hash to prevent injection
+    // of unexpected git arguments via a tampered manifest.
+    if since_ref.is_empty() || !since_ref.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(0);
+    }
     let output = Command::new("git")
         .current_dir(root)
         .args(["rev-list", "--count", &format!("{}..HEAD", since_ref)])

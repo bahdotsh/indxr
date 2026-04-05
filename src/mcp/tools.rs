@@ -2627,33 +2627,60 @@ pub(super) fn tool_wiki_search(store: &crate::wiki::store::WikiStore, args: &Val
 
 #[cfg(feature = "wiki")]
 fn extract_excerpt(content: &str, query: &str, max_chars: usize) -> String {
-    // Work entirely on the lowercased string for position finding to avoid
-    // cross-string byte offset issues with non-ASCII characters.
-    let content_lower = content.to_lowercase();
+    // Build lowered version with per-byte mapping back to original offsets so we
+    // can search case-insensitively but return an excerpt with original casing.
+    let mut content_lower = String::with_capacity(content.len());
+    let mut map: Vec<usize> = Vec::with_capacity(content.len() + 1);
+    for (orig_byte, ch) in content.char_indices() {
+        for lc in ch.to_lowercase() {
+            for _ in 0..lc.len_utf8() {
+                map.push(orig_byte);
+            }
+            content_lower.push(lc);
+        }
+    }
+    map.push(content.len()); // sentinel
+
+    let to_orig =
+        |lower_off: usize| -> usize { map.get(lower_off).copied().unwrap_or(content.len()) };
+
+    // Snap a byte offset to the next valid char boundary in `s`.
+    let snap = |s: &str, off: usize| -> usize {
+        let off = off.min(s.len());
+        (off..=s.len())
+            .find(|&i| s.is_char_boundary(i))
+            .unwrap_or(s.len())
+    };
+
     if let Some(pos) = content_lower.find(query) {
-        let start = content_lower[..pos]
+        let orig_start = to_orig(pos);
+        let orig_end = to_orig(pos + query.len());
+
+        let start = content[..orig_start]
             .rfind('\n')
             .map(|i| i + 1)
-            .unwrap_or(pos.saturating_sub(max_chars / 2));
-        let end = (pos + query.len() + max_chars / 2).min(content_lower.len());
-        let end = content_lower[..end]
+            .unwrap_or_else(|| snap(content, orig_start.saturating_sub(max_chars / 2)));
+
+        let tentative = snap(content, (orig_end + max_chars / 2).min(content.len()));
+        let end = content[..tentative]
             .rfind('\n')
-            .unwrap_or(end)
-            .max(pos + query.len());
-        let mut excerpt = content_lower[start..end].trim().to_string();
+            .unwrap_or(tentative)
+            .max(orig_end);
+
+        let mut excerpt = content[start..end].trim().to_string();
         if start > 0 {
             excerpt.insert_str(0, "...");
         }
-        if end < content_lower.len() {
+        if end < content.len() {
             excerpt.push_str("...");
         }
         excerpt
     } else {
-        // No exact match — return first N chars
-        let end = max_chars.min(content_lower.len());
-        let end = content_lower[..end].rfind('\n').unwrap_or(end);
-        let mut excerpt = content_lower[..end].trim().to_string();
-        if end < content_lower.len() {
+        // No exact match — return first max_chars bytes of original content.
+        let end_off = snap(content, max_chars.min(content.len()));
+        let end = content[..end_off].rfind('\n').unwrap_or(end_off);
+        let mut excerpt = content[..end].trim().to_string();
+        if end < content.len() {
             excerpt.push_str("...");
         }
         excerpt
