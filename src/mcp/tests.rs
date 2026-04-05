@@ -3442,7 +3442,7 @@ mod wiki_tests {
         assert!(names.contains(&"wiki_search"));
         assert!(names.contains(&"wiki_read"));
         assert!(names.contains(&"wiki_status"));
-        assert_eq!(names.len(), 7); // 3 compound + 4 wiki
+        assert_eq!(names.len(), 9); // 3 compound + 6 wiki
     }
 
     #[test]

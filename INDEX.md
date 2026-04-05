@@ -1,6 +1,6 @@
 # Codebase Index: indxr
 
-> Generated: 2026-04-05 17:37:36 UTC | Files: 76 | Lines: 42699
+> Generated: 2026-04-05 17:44:37 UTC | Files: 76 | Lines: 42880
 > Languages: JSON (4), Markdown (17), Python (2), Rust (51), Shell (1), TOML (1)
 
 ## Directory Structure
@@ -560,6 +560,8 @@ indxr/
 - `pub(super) fn tool_wiki_read(store: &crate::wiki::store::WikiStore, args: &Value) -> Value`
 - `pub(super) fn tool_wiki_status( store: &crate::wiki::store::WikiStore, workspace: &WorkspaceIndex, ) -> Value`
 - `pub(super) fn tool_wiki_contribute( store: &mut crate::wiki::store::WikiStore, args: &Value, ) -> Value`
+- `pub(super) fn tool_wiki_generate(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_wiki_update( store: &mut crate::wiki::store::WikiStore, workspace: &WorkspaceIndex, args: &Value, ) -> Value`
 
 **src/mcp/type_flow.rs**
 - `pub(super) struct TypeInfo`
@@ -751,7 +753,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 88.8 KB | **Lines:** 3235
+**Language:** Markdown | **Size:** 89.1 KB | **Lines:** 3239
 
 **Declarations:**
 
@@ -1582,7 +1584,7 @@ indxr/
 
 ## src/mcp/mod.rs
 
-**Language:** Rust | **Size:** 19.8 KB | **Lines:** 613
+**Language:** Rust | **Size:** 20.6 KB | **Lines:** 638
 
 **Imports:**
 - `std::io::{self, BufRead, Write}`
@@ -1654,7 +1656,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 129.0 KB | **Lines:** 3614
+**Language:** Rust | **Size:** 129.2 KB | **Lines:** 3630
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2049,7 +2051,7 @@ indxr/
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 103.3 KB | **Lines:** 2945
+**Language:** Rust | **Size:** 108.3 KB | **Lines:** 3082
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2094,6 +2096,8 @@ indxr/
 `fn extract_excerpt(content: &str, query: &str, max_chars: usize) -> String`
 
 `fn format_wiki_page(page: &crate::wiki::page::WikiPage) -> Value`
+
+`fn build_llm_from_env(args: &Value) -> Result<crate::llm::LlmClient, Value>`
 
 ---
 
@@ -3018,9 +3022,10 @@ indxr/
 
 ## src/wiki/mod.rs
 
-**Language:** Rust | **Size:** 9.2 KB | **Lines:** 295
+**Language:** Rust | **Size:** 9.2 KB | **Lines:** 294
 
 **Imports:**
+- `pub(crate) use generate::WikiGenerator`
 - `pub(crate) use generate::extract_wiki_links`
 - `std::collections::{HashMap, HashSet}`
 - `std::path::PathBuf`
@@ -3030,7 +3035,6 @@ indxr/
 - `crate::diff`
 - `crate::llm::LlmClient`
 - `crate::model::WorkspaceIndex`
-- `generate::WikiGenerator`
 
 **Declarations:**
 

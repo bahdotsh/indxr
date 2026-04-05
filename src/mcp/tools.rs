@@ -682,6 +682,44 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
                     "required": ["page", "content"]
                 }
             }));
+            tools.push(json!({
+                "name": "wiki_generate",
+                "description": "Generate a full wiki from the codebase. Requires ANTHROPIC_API_KEY or OPENAI_API_KEY. This is a long-running operation that makes multiple LLM calls. Creates structured, interlinked pages covering architecture, modules, entities, and topics.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "model": {
+                            "type": "string",
+                            "description": "LLM model override (e.g. 'claude-sonnet-4-20250514', 'gpt-4o')"
+                        },
+                        "max_response_tokens": {
+                            "type": "integer",
+                            "description": "Max tokens per LLM response (default: 4096)"
+                        }
+                    }
+                }
+            }));
+            tools.push(json!({
+                "name": "wiki_update",
+                "description": "Incrementally update wiki pages affected by code changes since last generation. Only regenerates pages whose source files changed. Requires ANTHROPIC_API_KEY or OPENAI_API_KEY.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "since": {
+                            "type": "string",
+                            "description": "Git ref to diff against (default: wiki's stored ref)"
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "LLM model override"
+                        },
+                        "max_response_tokens": {
+                            "type": "integer",
+                            "description": "Max tokens per LLM response (default: 4096)"
+                        }
+                    }
+                }
+            }));
         }
     }
     let _ = wiki_available; // suppress unused warning when wiki feature is off
@@ -2944,4 +2982,101 @@ pub(super) fn tool_wiki_contribute(
         "links_to": page.frontmatter.links_to,
         "total_wiki_pages": store.pages.len(),
     }))
+}
+
+/// Build an LlmClient from environment variables (ANTHROPIC_API_KEY or OPENAI_API_KEY).
+/// Returns a tool_error Value on failure.
+#[cfg(feature = "wiki")]
+fn build_llm_from_env(args: &Value) -> Result<crate::llm::LlmClient, Value> {
+    let model = args.get("model").and_then(|v| v.as_str());
+    let max_tokens = args
+        .get("max_response_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(4096) as usize;
+
+    match crate::llm::LlmClient::from_env(model) {
+        Ok(client) => Ok(client.with_max_tokens(max_tokens)),
+        Err(e) => Err(tool_error(&format!(
+            "Failed to initialize LLM client. Set ANTHROPIC_API_KEY or OPENAI_API_KEY. Error: {}",
+            e
+        ))),
+    }
+}
+
+#[cfg(feature = "wiki")]
+pub(super) fn tool_wiki_generate(workspace: &WorkspaceIndex, args: &Value) -> Value {
+    use crate::wiki::WikiGenerator;
+
+    let llm = match build_llm_from_env(args) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+
+    let wiki_dir = workspace.root.join(".indxr").join("wiki");
+    let generator = WikiGenerator::new(&llm, workspace);
+
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => return tool_error(&format!("Failed to create async runtime: {}", e)),
+    };
+
+    match rt.block_on(generator.generate_full(&wiki_dir, false)) {
+        Ok(store) => tool_result(json!({
+            "action": "generated",
+            "pages": store.pages.len(),
+            "wiki_dir": wiki_dir.to_string_lossy(),
+            "model": llm.model(),
+        })),
+        Err(e) => tool_error(&format!("Wiki generation failed: {}", e)),
+    }
+}
+
+#[cfg(feature = "wiki")]
+pub(super) fn tool_wiki_update(
+    store: &mut crate::wiki::store::WikiStore,
+    workspace: &WorkspaceIndex,
+    args: &Value,
+) -> Value {
+    use crate::wiki::WikiGenerator;
+
+    let llm = match build_llm_from_env(args) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+
+    let since_ref = args
+        .get("since")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| store.manifest.generated_at_ref.clone());
+
+    if since_ref.is_empty() {
+        return tool_error(
+            "No git ref to diff against. Pass `since` param or regenerate the wiki.",
+        );
+    }
+
+    let generator = WikiGenerator::new(&llm, workspace);
+
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => return tool_error(&format!("Failed to create async runtime: {}", e)),
+    };
+
+    match rt.block_on(generator.update_affected(store, &since_ref)) {
+        Ok(result) => {
+            if let Err(e) = store.save() {
+                return tool_error(&format!("Wiki update succeeded but save failed: {}", e));
+            }
+            tool_result(json!({
+                "action": "updated",
+                "pages_updated": result.pages_updated,
+                "pages_removed": result.pages_removed,
+                "total_pages": store.pages.len(),
+                "since_ref": since_ref,
+                "model": llm.model(),
+            }))
+        }
+        Err(e) => tool_error(&format!("Wiki update failed: {}", e)),
+    }
 }

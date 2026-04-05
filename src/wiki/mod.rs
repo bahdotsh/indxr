@@ -3,6 +3,7 @@ pub mod page;
 mod prompts;
 pub mod store;
 
+pub(crate) use generate::WikiGenerator;
 pub(crate) use generate::extract_wiki_links;
 
 use std::collections::{HashMap, HashSet};
@@ -130,8 +131,6 @@ pub(crate) fn compute_wiki_health(
         uncovered_files,
     }
 }
-
-use generate::WikiGenerator;
 
 pub async fn run_wiki_command(
     action: &WikiAction,

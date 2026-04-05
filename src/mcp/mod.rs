@@ -24,7 +24,10 @@ use self::tools::{
 };
 
 #[cfg(feature = "wiki")]
-use self::tools::{tool_wiki_contribute, tool_wiki_read, tool_wiki_search, tool_wiki_status};
+use self::tools::{
+    tool_wiki_contribute, tool_wiki_generate, tool_wiki_read, tool_wiki_search, tool_wiki_status,
+    tool_wiki_update,
+};
 
 /// Wiki store state, conditionally compiled.
 #[cfg(feature = "wiki")]
@@ -196,6 +199,28 @@ pub(crate) fn handle_tools_call(
     #[cfg(feature = "wiki")]
     {
         use self::helpers::tool_error;
+
+        // wiki_generate creates the wiki from scratch — doesn't need an existing store
+        if tool_name == "wiki_generate" {
+            let result = tool_wiki_generate(workspace, &arguments);
+            *wiki_store = reload_wiki_store(&workspace.root);
+            return ok_response(id, result);
+        }
+
+        // wiki_update needs &mut store
+        if tool_name == "wiki_update" {
+            return match wiki_store.as_mut() {
+                Some(store) => {
+                    let result = tool_wiki_update(store, workspace, &arguments);
+                    ok_response(id, result)
+                }
+                None => ok_response(
+                    id,
+                    tool_error("No wiki found. Run `wiki_generate` to create one first."),
+                ),
+            };
+        }
+
         if matches!(
             tool_name,
             "wiki_search" | "wiki_read" | "wiki_status" | "wiki_contribute"
