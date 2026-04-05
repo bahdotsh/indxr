@@ -26,7 +26,7 @@ use self::tools::{
 #[cfg(feature = "wiki")]
 use self::tools::{
     tool_wiki_contribute, tool_wiki_generate, tool_wiki_read, tool_wiki_search, tool_wiki_status,
-    tool_wiki_update,
+    tool_wiki_suggest_contribution, tool_wiki_update,
 };
 
 /// Wiki store state, conditionally compiled.
@@ -36,6 +36,21 @@ pub(crate) type WikiStoreOption = Option<crate::wiki::store::WikiStore>;
 /// Placeholder when wiki feature is disabled.
 #[cfg(not(feature = "wiki"))]
 pub(crate) type WikiStoreOption = ();
+
+/// Configuration for the MCP server.
+pub struct McpServerConfig {
+    pub watch: bool,
+    pub debounce_ms: u64,
+    pub all_tools: bool,
+    #[cfg(feature = "wiki")]
+    pub wiki_auto_update: bool,
+    #[cfg(feature = "wiki")]
+    pub wiki_debounce_ms: u64,
+    #[cfg(feature = "wiki")]
+    pub wiki_model: Option<String>,
+    #[cfg(feature = "wiki")]
+    pub wiki_exec: Option<String>,
+}
 
 /// Reload the wiki store from disk (e.g. after regenerate_index or file changes).
 #[cfg(feature = "wiki")]
@@ -233,13 +248,19 @@ pub(crate) fn handle_tools_call(
         }
 
         // Read-only wiki tools
-        if matches!(tool_name, "wiki_search" | "wiki_read" | "wiki_status") {
+        if matches!(
+            tool_name,
+            "wiki_search" | "wiki_read" | "wiki_status" | "wiki_suggest_contribution"
+        ) {
             return match wiki_store.as_ref() {
                 Some(store) => {
                     let result = match tool_name {
                         "wiki_search" => tool_wiki_search(store, &arguments),
                         "wiki_read" => tool_wiki_read(store, &arguments),
                         "wiki_status" => tool_wiki_status(store, workspace),
+                        "wiki_suggest_contribution" => {
+                            tool_wiki_suggest_contribution(store, &arguments)
+                        }
                         _ => unreachable!(),
                     };
                     ok_response(id, result)
@@ -265,6 +286,8 @@ enum ServerEvent {
     StdinLine(String),
     StdinClosed,
     FileChanged,
+    #[cfg(feature = "wiki")]
+    WikiUpdateComplete(Result<crate::wiki::UpdateResult, String>),
 }
 
 // ---------------------------------------------------------------------------
@@ -383,15 +406,14 @@ fn handle_stdin_line(
 pub fn run_mcp_server(
     mut workspace: WorkspaceIndex,
     config: WorkspaceConfig,
-    watch: bool,
-    debounce_ms: u64,
-    all_tools: bool,
+    mcp_config: McpServerConfig,
 ) -> anyhow::Result<()> {
     eprintln!(
         "indxr MCP server starting (root: {})",
         workspace.root.display()
     );
     let registry = ParserRegistry::new();
+    let all_tools = mcp_config.all_tools;
 
     // Load wiki store if available
     #[cfg(feature = "wiki")]
@@ -441,13 +463,13 @@ pub fn run_mcp_server(
     // Optionally spawn file watcher — the guard must outlive the event loop
     // so the OS-level file subscription stays active.
     let mut _watch_guard: Option<crate::watch::WatchGuard> = None;
-    if watch {
+    if mcp_config.watch {
         let root = std::fs::canonicalize(&workspace.root)?;
         let output_path = root.join("INDEX.md");
         let cache_dir = std::fs::canonicalize(root.join(&config.template.cache_dir))
             .unwrap_or_else(|_| root.join(&config.template.cache_dir));
         let (watch_rx, guard) =
-            crate::watch::spawn_watcher(&root, &cache_dir, &output_path, debounce_ms)?;
+            crate::watch::spawn_watcher(&root, &cache_dir, &output_path, mcp_config.debounce_ms)?;
         _watch_guard = Some(guard);
 
         let watch_tx = tx.clone();
@@ -459,8 +481,95 @@ pub fn run_mcp_server(
             }
         });
 
-        eprintln!("File watcher enabled (debounce: {}ms)", debounce_ms);
+        eprintln!(
+            "File watcher enabled (debounce: {}ms)",
+            mcp_config.debounce_ms
+        );
     }
+
+    // Wiki auto-update scheduler: debounce file changes and trigger
+    // background wiki updates via a separate thread with its own tokio runtime.
+    #[cfg(feature = "wiki")]
+    let wiki_trigger_tx: Option<mpsc::Sender<()>> = if mcp_config.wiki_auto_update {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // Validate LLM availability at startup
+        let llm_client = crate::wiki::build_llm_client(
+            mcp_config.wiki_exec.as_deref(),
+            mcp_config.wiki_model.as_deref(),
+            4096,
+        )?;
+
+        let (trigger_tx, trigger_rx) = mpsc::channel::<()>();
+        let wiki_debounce_ms = mcp_config.wiki_debounce_ms;
+        let ws_config = config.clone();
+        let wiki_tx = tx.clone();
+        let update_in_progress = Arc::new(AtomicBool::new(false));
+
+        thread::spawn(move || {
+            while trigger_rx.recv().is_ok() {
+                // Drain additional triggers (coalesce rapid changes)
+                while trigger_rx.try_recv().is_ok() {}
+
+                // Wait for the debounce period
+                thread::sleep(std::time::Duration::from_millis(wiki_debounce_ms));
+
+                // Drain triggers that arrived during the sleep
+                while trigger_rx.try_recv().is_ok() {}
+
+                // Skip if an update is already running
+                if update_in_progress
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_err()
+                {
+                    continue;
+                }
+
+                let in_progress = update_in_progress.clone();
+                let wiki_tx_inner = wiki_tx.clone();
+                let ws_config_inner = ws_config.clone();
+                let llm_clone = llm_client.clone();
+
+                thread::spawn(move || {
+                    let result = (|| -> Result<crate::wiki::UpdateResult, String> {
+                        // Re-index to get fresh workspace state
+                        let ws = indexer::regenerate_workspace_index(&ws_config_inner)
+                            .map_err(|e| format!("Reindex failed: {}", e))?;
+                        let wiki_dir = ws.root.join(".indxr").join("wiki");
+                        let mut store = crate::wiki::store::WikiStore::load(&wiki_dir)
+                            .map_err(|e| format!("Wiki load failed: {}", e))?;
+                        let since_ref = store.manifest.generated_at_ref.clone();
+                        if since_ref.is_empty() {
+                            return Err("No wiki ref to diff against".to_string());
+                        }
+                        let generator = crate::wiki::WikiGenerator::new(&llm_clone, &ws);
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .map_err(|e| format!("Tokio runtime failed: {}", e))?;
+                        let update_result = rt
+                            .block_on(generator.update_affected(&mut store, &since_ref))
+                            .map_err(|e| format!("Wiki update failed: {}", e))?;
+                        store
+                            .save()
+                            .map_err(|e| format!("Wiki save failed: {}", e))?;
+                        Ok(update_result)
+                    })();
+                    in_progress.store(false, Ordering::SeqCst);
+                    let _ = wiki_tx_inner.send(ServerEvent::WikiUpdateComplete(result));
+                });
+            }
+        });
+
+        eprintln!(
+            "Wiki auto-update enabled (debounce: {}ms)",
+            wiki_debounce_ms
+        );
+        Some(trigger_tx)
+    } else {
+        None
+    };
 
     // Drop the original sender so the channel naturally closes when all
     // thread-owned senders are dropped (stdin_tx, watch_tx).
@@ -496,6 +605,12 @@ pub fn run_mcp_server(
                     }
                 }
 
+                // Trigger wiki auto-update if enabled
+                #[cfg(feature = "wiki")]
+                if let Some(ref trigger) = wiki_trigger_tx {
+                    let _ = trigger.send(());
+                }
+
                 // Re-process any non-FileChanged events that were drained
                 for evt in deferred {
                     match evt {
@@ -515,8 +630,27 @@ pub fn run_mcp_server(
                             )?;
                         }
                         ServerEvent::FileChanged => unreachable!(),
+                        #[cfg(feature = "wiki")]
+                        ServerEvent::WikiUpdateComplete(_) => {
+                            // Will be handled in next iteration
+                        }
                     }
                 }
+            }
+            #[cfg(feature = "wiki")]
+            ServerEvent::WikiUpdateComplete(result) => {
+                match result {
+                    Ok(res) => {
+                        eprintln!(
+                            "Wiki auto-update complete: {} updated, {} created, {} removed",
+                            res.pages_updated, res.pages_created, res.pages_removed
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("Wiki auto-update failed: {}", e);
+                    }
+                }
+                wiki_store = reload_wiki_store(&workspace.root);
             }
             ServerEvent::StdinLine(line) => {
                 handle_stdin_line(
@@ -573,11 +707,15 @@ mod coalesce_tests {
                             ServerEvent::StdinClosed => collected.push("closed".into()),
                             ServerEvent::StdinLine(l) => collected.push(format!("stdin:{l}")),
                             ServerEvent::FileChanged => unreachable!(),
+                            #[cfg(feature = "wiki")]
+                            ServerEvent::WikiUpdateComplete(_) => {}
                         }
                     }
                 }
                 ServerEvent::StdinLine(l) => collected.push(format!("stdin:{l}")),
                 ServerEvent::StdinClosed => collected.push("closed".into()),
+                #[cfg(feature = "wiki")]
+                ServerEvent::WikiUpdateComplete(_) => {}
             }
         }
 

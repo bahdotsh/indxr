@@ -224,7 +224,11 @@ fn test_tool_definitions_all_tools() {
     assert!(names.contains(&"get_health"));
     assert!(names.contains(&"get_type_flow"));
     assert!(names.contains(&"list_workspace_members"));
-    assert_eq!(names.len(), 26); // 3 compound + 23 granular (no wiki)
+    // 3 compound + 23 granular; +1 for wiki_generate when wiki feature is compiled
+    #[cfg(feature = "wiki")]
+    assert_eq!(names.len(), 27);
+    #[cfg(not(feature = "wiki"))]
+    assert_eq!(names.len(), 26);
 }
 
 #[test]
@@ -250,7 +254,11 @@ fn test_tool_definitions_default_excludes_extended() {
     assert!(!names.contains(&"wiki_search"));
     assert!(!names.contains(&"wiki_read"));
     assert!(!names.contains(&"wiki_status"));
-    assert_eq!(names.len(), 3); // compound tools only
+    // compound tools only; +1 for wiki_generate when wiki feature is compiled
+    #[cfg(feature = "wiki")]
+    assert_eq!(names.len(), 4);
+    #[cfg(not(feature = "wiki"))]
+    assert_eq!(names.len(), 3);
 }
 
 #[test]
@@ -3271,6 +3279,7 @@ mod wiki_tests {
                             "fn:main".to_string(),
                             "fn:build_workspace_index".to_string(),
                         ],
+                        contradictions: vec![],
                     },
                     content: "# Architecture\n\nThis codebase uses tree-sitter for parsing and rayon for parallelism.\n\n## Key Components\n- Indexer\n- MCP Server\n- Parser".to_string(),
                 },
@@ -3290,6 +3299,7 @@ mod wiki_tests {
                             "fn:run_mcp_server".to_string(),
                             "fn:handle_tool_call".to_string(),
                         ],
+                        contradictions: vec![],
                     },
                     content: "# MCP Server\n\nHandles JSON-RPC protocol for tool dispatch.\n\n## Tools\nThe server exposes structural analysis tools via MCP protocol.".to_string(),
                 },
@@ -3303,6 +3313,7 @@ mod wiki_tests {
                         generated_at: "2026-04-05T10:00:00Z".to_string(),
                         links_to: vec![],
                         covers: vec!["struct:ParserRegistry".to_string()],
+                        contradictions: vec![],
                     },
                     content: "# Parser\n\nTree-sitter and regex-based parsing for 27 languages.".to_string(),
                 },
@@ -3442,7 +3453,8 @@ mod wiki_tests {
         assert!(names.contains(&"wiki_search"));
         assert!(names.contains(&"wiki_read"));
         assert!(names.contains(&"wiki_status"));
-        assert_eq!(names.len(), 9); // 3 compound + 6 wiki
+        assert!(names.contains(&"wiki_suggest_contribution"));
+        assert_eq!(names.len(), 10); // 3 compound + 7 wiki
     }
 
     #[test]
@@ -3480,6 +3492,7 @@ mod wiki_tests {
                     generated_at: "2026-04-05T10:00:00Z".to_string(),
                     links_to: vec![],
                     covers: vec![],
+                    contradictions: vec![],
                 },
                 content: "# Ünïcödé Tëst\n\nThis module uses résumé and naïve approaches with Ñoño patterns.".to_string(),
             }],

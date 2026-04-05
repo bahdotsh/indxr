@@ -50,6 +50,14 @@ fn main() -> Result<()> {
         debounce_ms,
         http,
         all_tools,
+        #[cfg(feature = "wiki")]
+        wiki_auto_update,
+        #[cfg(feature = "wiki")]
+        wiki_debounce_ms,
+        #[cfg(feature = "wiki")]
+        wiki_model,
+        #[cfg(feature = "wiki")]
+        wiki_exec,
     }) = &cli.command
     {
         let config = index_config_from(opts);
@@ -89,12 +97,26 @@ fn main() -> Result<()> {
             }
         }
 
+        let mcp_config = mcp::McpServerConfig {
+            watch: *enable_watch,
+            debounce_ms: *debounce_ms,
+            all_tools: *all_tools,
+            #[cfg(feature = "wiki")]
+            wiki_auto_update: *wiki_auto_update,
+            #[cfg(feature = "wiki")]
+            wiki_debounce_ms: *wiki_debounce_ms,
+            #[cfg(feature = "wiki")]
+            wiki_model: wiki_model.clone(),
+            #[cfg(feature = "wiki")]
+            wiki_exec: wiki_exec.clone(),
+        };
+
         eprintln!(
             "indxr MCP server starting (indexed {} files across {} member(s))",
             ws_index.stats.total_files,
             ws_index.members.len()
         );
-        return mcp::run_mcp_server(ws_index, ws_config, *enable_watch, *debounce_ms, *all_tools);
+        return mcp::run_mcp_server(ws_index, ws_config, mcp_config);
     }
 
     // Handle watch subcommand

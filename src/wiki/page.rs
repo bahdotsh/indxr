@@ -32,6 +32,25 @@ pub struct Frontmatter {
     /// Declarations covered by this page, e.g. "fn:handle_tool_call", "struct:Cache".
     #[serde(default)]
     pub covers: Vec<String>,
+    /// Contradictions detected during updates — where new code state
+    /// contradicts what the wiki previously stated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contradictions: Vec<Contradiction>,
+}
+
+/// A contradiction detected during wiki update — where new code
+/// contradicts something the wiki previously stated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Contradiction {
+    /// Human-readable description of the contradiction.
+    pub description: String,
+    /// Source location, e.g. "src/mcp/mod.rs:383".
+    pub source: String,
+    /// ISO 8601 timestamp when the contradiction was detected.
+    pub detected_at: String,
+    /// ISO 8601 timestamp when the contradiction was resolved, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -155,6 +174,7 @@ mod tests {
                 generated_at: "2026-04-05T10:00:00Z".to_string(),
                 links_to: vec!["architecture".to_string()],
                 covers: vec!["fn:run_mcp_server".to_string()],
+                contradictions: vec![],
             },
             content: "# MCP Server\n\nThis module handles the MCP protocol.".to_string(),
         };
@@ -164,6 +184,61 @@ mod tests {
         assert_eq!(parsed.frontmatter.id, "mod-mcp");
         assert_eq!(parsed.frontmatter.page_type, PageType::Module);
         assert!(parsed.content.contains("MCP Server"));
+        assert!(parsed.frontmatter.contradictions.is_empty());
+    }
+
+    #[test]
+    fn test_roundtrip_with_contradictions() {
+        let page = WikiPage {
+            frontmatter: Frontmatter {
+                id: "mod-mcp".to_string(),
+                title: "MCP Server Module".to_string(),
+                page_type: PageType::Module,
+                source_files: vec!["src/mcp/mod.rs".to_string()],
+                generated_at_ref: "abc123".to_string(),
+                generated_at: "2026-04-05T10:00:00Z".to_string(),
+                links_to: vec![],
+                covers: vec![],
+                contradictions: vec![Contradiction {
+                    description: "Wiki stated sync channels but code now uses async".to_string(),
+                    source: "src/mcp/mod.rs:383".to_string(),
+                    detected_at: "2026-04-06T10:00:00Z".to_string(),
+                    resolved_at: None,
+                }],
+            },
+            content: "# MCP Server".to_string(),
+        };
+
+        let rendered = page.render().unwrap();
+        let parsed = WikiPage::parse(&rendered).unwrap();
+        assert_eq!(parsed.frontmatter.contradictions.len(), 1);
+        assert_eq!(
+            parsed.frontmatter.contradictions[0].source,
+            "src/mcp/mod.rs:383"
+        );
+        assert!(parsed.frontmatter.contradictions[0].resolved_at.is_none());
+    }
+
+    #[test]
+    fn test_backward_compat_no_contradictions_field() {
+        // Simulate a v1 wiki page with no contradictions field in YAML
+        let yaml = r#"---
+id: mod-old
+title: Old Module
+page_type: module
+source_files:
+  - src/old.rs
+generated_at_ref: abc123
+generated_at: "2026-01-01T00:00:00Z"
+links_to: []
+covers: []
+---
+
+# Old Module
+"#;
+        let parsed = WikiPage::parse(yaml).unwrap();
+        assert_eq!(parsed.frontmatter.id, "mod-old");
+        assert!(parsed.frontmatter.contradictions.is_empty());
     }
 
     #[test]
