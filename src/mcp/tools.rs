@@ -728,7 +728,7 @@ fn merge_member_diffs(
     let mut files_modified = Vec::new();
 
     for member in &workspace.members {
-        let sd = diff::compute_structural_diff(&member.index, old_files, changed_paths);
+        let sd = diff::compute_structural_diff(&member.index.files, old_files, changed_paths);
         files_added.extend(sd.files_added);
         files_removed.extend(sd.files_removed);
         files_modified.extend(sd.files_modified);

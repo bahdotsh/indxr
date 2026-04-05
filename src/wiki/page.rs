@@ -101,9 +101,10 @@ impl WikiPage {
 }
 
 /// Sanitize a page ID to only allow safe filesystem characters: [a-z0-9-_].
-/// Strips everything else to prevent path traversal.
+/// Lowercases first, then strips everything else to prevent path traversal.
 pub fn sanitize_id(id: &str) -> String {
-    id.chars()
+    id.to_ascii_lowercase()
+        .chars()
         .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-' || *c == '_')
         .collect()
 }
@@ -140,7 +141,20 @@ mod tests {
         assert_eq!(sanitize_id("../../etc/passwd"), "etcpasswd");
         assert_eq!(sanitize_id("mod-parser"), "mod-parser");
         assert_eq!(sanitize_id("entity_cache"), "entity_cache");
-        assert_eq!(sanitize_id("Hello/World"), "elloorld");
         assert_eq!(sanitize_id("a b c"), "abc");
+    }
+
+    #[test]
+    fn test_sanitize_id_lowercases() {
+        assert_eq!(sanitize_id("MCP-Server"), "mcp-server");
+        assert_eq!(sanitize_id("Hello/World"), "helloworld");
+        assert_eq!(sanitize_id("Architecture"), "architecture");
+        assert_eq!(sanitize_id("MOD-PARSER"), "mod-parser");
+    }
+
+    #[test]
+    fn test_sanitize_id_empty_result() {
+        assert_eq!(sanitize_id("///"), "");
+        assert_eq!(sanitize_id(""), "");
     }
 }

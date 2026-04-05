@@ -18,6 +18,7 @@ pub async fn run_wiki_command(
     workspace: WorkspaceIndex,
     wiki_dir_override: &Option<PathBuf>,
     model_override: Option<&str>,
+    exec_cmd: Option<&str>,
 ) -> Result<()> {
     match action {
         WikiAction::Generate {
@@ -25,7 +26,7 @@ pub async fn run_wiki_command(
             dry_run,
         } => {
             let wiki_dir = resolve_wiki_dir(wiki_dir_override, &workspace.root);
-            let llm = LlmClient::from_env(model_override)?.with_max_tokens(*max_response_tokens);
+            let llm = build_llm_client(exec_cmd, model_override, *max_response_tokens)?;
 
             eprintln!("Using model: {}", llm.model());
             eprintln!("Wiki output: {}", wiki_dir.display());
@@ -34,7 +35,6 @@ pub async fn run_wiki_command(
             let store = generator.generate_full(&wiki_dir, *dry_run).await?;
 
             if !dry_run {
-                store.save()?;
                 eprintln!(
                     "\nWiki generated: {} pages written to {}",
                     store.pages.len(),
@@ -49,7 +49,7 @@ pub async fn run_wiki_command(
             max_response_tokens,
         } => {
             let wiki_dir = resolve_wiki_dir(wiki_dir_override, &workspace.root);
-            let llm = LlmClient::from_env(model_override)?.with_max_tokens(*max_response_tokens);
+            let llm = build_llm_client(exec_cmd, model_override, *max_response_tokens)?;
 
             let mut store = store::WikiStore::load(&wiki_dir)?;
             if store.pages.is_empty() {
@@ -124,6 +124,19 @@ pub async fn run_wiki_command(
             Ok(())
         }
     }
+}
+
+fn build_llm_client(
+    exec_cmd: Option<&str>,
+    model_override: Option<&str>,
+    max_tokens: usize,
+) -> Result<LlmClient> {
+    let client = if let Some(cmd) = exec_cmd {
+        LlmClient::from_command(cmd.to_string(), model_override)
+    } else {
+        LlmClient::from_env(model_override)?
+    };
+    Ok(client.with_max_tokens(max_tokens))
 }
 
 fn resolve_wiki_dir(override_dir: &Option<PathBuf>, workspace_root: &std::path::Path) -> PathBuf {

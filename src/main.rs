@@ -170,6 +170,7 @@ fn main() -> Result<()> {
         opts,
         model,
         wiki_dir,
+        exec,
     }) = &cli.command
     {
         let config = index_config_from(opts);
@@ -186,6 +187,7 @@ fn main() -> Result<()> {
             ws_index,
             wiki_dir,
             model.as_deref(),
+            exec.as_deref(),
         ));
     }
 
@@ -461,22 +463,7 @@ fn handle_git_diff(
         }
     }
 
-    // Build a temporary CodebaseIndex for diff computation
-    let temp_index = CodebaseIndex {
-        root: root.to_path_buf(),
-        root_name: String::new(),
-        generated_at: String::new(),
-        files: current_files.to_vec(),
-        tree: Vec::new(),
-        stats: IndexStats {
-            total_files: 0,
-            total_lines: 0,
-            languages: HashMap::new(),
-            duration_ms: 0,
-        },
-    };
-
-    let structural_diff = diff::compute_structural_diff(&temp_index, &old_files, &changed_paths);
+    let structural_diff = diff::compute_structural_diff(current_files, &old_files, &changed_paths);
 
     match format {
         OutputFormat::Json => {

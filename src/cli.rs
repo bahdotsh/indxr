@@ -241,6 +241,12 @@ pub enum Command {
         /// Wiki output directory
         #[arg(long)]
         wiki_dir: Option<std::path::PathBuf>,
+
+        /// External command for LLM completions (receives JSON on stdin, returns text on stdout).
+        /// Useful for coding agents — the agent can act as the LLM backend.
+        /// Also configurable via INDXR_LLM_COMMAND env var.
+        #[arg(long)]
+        exec: Option<String>,
     },
 
     /// Initialize indxr configuration files for AI agent integration

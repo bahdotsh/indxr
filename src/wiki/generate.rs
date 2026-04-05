@@ -9,10 +9,10 @@ use crate::diff;
 use crate::languages::Language;
 use crate::llm::{LlmClient, Message, Role};
 use crate::model::declarations::{Declaration, Visibility};
-use crate::model::{CodebaseIndex, FileIndex, IndexStats, TreeEntry, WorkspaceIndex};
+use crate::model::{FileIndex, TreeEntry, WorkspaceIndex};
 use crate::parser::ParserRegistry;
 
-use super::page::{Frontmatter, PageType, WikiPage};
+use super::page::{self, Frontmatter, PageType, WikiPage};
 use super::prompts;
 use super::store::WikiStore;
 
@@ -34,11 +34,43 @@ pub struct UpdateResult {
 pub struct WikiGenerator<'a> {
     llm: &'a LlmClient,
     workspace: &'a WorkspaceIndex,
+    /// Pre-built path→FileIndex lookup for O(1) access.
+    file_index: HashMap<String, Vec<(&'a FileIndex, String)>>,
 }
 
 impl<'a> WikiGenerator<'a> {
     pub fn new(llm: &'a LlmClient, workspace: &'a WorkspaceIndex) -> Self {
-        Self { llm, workspace }
+        let file_index = Self::build_file_index(workspace);
+        Self {
+            llm,
+            workspace,
+            file_index,
+        }
+    }
+
+    /// Build a lookup from filename → Vec<(FileIndex, full_path_string)>
+    /// for fast path matching.
+    fn build_file_index(
+        workspace: &'a WorkspaceIndex,
+    ) -> HashMap<String, Vec<(&'a FileIndex, String)>> {
+        let mut map: HashMap<String, Vec<(&FileIndex, String)>> = HashMap::new();
+        for member in &workspace.members {
+            for file in &member.index.files {
+                let full_path = file.path.to_string_lossy().to_string();
+                // Index by full path for exact match
+                map.entry(full_path.clone())
+                    .or_default()
+                    .push((file, full_path.clone()));
+                // Also index by filename for suffix matching
+                if let Some(name) = file.path.file_name() {
+                    let name_str = name.to_string_lossy().to_string();
+                    if name_str != full_path {
+                        map.entry(name_str).or_default().push((file, full_path));
+                    }
+                }
+            }
+        }
+        map
     }
 
     /// Full wiki generation from scratch.
@@ -79,7 +111,7 @@ impl<'a> WikiGenerator<'a> {
         store.manifest.generated_at_ref = git_ref.clone();
         store.manifest.generated_at = timestamp.clone();
 
-        // Stage 2: Generate each page
+        // Stage 2: Generate each page (with incremental save)
         let content_plans: Vec<&PagePlan> = plans
             .iter()
             .filter(|p| p.page_type != PageType::Index)
@@ -92,6 +124,9 @@ impl<'a> WikiGenerator<'a> {
                 .generate_page(plan, &all_pages_str, &git_ref, &timestamp)
                 .await?;
             store.upsert_page(page);
+
+            // Incremental save — partial progress survives LLM failures
+            store.save()?;
         }
 
         // Stage 3: Generate index page
@@ -100,6 +135,7 @@ impl<'a> WikiGenerator<'a> {
             .generate_index(&store.pages, &git_ref, &timestamp)
             .await?;
         store.upsert_page(index_page);
+        store.save()?;
 
         Ok(store)
     }
@@ -143,21 +179,7 @@ impl<'a> WikiGenerator<'a> {
             }
         }
 
-        let temp_index = CodebaseIndex {
-            root: root.to_path_buf(),
-            root_name: String::new(),
-            generated_at: String::new(),
-            files: all_files,
-            tree: Vec::new(),
-            stats: IndexStats {
-                total_files: 0,
-                total_lines: 0,
-                languages: HashMap::new(),
-                duration_ms: 0,
-            },
-        };
-        let structural_diff =
-            diff::compute_structural_diff(&temp_index, &old_files, &changed_paths);
+        let structural_diff = diff::compute_structural_diff(&all_files, &old_files, &changed_paths);
         let diff_markdown = diff::format_diff_markdown(&structural_diff);
 
         // 3. Collect all changed file paths as strings for matching
@@ -233,6 +255,7 @@ impl<'a> WikiGenerator<'a> {
                 )
                 .await?;
             store.upsert_page(updated);
+            store.save()?;
             pages_updated += 1;
         }
 
@@ -368,7 +391,7 @@ impl<'a> WikiGenerator<'a> {
         })
     }
 
-    /// Collect all FileIndex entries across workspace members.
+    /// Collect all FileIndex entries across workspace members (borrowed references).
     fn collect_all_files(&self) -> Vec<FileIndex> {
         self.workspace
             .members
@@ -402,14 +425,25 @@ impl<'a> WikiGenerator<'a> {
             anyhow::bail!("LLM returned an empty wiki plan — no pages to generate");
         }
 
-        // Sanitize all page IDs to prevent path traversal
+        // Sanitize all page IDs and deduplicate
+        let mut seen_ids = HashSet::new();
         let plans: Vec<PagePlan> = plans
             .into_iter()
             .map(|mut p| {
-                p.id = super::page::sanitize_id(&p.id);
+                p.id = page::sanitize_id(&p.id);
                 p
             })
+            // Drop plans with empty IDs after sanitization
+            .filter(|p| !p.id.is_empty())
+            // Deduplicate by ID (keep first)
+            .filter(|p| seen_ids.insert(p.id.clone()))
             .collect();
+
+        if plans.is_empty() {
+            anyhow::bail!(
+                "All page IDs from LLM were empty after sanitization — cannot generate wiki"
+            );
+        }
 
         Ok(plans)
     }
@@ -624,23 +658,34 @@ impl<'a> WikiGenerator<'a> {
         covers
     }
 
-    fn find_file(&self, path: &str) -> Option<&FileIndex> {
-        for member in &self.workspace.members {
-            for file in &member.index.files {
-                let file_path = file.path.to_string_lossy();
-                if file_path == path {
-                    return Some(file);
-                }
-                // Path-component-aware suffix match: the character before the
-                // suffix must be a '/' to avoid partial directory matches
-                // (e.g. "bar/foo.rs" should not match "foobar/foo.rs").
-                if let Some(prefix) = file_path.strip_suffix(path) {
-                    if prefix.is_empty() || prefix.ends_with('/') {
-                        return Some(file);
+    fn find_file(&self, path: &str) -> Option<&'a FileIndex> {
+        // 1. Exact match by full path
+        if let Some(entries) = self.file_index.get(path) {
+            if let Some((fi, _)) = entries.first() {
+                return Some(fi);
+            }
+        }
+
+        // 2. Try matching by filename (for paths that differ in prefix)
+        let path_buf = Path::new(path);
+        if let Some(name) = path_buf.file_name() {
+            let name_str = name.to_string_lossy();
+            if let Some(entries) = self.file_index.get(name_str.as_ref()) {
+                // Find the entry whose full path ends with the query path,
+                // with a '/' boundary to avoid partial dir matches.
+                for (fi, full_path) in entries {
+                    if full_path == path {
+                        return Some(fi);
+                    }
+                    if let Some(prefix) = full_path.strip_suffix(path) {
+                        if prefix.is_empty() || prefix.ends_with('/') {
+                            return Some(fi);
+                        }
                     }
                 }
             }
         }
+
         None
     }
 }
@@ -741,16 +786,17 @@ fn extract_json(text: &str) -> &str {
     trimmed
 }
 
-/// Extract [[page-id]] wiki links from content.
+/// Extract [[page-id]] wiki links from content, sanitizing each link.
 fn extract_wiki_links(content: &str) -> Vec<String> {
     let mut links = Vec::new();
     let mut rest = content;
     while let Some(start) = rest.find("[[") {
         let after = &rest[start + 2..];
         if let Some(end) = after.find("]]") {
-            let link = after[..end].to_string();
-            if !links.contains(&link) {
-                links.push(link);
+            let raw = &after[..end];
+            let sanitized = page::sanitize_id(raw);
+            if !sanitized.is_empty() && !links.contains(&sanitized) {
+                links.push(sanitized);
             }
             rest = &after[end + 2..];
         } else {
@@ -781,5 +827,12 @@ mod tests {
         let content = "See [[architecture]] and [[mod-parser]] for details. Also [[architecture]].";
         let links = extract_wiki_links(content);
         assert_eq!(links, vec!["architecture", "mod-parser"]);
+    }
+
+    #[test]
+    fn test_extract_wiki_links_sanitizes() {
+        let content = "See [[MCP-Server]] and [[../../etc/passwd]] and [[]] end.";
+        let links = extract_wiki_links(content);
+        assert_eq!(links, vec!["mcp-server", "etcpasswd"]);
     }
 }

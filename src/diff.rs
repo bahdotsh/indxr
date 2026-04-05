@@ -5,8 +5,8 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use serde::Serialize;
 
+use crate::model::FileIndex;
 use crate::model::declarations::{DeclKind, Declaration};
-use crate::model::{CodebaseIndex, FileIndex};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -131,25 +131,23 @@ pub fn get_file_at_ref(root: &Path, file_path: &Path, git_ref: &str) -> Result<O
 /// Compare declarations between the old and new versions of changed files,
 /// producing a [`StructuralDiff`].
 ///
-/// * `current_index` -- the freshly-built index of the current working tree.
+/// * `current_files` -- the freshly-parsed file indices from the current
+///   working tree.
 /// * `old_files` -- a map from relative path to the [`FileIndex`] that was
 ///   parsed from the old ref.  Only files that existed at the old ref need to
 ///   appear here.
 /// * `changed_paths` -- every path that `git diff --name-only` reported as
-///   changed.  Files present in `current_index` but absent from `old_files`
-///   are treated as added; files in `old_files` but absent from `current_index`
+///   changed.  Files present in `current_files` but absent from `old_files`
+///   are treated as added; files in `old_files` but absent from `current_files`
 ///   are treated as removed; files in both are diffed at the declaration level.
 pub fn compute_structural_diff(
-    current_index: &CodebaseIndex,
+    current_files: &[FileIndex],
     old_files: &HashMap<PathBuf, FileIndex>,
     changed_paths: &[PathBuf],
 ) -> StructuralDiff {
-    // Build a lookup from path -> &FileIndex for the current index.
-    let current_map: HashMap<&PathBuf, &FileIndex> = current_index
-        .files
-        .iter()
-        .map(|fi| (&fi.path, fi))
-        .collect();
+    // Build a lookup from path -> &FileIndex for the current files.
+    let current_map: HashMap<&PathBuf, &FileIndex> =
+        current_files.iter().map(|fi| (&fi.path, fi)).collect();
 
     let current_paths: HashSet<&PathBuf> = current_map.keys().copied().collect();
     let old_paths: HashSet<&PathBuf> = old_files.keys().collect();

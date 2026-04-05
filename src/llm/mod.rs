@@ -1,5 +1,8 @@
 mod claude;
+mod command;
 mod openai;
+
+use std::time::Duration;
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -30,21 +33,45 @@ pub struct LlmConfig {
 #[derive(Debug, Clone)]
 pub enum Provider {
     Claude,
-    OpenAiCompatible { base_url: String },
+    OpenAiCompatible {
+        base_url: String,
+    },
+    /// Shell out to an external command for completions.
+    /// The command receives JSON on stdin (`{system, messages, max_tokens}`)
+    /// and returns the response text on stdout.
+    Command {
+        cmd: String,
+    },
 }
 
 /// Provider-agnostic LLM client.
 pub struct LlmClient {
     config: LlmConfig,
     http: reqwest::Client,
+    max_retries: usize,
 }
 
 impl LlmClient {
     /// Auto-detect provider from environment variables.
     ///
-    /// Checks `ANTHROPIC_API_KEY` first (→ Claude), then `OPENAI_API_KEY` (→ OpenAI-compatible).
+    /// Priority: `INDXR_LLM_COMMAND` → `ANTHROPIC_API_KEY` → `OPENAI_API_KEY`.
     /// Model can be overridden; otherwise sensible defaults are used.
     pub fn from_env(model_override: Option<&str>) -> Result<Self> {
+        // 1. Check for external command provider (best for coding agents)
+        if let Ok(cmd) = std::env::var("INDXR_LLM_COMMAND") {
+            let cmd = cmd.trim().to_string();
+            if !cmd.is_empty() {
+                let model = model_override.unwrap_or("command").to_string();
+                return Ok(Self::with_config(LlmConfig {
+                    provider: Provider::Command { cmd },
+                    api_key: String::new(),
+                    model,
+                    max_tokens: 4096,
+                }));
+            }
+        }
+
+        // 2. Anthropic API
         if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
             let key = key.trim().to_string();
             if !key.is_empty() {
@@ -60,6 +87,7 @@ impl LlmClient {
             }
         }
 
+        // 3. OpenAI-compatible API
         if let Ok(key) = std::env::var("OPENAI_API_KEY") {
             let key = key.trim().to_string();
             if !key.is_empty() {
@@ -76,15 +104,29 @@ impl LlmClient {
         }
 
         bail!(
-            "No LLM API key found. Set ANTHROPIC_API_KEY (for Claude) \
-             or OPENAI_API_KEY (for OpenAI-compatible endpoints)."
+            "No LLM provider found. Set one of:\n  \
+             - INDXR_LLM_COMMAND  (external command, ideal for coding agents)\n  \
+             - ANTHROPIC_API_KEY  (Claude API)\n  \
+             - OPENAI_API_KEY     (OpenAI-compatible API)\n\n\
+             Or pass --exec <CMD> to use an external command directly."
         )
+    }
+
+    /// Create a client with an explicit command provider.
+    pub fn from_command(cmd: String, model_override: Option<&str>) -> Self {
+        Self::with_config(LlmConfig {
+            provider: Provider::Command { cmd },
+            api_key: String::new(),
+            model: model_override.unwrap_or("command").to_string(),
+            max_tokens: 4096,
+        })
     }
 
     pub fn with_config(config: LlmConfig) -> Self {
         Self {
             config,
             http: reqwest::Client::new(),
+            max_retries: 2,
         }
     }
 
@@ -95,7 +137,33 @@ impl LlmClient {
     }
 
     /// Send a system prompt + messages and get a complete response.
+    /// Retries transient failures with exponential backoff.
     pub async fn complete(&self, system: &str, messages: &[Message]) -> Result<String> {
+        let mut last_err = None;
+        for attempt in 0..=self.max_retries {
+            if attempt > 0 {
+                let delay = Duration::from_millis(1000 * 2u64.pow(attempt as u32 - 1));
+                eprintln!(
+                    "  Retrying in {}s (attempt {}/{})...",
+                    delay.as_secs(),
+                    attempt + 1,
+                    self.max_retries + 1
+                );
+                tokio::time::sleep(delay).await;
+            }
+
+            match self.complete_once(system, messages).await {
+                Ok(text) => return Ok(text),
+                Err(e) => {
+                    eprintln!("  LLM call failed: {e:#}");
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap())
+    }
+
+    async fn complete_once(&self, system: &str, messages: &[Message]) -> Result<String> {
         match &self.config.provider {
             Provider::Claude => {
                 claude::complete(
@@ -119,6 +187,9 @@ impl LlmClient {
                     self.config.max_tokens,
                 )
                 .await
+            }
+            Provider::Command { cmd } => {
+                command::complete(cmd, system, messages, self.config.max_tokens).await
             }
         }
     }
