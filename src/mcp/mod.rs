@@ -207,9 +207,9 @@ pub(crate) fn handle_tools_call(
             return ok_response(id, result);
         }
 
-        // wiki_update needs &mut store
+        // wiki_update reads store to find affected pages (no mutation)
         if tool_name == "wiki_update" {
-            return match wiki_store.as_mut() {
+            return match wiki_store.as_ref() {
                 Some(store) => {
                     let result = tool_wiki_update(store, workspace, &arguments);
                     ok_response(id, result)

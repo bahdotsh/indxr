@@ -4,6 +4,7 @@ mod prompts;
 pub mod store;
 
 pub(crate) use generate::WikiGenerator;
+pub(crate) use generate::build_planning_context;
 pub(crate) use generate::extract_wiki_links;
 
 use std::collections::{HashMap, HashSet};

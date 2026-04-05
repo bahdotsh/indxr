@@ -684,38 +684,21 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
             }));
             tools.push(json!({
                 "name": "wiki_generate",
-                "description": "Generate a full wiki from the codebase. Requires ANTHROPIC_API_KEY or OPENAI_API_KEY. This is a long-running operation that makes multiple LLM calls. Creates structured, interlinked pages covering architecture, modules, entities, and topics.",
+                "description": "Initialize a new wiki and return the codebase structural context for planning pages. After calling this, plan which pages to create (architecture, module, entity, topic) based on the returned context, then call wiki_contribute for each page. Finish with an index page.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {
-                        "model": {
-                            "type": "string",
-                            "description": "LLM model override (e.g. 'claude-sonnet-4-20250514', 'gpt-4o')"
-                        },
-                        "max_response_tokens": {
-                            "type": "integer",
-                            "description": "Max tokens per LLM response (default: 4096)"
-                        }
-                    }
+                    "properties": {}
                 }
             }));
             tools.push(json!({
                 "name": "wiki_update",
-                "description": "Incrementally update wiki pages affected by code changes since last generation. Only regenerates pages whose source files changed. Requires ANTHROPIC_API_KEY or OPENAI_API_KEY.",
+                "description": "Analyze code changes since last wiki generation and return affected pages with diff context. For each affected page, rewrite its content based on the diff and current content, then call wiki_contribute to save. No API keys needed — you drive the updates.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "since": {
                             "type": "string",
                             "description": "Git ref to diff against (default: wiki's stored ref)"
-                        },
-                        "model": {
-                            "type": "string",
-                            "description": "LLM model override"
-                        },
-                        "max_response_tokens": {
-                            "type": "integer",
-                            "description": "Max tokens per LLM response (default: 4096)"
                         }
                     }
                 }
@@ -2984,65 +2967,67 @@ pub(super) fn tool_wiki_contribute(
     }))
 }
 
-/// Build an LlmClient from environment variables (ANTHROPIC_API_KEY or OPENAI_API_KEY).
-/// Returns a tool_error Value on failure.
 #[cfg(feature = "wiki")]
-fn build_llm_from_env(args: &Value) -> Result<crate::llm::LlmClient, Value> {
-    let model = args.get("model").and_then(|v| v.as_str());
-    let max_tokens = args
-        .get("max_response_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(4096) as usize;
-
-    match crate::llm::LlmClient::from_env(model) {
-        Ok(client) => Ok(client.with_max_tokens(max_tokens)),
-        Err(e) => Err(tool_error(&format!(
-            "Failed to initialize LLM client. Set ANTHROPIC_API_KEY or OPENAI_API_KEY. Error: {}",
-            e
-        ))),
-    }
-}
-
-#[cfg(feature = "wiki")]
-pub(super) fn tool_wiki_generate(workspace: &WorkspaceIndex, args: &Value) -> Value {
-    use crate::wiki::WikiGenerator;
-
-    let llm = match build_llm_from_env(args) {
-        Ok(c) => c,
-        Err(e) => return e,
-    };
+pub(super) fn tool_wiki_generate(workspace: &WorkspaceIndex, _args: &Value) -> Value {
+    use crate::wiki::build_planning_context;
+    use crate::wiki::store::WikiStore;
 
     let wiki_dir = workspace.root.join(".indxr").join("wiki");
-    let generator = WikiGenerator::new(&llm, workspace);
 
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => return tool_error(&format!("Failed to create async runtime: {}", e)),
-    };
-
-    match rt.block_on(generator.generate_full(&wiki_dir, false)) {
-        Ok(store) => tool_result(json!({
-            "action": "generated",
-            "pages": store.pages.len(),
-            "wiki_dir": wiki_dir.to_string_lossy(),
-            "model": llm.model(),
-        })),
-        Err(e) => tool_error(&format!("Wiki generation failed: {}", e)),
+    // Initialize an empty wiki store on disk so wiki_contribute can write to it
+    let store = WikiStore::new(&wiki_dir);
+    if let Err(e) = store.save() {
+        return tool_error(&format!("Failed to initialize wiki store: {}", e));
     }
+
+    let context = build_planning_context(workspace);
+
+    let instructions = r#"Plan and create wiki pages for this codebase using the structural context above.
+
+## Page types
+- **architecture** (exactly 1): High-level design, data flow, key decisions
+- **module**: One per significant directory/module (3+ files or 500+ lines)
+- **entity**: Key types central to the architecture (major structs/traits/enums used across files)
+- **topic**: Cross-cutting concerns spanning 3+ modules (error handling, caching, etc.)
+- **index** (exactly 1, create last): Cross-reference table of contents
+
+## Workflow
+1. Analyze the structural context to decide which pages to create
+2. For each page, use `summarize` to understand source files, then call `wiki_contribute` with:
+   - `page`: slug ID (e.g. "architecture", "mod-parser", "entity-cache")
+   - `title`: human-readable title
+   - `content`: markdown content (use [[page-id]] for cross-references)
+   - `page_type`: one of architecture, module, entity, topic
+   - `source_files`: array of source file paths this page covers
+3. Create the index page last (page: "index", page_type: "topic")
+
+## Content guidelines
+- Audience: AI coding agents, not humans. Be precise about types, signatures, invariants.
+- Focus on WHY (design decisions, invariants, data flow), not WHAT (the structural index already has that).
+- Use [[page-id]] links for cross-references between pages.
+- Every source file should appear in at least one page's source_files.
+- Aim for 5-20 pages total."#;
+
+    tool_result(json!({
+        "action": "initialized",
+        "wiki_dir": wiki_dir.to_string_lossy(),
+        "context": context,
+        "instructions": instructions,
+    }))
 }
 
 #[cfg(feature = "wiki")]
 pub(super) fn tool_wiki_update(
-    store: &mut crate::wiki::store::WikiStore,
+    store: &crate::wiki::store::WikiStore,
     workspace: &WorkspaceIndex,
     args: &Value,
 ) -> Value {
-    use crate::wiki::WikiGenerator;
+    use std::collections::HashSet;
 
-    let llm = match build_llm_from_env(args) {
-        Ok(c) => c,
-        Err(e) => return e,
-    };
+    use crate::diff;
+    use crate::languages::Language;
+    use crate::parser::ParserRegistry;
+    use crate::wiki::page::PageType;
 
     let since_ref = args
         .get("since")
@@ -3056,27 +3041,113 @@ pub(super) fn tool_wiki_update(
         );
     }
 
-    let generator = WikiGenerator::new(&llm, workspace);
-
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => return tool_error(&format!("Failed to create async runtime: {}", e)),
+    // Get changed files
+    let changed_paths = match diff::get_changed_files(&workspace.root, &since_ref) {
+        Ok(paths) => paths,
+        Err(e) => return tool_error(&format!("Failed to get changed files: {}", e)),
     };
 
-    match rt.block_on(generator.update_affected(store, &since_ref)) {
-        Ok(result) => {
-            if let Err(e) = store.save() {
-                return tool_error(&format!("Wiki update succeeded but save failed: {}", e));
-            }
-            tool_result(json!({
-                "action": "updated",
-                "pages_updated": result.pages_updated,
-                "pages_removed": result.pages_removed,
-                "total_pages": store.pages.len(),
-                "since_ref": since_ref,
-                "model": llm.model(),
-            }))
-        }
-        Err(e) => tool_error(&format!("Wiki update failed: {}", e)),
+    if changed_paths.is_empty() {
+        return tool_result(json!({
+            "action": "no_changes",
+            "since_ref": since_ref,
+            "message": "No file changes detected since the given ref.",
+        }));
     }
+
+    // Build structural diff
+    let all_files: Vec<&crate::model::FileIndex> = workspace
+        .members
+        .iter()
+        .flat_map(|m| m.index.files.iter())
+        .collect();
+    let registry = ParserRegistry::new();
+    let mut old_files = std::collections::HashMap::new();
+    for path in &changed_paths {
+        if let Ok(Some(old_content)) = diff::get_file_at_ref(&workspace.root, path, &since_ref) {
+            if let Some(lang) = Language::detect(path) {
+                if let Some(parser) = registry.get_parser(&lang) {
+                    if let Ok(index) = parser.parse_file(path, &old_content) {
+                        old_files.insert(path.clone(), index);
+                    }
+                }
+            }
+        }
+    }
+    let structural_diff = diff::compute_structural_diff(all_files, &old_files, &changed_paths);
+    let diff_summary = diff::format_diff_markdown(&structural_diff);
+
+    // Find affected pages
+    let changed_set: HashSet<String> = changed_paths
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
+    let affected_pages: Vec<Value> = store
+        .pages
+        .iter()
+        .filter(|page| {
+            page.frontmatter.page_type != PageType::Index
+                && page
+                    .frontmatter
+                    .source_files
+                    .iter()
+                    .any(|sf| changed_set.contains(sf))
+        })
+        .map(|page| {
+            json!({
+                "id": page.frontmatter.id,
+                "title": page.frontmatter.title,
+                "page_type": page.frontmatter.page_type.as_str(),
+                "source_files": page.frontmatter.source_files,
+                "current_content": page.content,
+            })
+        })
+        .collect();
+
+    if affected_pages.is_empty() {
+        return tool_result(json!({
+            "action": "no_affected_pages",
+            "since_ref": since_ref,
+            "changed_files": changed_paths.len(),
+            "message": "Files changed but no existing wiki pages cover them.",
+        }));
+    }
+
+    // All pages list for cross-referencing
+    let all_pages: Vec<Value> = store
+        .pages
+        .iter()
+        .map(|p| {
+            json!({
+                "id": p.frontmatter.id,
+                "title": p.frontmatter.title,
+            })
+        })
+        .collect();
+
+    let instructions = r#"Update the affected wiki pages based on the structural diff.
+
+## Workflow
+For each affected page:
+1. Review its current_content and the diff_summary to understand what changed
+2. Use `summarize` on changed source_files for fresh structural details if needed
+3. Rewrite the page content: preserve accurate existing knowledge, update what changed, flag significant architectural changes
+4. Call `wiki_contribute` with the page ID and new content
+
+## Content guidelines
+- Preserve existing knowledge that is still accurate
+- Update sections that reference changed declarations
+- Use [[page-id]] links for cross-references
+- If a page's source files were all deleted, note that the page may be obsolete"#;
+
+    tool_result(json!({
+        "action": "analysis",
+        "since_ref": since_ref,
+        "changed_files": changed_paths.len(),
+        "diff_summary": diff_summary,
+        "affected_pages": affected_pages,
+        "all_pages": all_pages,
+        "instructions": instructions,
+    }))
 }

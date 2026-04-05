@@ -591,79 +591,9 @@ impl<'a> WikiGenerator<'a> {
         })
     }
 
-    /// Approximate character limit for the planning context.  100k chars ≈
-    /// 25-30k tokens — well within common LLM context windows while leaving
-    /// room for the system prompt and response.
-    const PLANNING_CONTEXT_CHAR_LIMIT: usize = 100_000;
-
-    /// Build the context string for the planning call.
-    /// Truncates per-file declaration listings when the context exceeds
-    /// [`Self::PLANNING_CONTEXT_CHAR_LIMIT`], keeping directory trees and
-    /// file headers so the LLM can still plan.
+    /// Build the context string for the planning call (delegates to standalone fn).
     fn build_planning_context(&self) -> String {
-        let mut ctx = String::new();
-        let mut truncated = false;
-
-        ctx.push_str("# Codebase Structural Index\n\n");
-
-        for member in &self.workspace.members {
-            if self.workspace.members.len() > 1 {
-                ctx.push_str(&format!("## Workspace member: {}\n\n", member.name));
-            }
-
-            // Directory tree
-            ctx.push_str("### Directory Tree\n```\n");
-            format_tree(&member.index.tree, &mut ctx);
-            ctx.push_str("```\n\n");
-
-            // Per-file summaries (compact)
-            ctx.push_str("### Files\n\n");
-            for file in &member.index.files {
-                let path = file.path.to_string_lossy();
-                let decl_count = count_declarations(&file.declarations);
-                let public_count = count_public(&file.declarations);
-
-                ctx.push_str(&format!(
-                    "**{}** ({}, {} lines, {} decls, {} public)\n",
-                    path,
-                    file.language.name(),
-                    file.lines,
-                    decl_count,
-                    public_count,
-                ));
-
-                // Skip declaration listings once we exceed the budget
-                if ctx.len() < Self::PLANNING_CONTEXT_CHAR_LIMIT {
-                    // List top-level declarations (name + kind only for planning)
-                    for decl in &file.declarations {
-                        ctx.push_str(&format!("  - {} `{}`", decl.kind, decl.name,));
-                        if !decl.children.is_empty() {
-                            ctx.push_str(&format!(" ({} children)", decl.children.len()));
-                        }
-                        ctx.push('\n');
-                    }
-                } else if !truncated {
-                    truncated = true;
-                    eprintln!(
-                        "Warning: planning context exceeds {}k chars, \
-                         omitting declaration details for remaining files",
-                        Self::PLANNING_CONTEXT_CHAR_LIMIT / 1000
-                    );
-                }
-                ctx.push('\n');
-            }
-        }
-
-        // Stats
-        ctx.push_str(&format!(
-            "### Stats\n- Total files: {}\n- Total lines: {}\n",
-            self.workspace.stats.total_files, self.workspace.stats.total_lines,
-        ));
-        for (lang, count) in &self.workspace.stats.languages {
-            ctx.push_str(&format!("- {}: {} files\n", lang, count));
-        }
-
-        ctx
+        build_planning_context(self.workspace)
     }
 
     /// Approximate character limit for page context.  Same budget as the
@@ -777,6 +707,83 @@ impl<'a> WikiGenerator<'a> {
 
         None
     }
+}
+
+// ---------------------------------------------------------------------------
+// Standalone context builders (used by MCP tools without LlmClient)
+// ---------------------------------------------------------------------------
+
+/// Approximate character limit for the planning context.  100k chars ≈
+/// 25-30k tokens — well within common LLM context windows while leaving
+/// room for the system prompt and response.
+const PLANNING_CONTEXT_CHAR_LIMIT: usize = 100_000;
+
+/// Build a planning context string from the workspace structural index.
+/// This provides the codebase overview needed to plan wiki pages.
+pub(crate) fn build_planning_context(workspace: &WorkspaceIndex) -> String {
+    let mut ctx = String::new();
+    let mut truncated = false;
+
+    ctx.push_str("# Codebase Structural Index\n\n");
+
+    for member in &workspace.members {
+        if workspace.members.len() > 1 {
+            ctx.push_str(&format!("## Workspace member: {}\n\n", member.name));
+        }
+
+        // Directory tree
+        ctx.push_str("### Directory Tree\n```\n");
+        format_tree(&member.index.tree, &mut ctx);
+        ctx.push_str("```\n\n");
+
+        // Per-file summaries (compact)
+        ctx.push_str("### Files\n\n");
+        for file in &member.index.files {
+            let path = file.path.to_string_lossy();
+            let decl_count = count_declarations(&file.declarations);
+            let public_count = count_public(&file.declarations);
+
+            ctx.push_str(&format!(
+                "**{}** ({}, {} lines, {} decls, {} public)\n",
+                path,
+                file.language.name(),
+                file.lines,
+                decl_count,
+                public_count,
+            ));
+
+            // Skip declaration listings once we exceed the budget
+            if ctx.len() < PLANNING_CONTEXT_CHAR_LIMIT {
+                // List top-level declarations (name + kind only for planning)
+                for decl in &file.declarations {
+                    ctx.push_str(&format!("  - {} `{}`", decl.kind, decl.name,));
+                    if !decl.children.is_empty() {
+                        ctx.push_str(&format!(" ({} children)", decl.children.len()));
+                    }
+                    ctx.push('\n');
+                }
+            } else if !truncated {
+                truncated = true;
+                eprintln!(
+                    "Warning: planning context exceeds {}k chars, \
+                     omitting declaration details for remaining files",
+                    PLANNING_CONTEXT_CHAR_LIMIT / 1000
+                );
+            }
+            ctx.push('\n');
+        }
+    }
+
+    // Stats
+    ctx.push_str(&format!(
+        "### Stats\n- Total files: {}\n- Total lines: {}\n",
+        workspace.stats.total_files, workspace.stats.total_lines,
+    ));
+    for (lang, count) in &workspace.stats.languages {
+        ctx.push_str(&format!("- {}: {} files\n", lang, count));
+    }
+
+    ctx
 }
 
 // ---------------------------------------------------------------------------
