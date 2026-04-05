@@ -1,4 +1,5 @@
 #![cfg(feature = "wiki")]
+#![cfg(unix)]
 
 //! Integration tests for wiki generation via the `indxr wiki` CLI.
 //!

@@ -329,17 +329,47 @@ impl<'a> WikiGenerator<'a> {
     ) -> Result<WikiPage> {
         let mut ctx = String::new();
         let mut truncated = false;
+        let limit = Self::PAGE_CONTEXT_CHAR_LIMIT;
 
         ctx.push_str("# Current Wiki Page Content\n\n");
         ctx.push_str(&existing.content);
         ctx.push_str("\n\n");
 
+        // Budget-aware diff section: truncate if the context is already large
         ctx.push_str("# Structural Diff\n\n");
-        ctx.push_str(diff_markdown);
+        if ctx.len() + diff_markdown.len() > limit {
+            let remaining = limit.saturating_sub(ctx.len()).saturating_sub(500);
+            if remaining > 0 {
+                // Truncate on a line boundary to avoid mid-line cuts
+                let safe = floor_char_boundary(diff_markdown, remaining);
+                let trunc_point = diff_markdown[..safe].rfind('\n').unwrap_or(safe);
+                ctx.push_str(&diff_markdown[..trunc_point]);
+                ctx.push_str("\n\n... (diff truncated)\n");
+            }
+            truncated = true;
+            eprintln!(
+                "Warning: structural diff truncated to fit {}k char context budget",
+                limit / 1000
+            );
+        } else {
+            ctx.push_str(diff_markdown);
+        }
         ctx.push_str("\n\n");
 
+        // Budget-aware cross-references section
         ctx.push_str("# Other Wiki Pages\n");
-        ctx.push_str(all_pages_str);
+        if ctx.len() + all_pages_str.len() > limit {
+            let remaining = limit.saturating_sub(ctx.len()).saturating_sub(500);
+            if remaining > 0 {
+                let safe = floor_char_boundary(all_pages_str, remaining);
+                let trunc_point = all_pages_str[..safe].rfind('\n').unwrap_or(safe);
+                ctx.push_str(&all_pages_str[..trunc_point]);
+                ctx.push_str("\n... (page list truncated)\n");
+            }
+            truncated = true;
+        } else {
+            ctx.push_str(all_pages_str);
+        }
         ctx.push_str("\n\n");
 
         // Fresh structural data for source files
@@ -355,13 +385,13 @@ impl<'a> WikiGenerator<'a> {
                 ));
 
                 // Skip detailed listings once we exceed the budget
-                if ctx.len() >= Self::PAGE_CONTEXT_CHAR_LIMIT {
+                if ctx.len() >= limit {
                     if !truncated {
                         truncated = true;
                         eprintln!(
                             "Warning: update context exceeds {}k chars, \
                              omitting details for remaining source files",
-                            Self::PAGE_CONTEXT_CHAR_LIMIT / 1000
+                            limit / 1000
                         );
                     }
                     continue;
@@ -828,9 +858,11 @@ fn current_git_ref(root: &Path) -> Result<String> {
     }
 }
 
-/// Extract JSON content from an LLM response that might be wrapped in markdown fencing.
+/// Extract JSON content from an LLM response that might be wrapped in markdown
+/// fencing or preceded by preamble text.
 fn extract_json(text: &str) -> &str {
     let trimmed = text.trim();
+    // 1. Markdown fenced block (```json ... ``` or ``` ... ```)
     if let Some(after) = trimmed.strip_prefix("```json") {
         if let Some(end) = after.rfind("```") {
             return after[..end].trim();
@@ -841,7 +873,27 @@ fn extract_json(text: &str) -> &str {
             return after[..end].trim();
         }
     }
+    // 2. Find raw JSON array boundaries (handles preamble text from LLMs)
+    if let Some(start) = trimmed.find('[') {
+        if let Some(end) = trimmed.rfind(']') {
+            if end > start {
+                return &trimmed[start..=end];
+            }
+        }
+    }
     trimmed
+}
+
+/// Find the largest byte index ≤ `max` that falls on a char boundary.
+fn floor_char_boundary(s: &str, max: usize) -> usize {
+    if max >= s.len() {
+        return s.len();
+    }
+    let mut i = max;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
 }
 
 /// Extract [[page-id]] wiki links from content, sanitizing each link.
@@ -891,6 +943,37 @@ mod tests {
     fn test_extract_json_fenced() {
         let input = "```json\n[{\"id\": \"test\"}]\n```";
         assert_eq!(extract_json(input), "[{\"id\": \"test\"}]");
+    }
+
+    #[test]
+    fn test_extract_json_with_preamble() {
+        let input = "Here is the plan:\n[{\"id\": \"test\"}]";
+        assert_eq!(extract_json(input), "[{\"id\": \"test\"}]");
+    }
+
+    #[test]
+    fn test_extract_json_with_preamble_and_trailing() {
+        let input = "Sure! Here's the JSON:\n[{\"id\": \"a\"}, {\"id\": \"b\"}]\nHope this helps!";
+        assert_eq!(extract_json(input), "[{\"id\": \"a\"}, {\"id\": \"b\"}]");
+    }
+
+    #[test]
+    fn test_floor_char_boundary_ascii() {
+        assert_eq!(floor_char_boundary("hello", 3), 3);
+        assert_eq!(floor_char_boundary("hello", 10), 5);
+        assert_eq!(floor_char_boundary("hello", 0), 0);
+    }
+
+    #[test]
+    fn test_floor_char_boundary_multibyte() {
+        // "café": c(1) a(1) f(1) é(2) = 5 bytes
+        let s = "café";
+        assert_eq!(s.len(), 5);
+        assert_eq!(floor_char_boundary(s, 3), 3); // "caf"
+        // Byte 4 is inside the 2-byte 'é', rounds down to 3
+        assert_eq!(floor_char_boundary(s, 4), 3);
+        assert_eq!(floor_char_boundary(s, 5), 5); // full string
+        assert_eq!(floor_char_boundary(s, 10), 5); // beyond end
     }
 
     #[test]
