@@ -51,9 +51,22 @@ pub async fn complete(
     };
 
     if !output.status.success() {
-        let code = output.status.code().unwrap_or(-1);
-        // Treat command failures as transient (could be temporary resource issues)
-        return Err(TransientLlmError(format!("LLM command exited with status {code}")).into());
+        let code = output.status.code();
+        let msg = format!(
+            "LLM command exited with status {}",
+            code.map_or("signal".to_string(), |c| c.to_string())
+        );
+        // Only retry when the process was killed by a signal (code is None)
+        // or died with code > 128 (typically 128+signal on Unix).
+        // Other non-zero exits (bad input, missing deps) are permanent.
+        let transient = match code {
+            None => true,       // killed by signal
+            Some(c) => c > 128, // 128+N = terminated by signal N
+        };
+        if transient {
+            return Err(TransientLlmError(msg).into());
+        }
+        anyhow::bail!("{}", msg);
     }
 
     let text = String::from_utf8(output.stdout)

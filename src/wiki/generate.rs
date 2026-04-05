@@ -170,12 +170,14 @@ impl<'a> WikiGenerator<'a> {
         let registry = ParserRegistry::new();
         let mut old_files: HashMap<PathBuf, FileIndex> = HashMap::new();
         for path in &changed_paths {
-            if let Ok(Some(old_content)) = diff::get_file_at_ref(root, path, since_ref)
-                && let Some(lang) = Language::detect(path)
-                && let Some(parser) = registry.get_parser(&lang)
-                && let Ok(index) = parser.parse_file(path, &old_content)
-            {
-                old_files.insert(path.clone(), index);
+            if let Ok(Some(old_content)) = diff::get_file_at_ref(root, path, since_ref) {
+                if let Some(lang) = Language::detect(path) {
+                    if let Some(parser) = registry.get_parser(&lang) {
+                        if let Ok(index) = parser.parse_file(path, &old_content) {
+                            old_files.insert(path.clone(), index);
+                        }
+                    }
+                }
             }
         }
 
@@ -543,9 +545,18 @@ impl<'a> WikiGenerator<'a> {
         })
     }
 
+    /// Approximate character limit for the planning context.  100k chars ≈
+    /// 25-30k tokens — well within common LLM context windows while leaving
+    /// room for the system prompt and response.
+    const PLANNING_CONTEXT_CHAR_LIMIT: usize = 100_000;
+
     /// Build the context string for the planning call.
+    /// Truncates per-file declaration listings when the context exceeds
+    /// [`Self::PLANNING_CONTEXT_CHAR_LIMIT`], keeping directory trees and
+    /// file headers so the LLM can still plan.
     fn build_planning_context(&self) -> String {
         let mut ctx = String::new();
+        let mut truncated = false;
 
         ctx.push_str("# Codebase Structural Index\n\n");
 
@@ -575,13 +586,23 @@ impl<'a> WikiGenerator<'a> {
                     public_count,
                 ));
 
-                // List top-level declarations (name + kind only for planning)
-                for decl in &file.declarations {
-                    ctx.push_str(&format!("  - {} `{}`", decl.kind, decl.name,));
-                    if !decl.children.is_empty() {
-                        ctx.push_str(&format!(" ({} children)", decl.children.len()));
+                // Skip declaration listings once we exceed the budget
+                if ctx.len() < Self::PLANNING_CONTEXT_CHAR_LIMIT {
+                    // List top-level declarations (name + kind only for planning)
+                    for decl in &file.declarations {
+                        ctx.push_str(&format!("  - {} `{}`", decl.kind, decl.name,));
+                        if !decl.children.is_empty() {
+                            ctx.push_str(&format!(" ({} children)", decl.children.len()));
+                        }
+                        ctx.push('\n');
                     }
-                    ctx.push('\n');
+                } else if !truncated {
+                    truncated = true;
+                    eprintln!(
+                        "Warning: planning context exceeds {}k chars, \
+                         omitting declaration details for remaining files",
+                        Self::PLANNING_CONTEXT_CHAR_LIMIT / 1000
+                    );
                 }
                 ctx.push('\n');
             }

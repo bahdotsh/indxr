@@ -237,6 +237,160 @@ fn test_wiki_status_after_generate() {
 }
 
 #[test]
+fn test_wiki_update_after_code_change() {
+    let tmp = TempDir::new().unwrap();
+    let project_dir = tmp.path().join("project");
+    fs::create_dir_all(&project_dir).unwrap();
+
+    create_test_project(&project_dir);
+    let script = create_mock_llm_script(tmp.path());
+    let wiki_dir = project_dir.join(".indxr/wiki");
+
+    // Step 1: Generate the wiki
+    let output = Command::new(indxr_bin())
+        .args([
+            "wiki",
+            "--exec",
+            script.to_str().unwrap(),
+            "--wiki-dir",
+            wiki_dir.to_str().unwrap(),
+            "generate",
+        ])
+        .current_dir(&project_dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "generate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify wiki exists before update
+    assert!(wiki_dir.join("manifest.yaml").exists());
+    let manifest_before = fs::read_to_string(wiki_dir.join("manifest.yaml")).unwrap();
+    assert!(manifest_before.contains("architecture"));
+
+    // Step 2: Make a code change and commit
+    fs::write(
+        project_dir.join("src/main.rs"),
+        "fn main() {\n    println!(\"updated\");\n}\n\npub fn new_function() -> bool {\n    true\n}\n",
+    )
+    .unwrap();
+
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(&project_dir)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "add new_function"])
+        .current_dir(&project_dir)
+        .output()
+        .unwrap();
+
+    // Step 3: Run wiki update against the first commit
+    let first_commit = Command::new("git")
+        .args(["rev-parse", "HEAD~1"])
+        .current_dir(&project_dir)
+        .output()
+        .unwrap();
+    let since_ref = String::from_utf8(first_commit.stdout).unwrap();
+    let since_ref = since_ref.trim();
+
+    let output = Command::new(indxr_bin())
+        .args([
+            "wiki",
+            "--exec",
+            script.to_str().unwrap(),
+            "--wiki-dir",
+            wiki_dir.to_str().unwrap(),
+            "update",
+            "--since",
+            since_ref,
+        ])
+        .current_dir(&project_dir)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "wiki update failed:\nstderr: {stderr}\nstdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    // Step 4: Verify update results
+    // stderr should mention finding changed files and updating pages
+    assert!(
+        stderr.contains("changed files")
+            || stderr.contains("Updated")
+            || stderr.contains("updated")
+            || stderr.contains("No wiki pages"),
+        "Expected update progress in stderr, got: {stderr}"
+    );
+
+    // Manifest should still be valid
+    let manifest_after = fs::read_to_string(wiki_dir.join("manifest.yaml")).unwrap();
+    assert!(manifest_after.contains("architecture"));
+
+    // Wiki pages should still exist
+    assert!(wiki_dir.join("architecture.md").exists());
+}
+
+#[test]
+fn test_wiki_update_no_changes() {
+    let tmp = TempDir::new().unwrap();
+    let project_dir = tmp.path().join("project");
+    fs::create_dir_all(&project_dir).unwrap();
+
+    create_test_project(&project_dir);
+    let script = create_mock_llm_script(tmp.path());
+    let wiki_dir = project_dir.join(".indxr/wiki");
+
+    // Generate the wiki
+    let output = Command::new(indxr_bin())
+        .args([
+            "wiki",
+            "--exec",
+            script.to_str().unwrap(),
+            "--wiki-dir",
+            wiki_dir.to_str().unwrap(),
+            "generate",
+        ])
+        .current_dir(&project_dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "generate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Update with --since HEAD (no changes)
+    let output = Command::new(indxr_bin())
+        .args([
+            "wiki",
+            "--exec",
+            script.to_str().unwrap(),
+            "--wiki-dir",
+            wiki_dir.to_str().unwrap(),
+            "update",
+            "--since",
+            "HEAD",
+        ])
+        .current_dir(&project_dir)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "wiki update failed: {stderr}");
+    assert!(
+        stderr.contains("No file changes"),
+        "Expected no-changes message, got: {stderr}"
+    );
+}
+
+#[test]
 fn test_mock_llm_script_returns_valid_plan() {
     let tmp = TempDir::new().unwrap();
     let script = create_mock_llm_script(tmp.path());
