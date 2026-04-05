@@ -2627,6 +2627,10 @@ pub(super) fn tool_wiki_search(store: &crate::wiki::store::WikiStore, args: &Val
 
 #[cfg(feature = "wiki")]
 fn extract_excerpt(content: &str, query: &str, max_chars: usize) -> String {
+    if content.trim().is_empty() {
+        return "(empty page)".to_string();
+    }
+
     // Build lowered version with per-byte mapping back to original offsets so we
     // can search case-insensitively but return an excerpt with original casing.
     let mut content_lower = String::with_capacity(content.len());
