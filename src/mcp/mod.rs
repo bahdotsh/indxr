@@ -234,7 +234,7 @@ pub(crate) fn handle_tools_call(
                     }
                     None => ok_response(
                         id,
-                        tool_error("No wiki found. Run `indxr wiki generate` to create one."),
+                        tool_error("No wiki found. Run `wiki_generate` to create one first."),
                     ),
                 };
             }
@@ -250,7 +250,7 @@ pub(crate) fn handle_tools_call(
                 }
                 None => ok_response(
                     id,
-                    tool_error("No wiki found. Run `indxr wiki generate` to create one."),
+                    tool_error("No wiki found. Run `wiki_generate` to create one first."),
                 ),
             };
         }

@@ -3627,4 +3627,138 @@ mod wiki_tests {
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"wiki_contribute"));
     }
+
+    #[test]
+    fn test_wiki_generate_and_update_listed_in_tools() {
+        let defs = tool_definitions(false, false, true);
+        let tools = defs["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"wiki_generate"));
+        assert!(names.contains(&"wiki_update"));
+    }
+
+    /// Build a workspace rooted in a temp dir (for tests that write to disk).
+    fn make_workspace_in(root: &std::path::Path) -> WorkspaceIndex {
+        let mut index = make_test_index();
+        index.root = root.to_path_buf();
+        index.root_name = root.file_name().unwrap().to_string_lossy().to_string();
+        wrap_workspace(index)
+    }
+
+    #[test]
+    fn test_wiki_generate_returns_context() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = make_workspace_in(tmp.path());
+        let result = tool_wiki_generate(&ws, &json!({}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let content: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(content["action"], "initialized");
+        assert!(
+            content["context"]
+                .as_str()
+                .unwrap()
+                .contains("Codebase Structural Index")
+        );
+        assert!(
+            content["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("wiki_contribute")
+        );
+    }
+
+    #[test]
+    fn test_wiki_generate_blocks_when_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = make_workspace_in(tmp.path());
+
+        // First call should succeed
+        let result = tool_wiki_generate(&ws, &json!({}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let content: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(content["action"], "initialized");
+
+        // Verify manifest was created
+        let manifest_path = tmp.path().join(".indxr").join("wiki").join("manifest.yaml");
+        assert!(
+            manifest_path.exists(),
+            "manifest.yaml should exist after wiki_generate"
+        );
+
+        // Second call without force should fail
+        let result2 = tool_wiki_generate(&ws, &json!({}));
+        let text2 = result2["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text2.contains("Wiki already exists"),
+            "Expected 'Wiki already exists' but got: {}",
+            text2
+        );
+
+        // With force=true should succeed again
+        let result3 = tool_wiki_generate(&ws, &json!({"force": true}));
+        let text3 = result3["content"][0]["text"].as_str().unwrap();
+        let content3: Value = serde_json::from_str(text3).unwrap();
+        assert_eq!(content3["action"], "initialized");
+    }
+
+    #[test]
+    fn test_wiki_update_no_wiki_dispatch() {
+        // Verify that wiki_update through handle_tools_call returns an error when no wiki exists
+        let index = make_test_index();
+        let mut ws = wrap_workspace(index);
+        let config = WorkspaceConfig {
+            workspace: crate::workspace::single_root_workspace(&ws.root),
+            template: IndexConfig {
+                root: ws.root.clone(),
+                cache_dir: ws.root.join(".cache"),
+                max_file_size: 512,
+                max_depth: None,
+                exclude: vec![],
+                no_gitignore: false,
+            },
+        };
+        let registry = ParserRegistry::new();
+        let mut wiki_store: WikiStoreOption = None;
+
+        let resp = crate::mcp::handle_tools_call(
+            json!(1),
+            &mut ws,
+            &config,
+            &registry,
+            &json!({"name": "wiki_update", "arguments": {}}),
+            &mut wiki_store,
+        );
+        let text = resp.result.unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(text.contains("No wiki found"));
+    }
+
+    #[test]
+    fn test_wiki_update_no_changes() {
+        // Use the real repo root so git commands work
+        let root = std::env::current_dir().unwrap();
+        let mut store = make_test_wiki_store();
+        store.root = root.join(".indxr").join("wiki");
+        let mut index = make_test_index();
+        index.root = root.clone();
+        let ws = wrap_workspace(index);
+        // Use HEAD so there are no changes
+        let result = tool_wiki_update(&store, &ws, &json!({"since": "HEAD"}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let content: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(content["action"], "no_changes");
+    }
+
+    #[test]
+    fn test_wiki_update_empty_ref() {
+        let mut store = make_test_wiki_store();
+        store.manifest.generated_at_ref = String::new();
+        let index = make_test_index();
+        let ws = wrap_workspace(index);
+        let result = tool_wiki_update(&store, &ws, &json!({}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("No git ref to diff against"));
+    }
 }

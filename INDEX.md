@@ -1,6 +1,6 @@
 # Codebase Index: indxr
 
-> Generated: 2026-04-05 17:44:37 UTC | Files: 76 | Lines: 42880
+> Generated: 2026-04-05 18:15:05 UTC | Files: 76 | Lines: 43098
 > Languages: JSON (4), Markdown (17), Python (2), Rust (51), Shell (1), TOML (1)
 
 ## Directory Structure
@@ -561,7 +561,7 @@ indxr/
 - `pub(super) fn tool_wiki_status( store: &crate::wiki::store::WikiStore, workspace: &WorkspaceIndex, ) -> Value`
 - `pub(super) fn tool_wiki_contribute( store: &mut crate::wiki::store::WikiStore, args: &Value, ) -> Value`
 - `pub(super) fn tool_wiki_generate(workspace: &WorkspaceIndex, args: &Value) -> Value`
-- `pub(super) fn tool_wiki_update( store: &mut crate::wiki::store::WikiStore, workspace: &WorkspaceIndex, args: &Value, ) -> Value`
+- `pub(super) fn tool_wiki_update( store: &crate::wiki::store::WikiStore, workspace: &WorkspaceIndex, args: &Value, ) -> Value`
 
 **src/mcp/type_flow.rs**
 - `pub(super) struct TypeInfo`
@@ -724,7 +724,7 @@ indxr/
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 14.6 KB | **Lines:** 236
+**Language:** Markdown | **Size:** 15.0 KB | **Lines:** 238
 
 **Declarations:**
 
@@ -753,7 +753,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 89.1 KB | **Lines:** 3239
+**Language:** Markdown | **Size:** 89.2 KB | **Lines:** 3242
 
 **Declarations:**
 
@@ -1656,7 +1656,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 129.2 KB | **Lines:** 3630
+**Language:** Rust | **Size:** 134.0 KB | **Lines:** 3747
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2051,7 +2051,7 @@ indxr/
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 108.3 KB | **Lines:** 3082
+**Language:** Rust | **Size:** 111.8 KB | **Lines:** 3170
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2096,8 +2096,6 @@ indxr/
 `fn extract_excerpt(content: &str, query: &str, max_chars: usize) -> String`
 
 `fn format_wiki_page(page: &crate::wiki::page::WikiPage) -> Value`
-
-`fn build_llm_from_env(args: &Value) -> Result<crate::llm::LlmClient, Value>`
 
 ---
 
@@ -2952,7 +2950,7 @@ indxr/
 
 ## src/wiki/generate.rs
 
-**Language:** Rust | **Size:** 34.2 KB | **Lines:** 999
+**Language:** Rust | **Size:** 34.3 KB | **Lines:** 1006
 
 **Imports:**
 - `std::collections::{HashMap, HashSet}`
@@ -3000,6 +2998,10 @@ indxr/
   `fn find_file(&self, path: &str) -> Option<&'a FileIndex>`
 
 
+`const PLANNING_CONTEXT_CHAR_LIMIT: usize = 100_000`
+
+`pub(crate) fn build_planning_context(workspace: &WorkspaceIndex) -> String`
+
 `fn format_tree(entries: &[TreeEntry], out: &mut String)`
 
 `fn format_declarations(decls: &[Declaration], out: &mut String, depth: usize)`
@@ -3022,10 +3024,11 @@ indxr/
 
 ## src/wiki/mod.rs
 
-**Language:** Rust | **Size:** 9.2 KB | **Lines:** 294
+**Language:** Rust | **Size:** 9.2 KB | **Lines:** 295
 
 **Imports:**
 - `pub(crate) use generate::WikiGenerator`
+- `pub(crate) use generate::build_planning_context`
 - `pub(crate) use generate::extract_wiki_links`
 - `std::collections::{HashMap, HashSet}`
 - `std::path::PathBuf`
@@ -3034,7 +3037,7 @@ indxr/
 - `crate::cli::WikiAction`
 - `crate::diff`
 - `crate::llm::LlmClient`
-- `crate::model::WorkspaceIndex`
+- *... and 1 more imports*
 
 **Declarations:**
 

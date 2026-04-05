@@ -684,10 +684,15 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
             }));
             tools.push(json!({
                 "name": "wiki_generate",
-                "description": "Initialize a new wiki and return the codebase structural context for planning pages. After calling this, plan which pages to create (architecture, module, entity, topic) based on the returned context, then call wiki_contribute for each page. Finish with an index page.",
+                "description": "Initialize a new wiki and return the codebase structural context for planning pages. After calling this, plan which pages to create (architecture, module, entity, topic) based on the returned context, then call wiki_contribute for each page. Finish with an index page. Fails if a wiki already exists unless force=true.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {}
+                    "properties": {
+                        "force": {
+                            "type": "boolean",
+                            "description": "Overwrite existing wiki if one exists (default: false)"
+                        }
+                    }
                 }
             }));
             tools.push(json!({
@@ -2968,11 +2973,20 @@ pub(super) fn tool_wiki_contribute(
 }
 
 #[cfg(feature = "wiki")]
-pub(super) fn tool_wiki_generate(workspace: &WorkspaceIndex, _args: &Value) -> Value {
+pub(super) fn tool_wiki_generate(workspace: &WorkspaceIndex, args: &Value) -> Value {
     use crate::wiki::build_planning_context;
     use crate::wiki::store::WikiStore;
 
     let wiki_dir = workspace.root.join(".indxr").join("wiki");
+
+    let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    // Guard against overwriting an existing wiki
+    if !force && wiki_dir.join("manifest.yaml").exists() {
+        return tool_error(
+            "Wiki already exists. Use `wiki_update` to update it, or pass force=true to regenerate from scratch.",
+        );
+    }
 
     // Initialize an empty wiki store on disk so wiki_contribute can write to it
     let store = WikiStore::new(&wiki_dir);
