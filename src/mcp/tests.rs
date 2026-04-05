@@ -314,7 +314,7 @@ fn test_extended_tools_callable_when_hidden() {
             &registry,
             Transport::Stdio,
             false,
-            &test_wiki_store(),
+            &mut test_wiki_store(),
         );
         let resp = result.unwrap().unwrap();
         let json = serde_json::to_value(&resp).unwrap();
@@ -2235,7 +2235,7 @@ fn test_process_jsonrpc_empty_line() {
         &registry,
         Transport::Stdio,
         false,
-        &test_wiki_store(),
+        &mut test_wiki_store(),
     );
     assert!(result.unwrap().is_none());
 }
@@ -2253,7 +2253,7 @@ fn test_process_jsonrpc_notification_returns_none() {
         &registry,
         Transport::Stdio,
         false,
-        &test_wiki_store(),
+        &mut test_wiki_store(),
     );
     assert!(result.unwrap().is_none());
 }
@@ -2270,7 +2270,7 @@ fn test_process_jsonrpc_parse_error() {
         &registry,
         Transport::Stdio,
         false,
-        &test_wiki_store(),
+        &mut test_wiki_store(),
     );
     let err_resp = result.unwrap_err();
     let json = serde_json::to_value(&err_resp).unwrap();
@@ -2290,7 +2290,7 @@ fn test_process_jsonrpc_initialize() {
         &registry,
         Transport::Stdio,
         false,
-        &test_wiki_store(),
+        &mut test_wiki_store(),
     );
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();
@@ -2311,7 +2311,7 @@ fn test_process_jsonrpc_tools_list() {
         &registry,
         Transport::Stdio,
         false,
-        &test_wiki_store(),
+        &mut test_wiki_store(),
     );
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();
@@ -2335,7 +2335,7 @@ fn test_process_jsonrpc_unknown_method() {
         &registry,
         Transport::Stdio,
         false,
-        &test_wiki_store(),
+        &mut test_wiki_store(),
     );
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();

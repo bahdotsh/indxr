@@ -32,8 +32,8 @@ struct AppState {
     sessions: AsyncRwLock<HashMap<String, SessionInfo>>,
     /// Whether to expose all tools (including extended/specialized ones).
     all_tools: bool,
-    /// Wiki store (loaded at startup if available).
-    wiki_store: super::WikiStoreOption,
+    /// Wiki store (loaded at startup if available, reloaded on regenerate_index).
+    wiki_store: RwLock<super::WikiStoreOption>,
 }
 
 struct SessionInfo {
@@ -92,7 +92,7 @@ pub async fn run_http_server(
         notify_tx: notify_tx.clone(),
         sessions: AsyncRwLock::new(HashMap::new()),
         all_tools,
-        wiki_store,
+        wiki_store: RwLock::new(wiki_store),
     });
 
     // Optionally spawn file watcher
@@ -239,6 +239,10 @@ async fn handle_single(state: Arc<AppState>, headers: &HeaderMap, value: Value) 
             eprintln!("WARNING: index lock was poisoned, recovering");
             e.into_inner()
         });
+        let mut wiki = state2.wiki_store.write().unwrap_or_else(|e| {
+            eprintln!("WARNING: wiki_store lock was poisoned, recovering");
+            e.into_inner()
+        });
         process_jsonrpc_request(
             request,
             &mut index,
@@ -246,7 +250,7 @@ async fn handle_single(state: Arc<AppState>, headers: &HeaderMap, value: Value) 
             &state2.registry,
             Transport::Http,
             state2.all_tools,
-            &state2.wiki_store,
+            &mut wiki,
         )
     })
     .await
@@ -340,6 +344,10 @@ async fn handle_batch(state: Arc<AppState>, headers: &HeaderMap, items: Vec<Valu
             eprintln!("WARNING: index lock was poisoned, recovering");
             e.into_inner()
         });
+        let mut wiki = state2.wiki_store.write().unwrap_or_else(|e| {
+            eprintln!("WARNING: wiki_store lock was poisoned, recovering");
+            e.into_inner()
+        });
         parsed
             .into_iter()
             .map(|item| match item {
@@ -352,7 +360,7 @@ async fn handle_batch(state: Arc<AppState>, headers: &HeaderMap, items: Vec<Valu
                     &state2.registry,
                     Transport::Http,
                     state2.all_tools,
-                    &state2.wiki_store,
+                    &mut wiki,
                 ),
             })
             .collect::<Vec<_>>()
@@ -702,9 +710,9 @@ mod tests {
         let workspace = crate::indexer::build_workspace_index(&config).unwrap();
         let (notify_tx, _) = broadcast::channel::<SseEvent>(16);
         #[cfg(feature = "wiki")]
-        let wiki_store: super::WikiStoreOption = None;
+        let wiki_store: crate::mcp::WikiStoreOption = None;
         #[cfg(not(feature = "wiki"))]
-        let wiki_store: super::WikiStoreOption = ();
+        let wiki_store: crate::mcp::WikiStoreOption = ();
         let state = Arc::new(AppState {
             index: RwLock::new(workspace),
             config,
@@ -712,7 +720,7 @@ mod tests {
             notify_tx,
             sessions: AsyncRwLock::new(HashMap::new()),
             all_tools: true,
-            wiki_store,
+            wiki_store: RwLock::new(wiki_store),
         });
         let app = Router::new()
             .route("/mcp", post(handle_post).delete(handle_delete))

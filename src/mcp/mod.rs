@@ -34,6 +34,29 @@ pub(crate) type WikiStoreOption = Option<crate::wiki::store::WikiStore>;
 #[cfg(not(feature = "wiki"))]
 pub(crate) type WikiStoreOption = ();
 
+/// Reload the wiki store from disk (e.g. after regenerate_index or file changes).
+#[cfg(feature = "wiki")]
+fn reload_wiki_store(root: &std::path::Path) -> WikiStoreOption {
+    let wiki_dir = root.join(".indxr").join("wiki");
+    if wiki_dir.exists() {
+        match crate::wiki::store::WikiStore::load(&wiki_dir) {
+            Ok(store) => {
+                eprintln!("Wiki reloaded: {} pages", store.pages.len());
+                Some(store)
+            }
+            Err(e) => {
+                eprintln!("Warning: failed to reload wiki: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    }
+}
+
+#[cfg(not(feature = "wiki"))]
+fn reload_wiki_store(_root: &std::path::Path) -> WikiStoreOption {}
+
 // ---------------------------------------------------------------------------
 // JSON-RPC 2.0 types
 // ---------------------------------------------------------------------------
@@ -147,7 +170,7 @@ pub(crate) fn handle_tools_call(
     config: &WorkspaceConfig,
     registry: &ParserRegistry,
     params: &Value,
-    wiki_store: &WikiStoreOption,
+    wiki_store: &mut WikiStoreOption,
 ) -> JsonRpcResponse {
     let tool_name = match params.get("name").and_then(|v| v.as_str()) {
         Some(n) => n,
@@ -160,6 +183,7 @@ pub(crate) fn handle_tools_call(
 
     if tool_name == "regenerate_index" {
         let result = tool_regenerate_index(workspace, config);
+        *wiki_store = reload_wiki_store(&workspace.root);
         return ok_response(id, result);
     }
 
@@ -173,7 +197,7 @@ pub(crate) fn handle_tools_call(
     {
         use self::helpers::tool_error;
         if matches!(tool_name, "wiki_search" | "wiki_read" | "wiki_status") {
-            return match wiki_store {
+            return match wiki_store.as_ref() {
                 Some(store) => {
                     let result = match tool_name {
                         "wiki_search" => tool_wiki_search(store, &arguments),
@@ -190,7 +214,7 @@ pub(crate) fn handle_tools_call(
             };
         }
     }
-    let _ = wiki_store; // suppress unused warning when wiki feature is off
+    let _ = &wiki_store; // suppress unused warning when wiki feature is off
 
     let result = handle_tool_call(workspace, tool_name, &arguments);
     ok_response(id, result)
@@ -220,7 +244,7 @@ pub(crate) fn process_jsonrpc_request(
     registry: &ParserRegistry,
     transport: Transport,
     all_tools: bool,
-    wiki_store: &WikiStoreOption,
+    wiki_store: &mut WikiStoreOption,
 ) -> Option<JsonRpcResponse> {
     let id = request.id?;
     let params = request.params.unwrap_or(json!({}));
@@ -248,7 +272,7 @@ pub(crate) fn process_jsonrpc_message(
     registry: &ParserRegistry,
     transport: Transport,
     all_tools: bool,
-    wiki_store: &WikiStoreOption,
+    wiki_store: &mut WikiStoreOption,
 ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse> {
     let line = line.trim();
     if line.is_empty() {
@@ -282,7 +306,7 @@ fn handle_stdin_line(
     registry: &ParserRegistry,
     writer: &mut impl Write,
     all_tools: bool,
-    wiki_store: &WikiStoreOption,
+    wiki_store: &mut WikiStoreOption,
 ) -> anyhow::Result<()> {
     eprintln!("< {}", line);
 
@@ -334,7 +358,7 @@ pub fn run_mcp_server(
 
     // Load wiki store if available
     #[cfg(feature = "wiki")]
-    let wiki_store: WikiStoreOption = {
+    let mut wiki_store: WikiStoreOption = {
         let wiki_dir = workspace.root.join(".indxr").join("wiki");
         if wiki_dir.exists() {
             match crate::wiki::store::WikiStore::load(&wiki_dir) {
@@ -352,7 +376,7 @@ pub fn run_mcp_server(
         }
     };
     #[cfg(not(feature = "wiki"))]
-    let wiki_store: WikiStoreOption = ();
+    let mut wiki_store: WikiStoreOption = ();
 
     let (tx, rx) = mpsc::channel::<ServerEvent>();
 
@@ -428,6 +452,7 @@ pub fn run_mcp_server(
                     Ok(new_ws) => {
                         eprintln!("Auto-reindex complete ({} files)", new_ws.stats.total_files);
                         workspace = new_ws;
+                        wiki_store = reload_wiki_store(&workspace.root);
                     }
                     Err(e) => {
                         eprintln!("Auto-reindex failed: {}", e);
@@ -449,7 +474,7 @@ pub fn run_mcp_server(
                                 &registry,
                                 &mut writer,
                                 all_tools,
-                                &wiki_store,
+                                &mut wiki_store,
                             )?;
                         }
                         ServerEvent::FileChanged => unreachable!(),
@@ -464,7 +489,7 @@ pub fn run_mcp_server(
                     &registry,
                     &mut writer,
                     all_tools,
-                    &wiki_store,
+                    &mut wiki_store,
                 )?;
             }
         }

@@ -2652,6 +2652,16 @@ fn extract_excerpt(content: &str, query: &str, max_chars: usize) -> String {
             .unwrap_or(s.len())
     };
 
+    // Snap a byte offset backward to the nearest word boundary (whitespace).
+    let snap_word_start = |s: &str, off: usize| -> usize {
+        let off = snap(s, off);
+        // Search backward from off for whitespace, then return the position after it.
+        s[..off]
+            .rfind(|c: char| c.is_whitespace())
+            .map(|i| i + s[i..].chars().next().map_or(1, |c| c.len_utf8()))
+            .unwrap_or(0)
+    };
+
     if let Some(pos) = content_lower.find(query) {
         let orig_start = to_orig(pos);
         let orig_end = to_orig(pos + query.len());
@@ -2659,7 +2669,7 @@ fn extract_excerpt(content: &str, query: &str, max_chars: usize) -> String {
         let start = content[..orig_start]
             .rfind('\n')
             .map(|i| i + 1)
-            .unwrap_or_else(|| snap(content, orig_start.saturating_sub(max_chars / 2)));
+            .unwrap_or_else(|| snap_word_start(content, orig_start.saturating_sub(max_chars / 2)));
 
         let tentative = snap(content, (orig_end + max_chars / 2).min(content.len()));
         let end = content[..tentative]
