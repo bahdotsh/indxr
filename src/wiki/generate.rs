@@ -12,7 +12,7 @@ use crate::model::declarations::{Declaration, Visibility};
 use crate::model::{FileIndex, TreeEntry, WorkspaceIndex};
 use crate::parser::ParserRegistry;
 
-use super::page::{self, Frontmatter, PageType, WikiPage};
+use super::page::{self, Contradiction, Frontmatter, PageType, WikiPage};
 use super::prompts;
 use super::store::WikiStore;
 
@@ -29,6 +29,22 @@ struct PagePlan {
 pub struct UpdateResult {
     pub pages_updated: usize,
     pub pages_removed: usize,
+    pub pages_created: usize,
+}
+
+/// Result of incremental planning for uncovered files.
+#[derive(Debug, Deserialize)]
+struct IncrementalPlan {
+    #[serde(default)]
+    assignments: Vec<FileAssignment>,
+    #[serde(default)]
+    new_pages: Vec<PagePlan>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileAssignment {
+    file: String,
+    page_id: String,
 }
 
 pub struct WikiGenerator<'a> {
@@ -157,6 +173,7 @@ impl<'a> WikiGenerator<'a> {
             return Ok(UpdateResult {
                 pages_updated: 0,
                 pages_removed: 0,
+                pages_created: 0,
             });
         }
         eprintln!(
@@ -213,6 +230,7 @@ impl<'a> WikiGenerator<'a> {
             return Ok(UpdateResult {
                 pages_updated: 0,
                 pages_removed: 0,
+                pages_created: 0,
             });
         }
 
@@ -262,7 +280,84 @@ impl<'a> WikiGenerator<'a> {
             pages_updated += 1;
         }
 
-        // 7. Remove pages whose source files have all been deleted
+        // 7. Detect uncovered changed files and plan new pages
+        let mut pages_created = 0;
+        {
+            let covered_files: HashSet<&str> = store
+                .pages
+                .iter()
+                .flat_map(|p| p.frontmatter.source_files.iter().map(|s| s.as_str()))
+                .collect();
+            let uncovered: Vec<String> = changed_set
+                .iter()
+                .filter(|f| !covered_files.contains(f.as_str()))
+                .cloned()
+                .collect();
+
+            if !uncovered.is_empty() {
+                eprintln!(
+                    "Found {} uncovered changed files, planning new pages...",
+                    uncovered.len()
+                );
+                match self.plan_incremental(&uncovered, &store.pages).await {
+                    Ok(plan) => {
+                        // Apply assignments: add files to existing pages
+                        for assignment in &plan.assignments {
+                            if let Some(page) = store
+                                .pages
+                                .iter_mut()
+                                .find(|p| p.frontmatter.id == assignment.page_id)
+                            {
+                                if !page.frontmatter.source_files.contains(&assignment.file) {
+                                    page.frontmatter.source_files.push(assignment.file.clone());
+                                    // Re-generate this page if not already updated
+                                    if !affected_ids.contains(&assignment.page_id) {
+                                        let existing = page.clone();
+                                        eprintln!(
+                                            "Updating page (new source file): {}...",
+                                            existing.frontmatter.title
+                                        );
+                                        let updated = self
+                                            .update_page(
+                                                &existing,
+                                                &diff_markdown,
+                                                &all_pages_str,
+                                                &git_ref,
+                                                &timestamp,
+                                            )
+                                            .await?;
+                                        let pid = existing.frontmatter.id.clone();
+                                        store.upsert_page(updated);
+                                        store.save_incremental(&pid)?;
+                                        pages_updated += 1;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Generate new pages (capped at 3 by the prompt)
+                        for new_plan in plan.new_pages.iter().take(3) {
+                            eprintln!("Creating new page: {} ({})...", new_plan.title, new_plan.id);
+                            let new_page = self
+                                .generate_page(new_plan, &all_pages_str, &git_ref, &timestamp)
+                                .await?;
+                            let new_id = new_plan.id.clone();
+                            store.upsert_page(new_page);
+                            store.save_incremental(&new_id)?;
+                            pages_created += 1;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: incremental planning failed, skipping new page creation: {}",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        // 8. Remove pages whose source files have all been deleted
         let deleted_set: HashSet<String> = structural_diff
             .files_removed
             .iter()
@@ -293,8 +388,8 @@ impl<'a> WikiGenerator<'a> {
             }
         });
 
-        // 8. Regenerate index page if anything changed
-        if pages_updated > 0 || pages_removed > 0 {
+        // 9. Regenerate index page if anything changed
+        if pages_updated > 0 || pages_removed > 0 || pages_created > 0 {
             eprintln!("Regenerating cross-reference index...");
             let non_index: Vec<WikiPage> = store
                 .pages
@@ -308,13 +403,14 @@ impl<'a> WikiGenerator<'a> {
             store.upsert_page(index_page);
         }
 
-        // 9. Update manifest ref
+        // 10. Update manifest ref
         store.manifest.generated_at_ref = git_ref;
         store.manifest.generated_at = timestamp;
 
         Ok(UpdateResult {
             pages_updated,
             pages_removed,
+            pages_created,
         })
     }
 
@@ -410,7 +506,7 @@ impl<'a> WikiGenerator<'a> {
             }
         }
 
-        let content = self
+        let raw_content = self
             .llm
             .complete(
                 prompts::update_system_prompt(),
@@ -422,6 +518,7 @@ impl<'a> WikiGenerator<'a> {
             .await
             .with_context(|| format!("Failed to update wiki page: {}", existing.frontmatter.id))?;
 
+        let (content, contradictions) = extract_contradictions(&raw_content, timestamp);
         let links_to = extract_wiki_links(&content);
 
         Ok(WikiPage {
@@ -434,6 +531,7 @@ impl<'a> WikiGenerator<'a> {
                 generated_at: timestamp.to_string(),
                 links_to,
                 covers: self.extract_covers(&existing.frontmatter.source_files),
+                contradictions,
             },
             content,
         })
@@ -498,6 +596,79 @@ impl<'a> WikiGenerator<'a> {
         Ok(plans)
     }
 
+    /// Plan what to do with source files not covered by any existing wiki page.
+    /// Returns assignments to existing pages and plans for new pages.
+    async fn plan_incremental(
+        &self,
+        uncovered_files: &[String],
+        existing_pages: &[WikiPage],
+    ) -> Result<IncrementalPlan> {
+        let mut ctx = String::from("# Uncovered Source Files\n\n");
+
+        for file_path in uncovered_files {
+            ctx.push_str(&format!("## {}\n", file_path));
+            // Add structural data if available
+            if let Some(entries) = self.file_index.get(file_path.as_str()) {
+                for (fi, _member) in entries {
+                    ctx.push_str(&format!(
+                        "Language: {:?}, Lines: {}, Declarations: {}\n",
+                        fi.language,
+                        fi.lines,
+                        fi.declarations.len()
+                    ));
+                    for decl in &fi.declarations {
+                        ctx.push_str(&format!("  - {} {:?}", decl.name, decl.kind));
+                        if !decl.signature.is_empty() {
+                            ctx.push_str(&format!(": {}", decl.signature));
+                        }
+                        ctx.push('\n');
+                    }
+                }
+            }
+            ctx.push('\n');
+        }
+
+        ctx.push_str("# Existing Wiki Pages\n\n");
+        for page in existing_pages {
+            if page.frontmatter.page_type == PageType::Index {
+                continue;
+            }
+            ctx.push_str(&format!(
+                "- {} (type: {}, id: {})\n  Source files: {}\n",
+                page.frontmatter.title,
+                page.frontmatter.page_type.as_str(),
+                page.frontmatter.id,
+                page.frontmatter.source_files.join(", "),
+            ));
+        }
+
+        let response = self
+            .llm
+            .complete(
+                prompts::incremental_plan_system_prompt(),
+                &[Message {
+                    role: Role::User,
+                    content: ctx,
+                }],
+            )
+            .await
+            .context("Failed to get incremental plan from LLM")?;
+
+        let json_str = extract_json(&response);
+        let mut plan: IncrementalPlan = serde_json::from_str(json_str).with_context(|| {
+            let snippet: String = json_str.chars().take(200).collect();
+            format!("Failed to parse incremental plan JSON. Response starts with: {snippet}")
+        })?;
+
+        // Sanitize new page IDs
+        for p in &mut plan.new_pages {
+            p.id = page::sanitize_id(&p.id);
+        }
+        plan.new_pages.retain(|p| !p.id.is_empty());
+
+        Ok(plan)
+    }
+
     /// Generate a single wiki page.
     async fn generate_page(
         &self,
@@ -535,6 +706,7 @@ impl<'a> WikiGenerator<'a> {
                 generated_at: timestamp.to_string(),
                 links_to,
                 covers: self.extract_covers(&plan.source_files),
+                contradictions: vec![],
             },
             content,
         })
@@ -586,6 +758,7 @@ impl<'a> WikiGenerator<'a> {
                 generated_at: timestamp.to_string(),
                 links_to,
                 covers: Vec::new(),
+                contradictions: vec![],
             },
             content,
         })
@@ -892,7 +1065,7 @@ fn extract_json(text: &str) -> &str {
 }
 
 /// Find the largest byte index ≤ `max` that falls on a char boundary.
-fn floor_char_boundary(s: &str, max: usize) -> usize {
+pub(crate) fn floor_char_boundary(s: &str, max: usize) -> usize {
     if max >= s.len() {
         return s.len();
     }
@@ -901,6 +1074,57 @@ fn floor_char_boundary(s: &str, max: usize) -> usize {
         i -= 1;
     }
     i
+}
+
+/// Extract structured contradictions from an LLM update response.
+///
+/// Looks for a `<!-- CONTRADICTIONS [...] -->` HTML comment block at the end of
+/// the content. Returns the cleaned content (block removed) and parsed
+/// contradictions. If the block is missing or malformed, returns the content
+/// as-is with an empty Vec.
+fn extract_contradictions(content: &str, timestamp: &str) -> (String, Vec<Contradiction>) {
+    let marker_start = "<!-- CONTRADICTIONS";
+    let marker_end = "-->";
+
+    let Some(start_pos) = content.find(marker_start) else {
+        return (content.to_string(), vec![]);
+    };
+
+    let after_marker = &content[start_pos + marker_start.len()..];
+    let Some(end_pos) = after_marker.find(marker_end) else {
+        // Malformed block (no closing `-->`): strip the broken marker to avoid
+        // leaking raw HTML into wiki pages.
+        return (content[..start_pos].trim_end().to_string(), vec![]);
+    };
+
+    let json_str = after_marker[..end_pos].trim();
+    let cleaned = content[..start_pos].trim_end().to_string();
+
+    // Parse the JSON array of contradiction objects
+    #[derive(Deserialize)]
+    struct RawContradiction {
+        description: String,
+        source: String,
+    }
+
+    match serde_json::from_str::<Vec<RawContradiction>>(json_str) {
+        Ok(raw) => {
+            let contradictions = raw
+                .into_iter()
+                .map(|r| Contradiction {
+                    description: r.description,
+                    source: r.source,
+                    detected_at: timestamp.to_string(),
+                    resolved_at: None,
+                })
+                .collect();
+            (cleaned, contradictions)
+        }
+        Err(e) => {
+            eprintln!("Warning: failed to parse contradictions block: {}", e);
+            (cleaned, vec![])
+        }
+    }
 }
 
 /// Extract [[page-id]] wiki links from content, sanitizing each link.
@@ -1002,5 +1226,63 @@ mod tests {
         let content = "See [[architecture]] for details.\n\n```\nExample: [[not-a-link]]\n```\n\nAlso [[mod-parser]].";
         let links = extract_wiki_links(content);
         assert_eq!(links, vec!["architecture", "mod-parser"]);
+    }
+
+    #[test]
+    fn test_extract_contradictions_with_block() {
+        let content = r#"# Updated Module
+
+Some updated content here.
+
+<!-- CONTRADICTIONS
+[{"description": "Wiki stated sync channels but code now uses async", "source": "src/mcp/mod.rs:383"}]
+-->"#;
+        let (cleaned, contradictions) = extract_contradictions(content, "2026-04-06T10:00:00Z");
+        assert_eq!(cleaned, "# Updated Module\n\nSome updated content here.");
+        assert_eq!(contradictions.len(), 1);
+        assert_eq!(contradictions[0].source, "src/mcp/mod.rs:383");
+        assert_eq!(contradictions[0].detected_at, "2026-04-06T10:00:00Z");
+        assert!(contradictions[0].resolved_at.is_none());
+    }
+
+    #[test]
+    fn test_extract_contradictions_multiple() {
+        let content = r#"# Module
+
+Content.
+
+<!-- CONTRADICTIONS
+[{"description": "A changed", "source": "a.rs:1"}, {"description": "B changed", "source": "b.rs:2"}]
+-->"#;
+        let (_, contradictions) = extract_contradictions(content, "2026-04-06T10:00:00Z");
+        assert_eq!(contradictions.len(), 2);
+        assert_eq!(contradictions[0].source, "a.rs:1");
+        assert_eq!(contradictions[1].source, "b.rs:2");
+    }
+
+    #[test]
+    fn test_extract_contradictions_no_block() {
+        let content = "# Module\n\nJust normal content.";
+        let (cleaned, contradictions) = extract_contradictions(content, "2026-04-06T10:00:00Z");
+        assert_eq!(cleaned, content);
+        assert!(contradictions.is_empty());
+    }
+
+    #[test]
+    fn test_extract_contradictions_malformed_json() {
+        let content = "# Module\n\n<!-- CONTRADICTIONS\nnot valid json\n-->";
+        let (cleaned, contradictions) = extract_contradictions(content, "2026-04-06T10:00:00Z");
+        assert_eq!(cleaned, "# Module");
+        assert!(contradictions.is_empty());
+    }
+
+    #[test]
+    fn test_extract_contradictions_unclosed_marker() {
+        // LLM wrote the marker start but no closing `-->` — should strip the
+        // broken marker from the content rather than leaking raw HTML.
+        let content = "# Module\n\nSome content.\n\n<!-- CONTRADICTIONS\n[{\"description\": \"x\", \"source\": \"y\"}]";
+        let (cleaned, contradictions) = extract_contradictions(content, "2026-04-06T10:00:00Z");
+        assert_eq!(cleaned, "# Module\n\nSome content.");
+        assert!(contradictions.is_empty());
     }
 }

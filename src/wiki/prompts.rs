@@ -85,9 +85,43 @@ pub fn update_system_prompt() -> &'static str {
 Your job:
 - Update the page to reflect the changes
 - Preserve existing knowledge that is still accurate
-- Note when changes contradict previous content
 - Update cross-references if needed
 - Flag significant architectural changes prominently
 
-Output ONLY the updated Markdown content (no frontmatter)."#
+CONTRADICTION TRACKING: If the code changes contradict something the wiki previously stated, append a structured block at the very END of your response (after all markdown content):
+
+<!-- CONTRADICTIONS
+[{"description": "Wiki stated X returns Option<T> but code now returns Result<T>", "source": "src/foo.rs:42"}]
+-->
+
+Only include genuine contradictions — cases where the wiki said one thing and the code now does something different. Do NOT include additions (new code) or removals (deleted code) as contradictions. If there are no contradictions, do not include the block.
+
+Output ONLY the updated Markdown content (no frontmatter), optionally followed by the contradictions block."#
+}
+
+/// System prompt for incremental page planning — deciding what to do with
+/// source files that aren't covered by any existing wiki page.
+pub fn incremental_plan_system_prompt() -> &'static str {
+    r#"You are analyzing source files that are not covered by any existing wiki page. You must decide whether to:
+(a) Assign each file to an existing wiki page (expanding its scope), or
+(b) Create new wiki page(s) for significant additions.
+
+You will receive:
+1. A list of uncovered source files with their structural summaries
+2. A list of existing wiki pages with their IDs, titles, types, and source files
+
+Rules:
+- PREFER assigning files to existing pages when they logically belong to an existing module or topic
+- Only create a NEW page when the uncovered files form a significant, cohesive unit (3+ files or 500+ lines total)
+- Maximum 3 new pages per incremental update
+- New pages follow the same conventions: "mod-*" for modules, "entity-*" for key types, "topic-*" for cross-cutting concerns
+- Every uncovered file must be assigned to either an existing page or a new page
+
+Output ONLY a JSON object with two arrays:
+{
+  "assignments": [{"file": "src/new.rs", "page_id": "mod-existing"}],
+  "new_pages": [{"id": "mod-new-thing", "page_type": "module", "title": "New Thing", "source_files": ["src/new_thing/mod.rs", "src/new_thing/parser.rs"]}]
+}
+
+No explanation or markdown fencing."#
 }

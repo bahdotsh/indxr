@@ -57,6 +57,7 @@ pub enum Provider {
 }
 
 /// Provider-agnostic LLM client.
+#[derive(Clone)]
 pub struct LlmClient {
     config: LlmConfig,
     http: reqwest::Client,

@@ -179,6 +179,31 @@ pub enum Command {
         /// to reduce per-request token overhead.
         #[arg(long)]
         all_tools: bool,
+
+        /// Automatically update the wiki when file changes are detected.
+        /// Requires --watch and the wiki feature. An LLM provider must be
+        /// configured via ANTHROPIC_API_KEY, OPENAI_API_KEY, or --exec.
+        #[cfg(feature = "wiki")]
+        #[arg(long, requires = "watch")]
+        wiki_auto_update: bool,
+
+        /// Debounce timeout for wiki auto-updates in milliseconds (default: 30000).
+        /// Wiki updates are expensive LLM calls, so this is much longer than
+        /// the structural reindex debounce.
+        #[cfg(feature = "wiki")]
+        #[arg(long, default_value = "30000")]
+        wiki_debounce_ms: u64,
+
+        /// LLM model override for wiki auto-updates.
+        #[cfg(feature = "wiki")]
+        #[arg(long, value_name = "MODEL")]
+        wiki_model: Option<String>,
+
+        /// External command for LLM completions (wiki auto-updates).
+        /// Receives JSON on stdin, returns completion text on stdout.
+        #[cfg(feature = "wiki")]
+        #[arg(long, value_name = "CMD")]
+        wiki_exec: Option<String>,
     },
 
     /// Watch for file changes and keep INDEX.md up to date

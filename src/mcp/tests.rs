@@ -224,7 +224,11 @@ fn test_tool_definitions_all_tools() {
     assert!(names.contains(&"get_health"));
     assert!(names.contains(&"get_type_flow"));
     assert!(names.contains(&"list_workspace_members"));
-    assert_eq!(names.len(), 26); // 3 compound + 23 granular (no wiki)
+    // 3 compound + 23 granular; +1 for wiki_generate when wiki feature is compiled
+    #[cfg(feature = "wiki")]
+    assert_eq!(names.len(), 27);
+    #[cfg(not(feature = "wiki"))]
+    assert_eq!(names.len(), 26);
 }
 
 #[test]
@@ -250,7 +254,11 @@ fn test_tool_definitions_default_excludes_extended() {
     assert!(!names.contains(&"wiki_search"));
     assert!(!names.contains(&"wiki_read"));
     assert!(!names.contains(&"wiki_status"));
-    assert_eq!(names.len(), 3); // compound tools only
+    // compound tools only; +1 for wiki_generate when wiki feature is compiled
+    #[cfg(feature = "wiki")]
+    assert_eq!(names.len(), 4);
+    #[cfg(not(feature = "wiki"))]
+    assert_eq!(names.len(), 3);
 }
 
 #[test]
@@ -3271,6 +3279,7 @@ mod wiki_tests {
                             "fn:main".to_string(),
                             "fn:build_workspace_index".to_string(),
                         ],
+                        contradictions: vec![],
                     },
                     content: "# Architecture\n\nThis codebase uses tree-sitter for parsing and rayon for parallelism.\n\n## Key Components\n- Indexer\n- MCP Server\n- Parser".to_string(),
                 },
@@ -3290,6 +3299,7 @@ mod wiki_tests {
                             "fn:run_mcp_server".to_string(),
                             "fn:handle_tool_call".to_string(),
                         ],
+                        contradictions: vec![],
                     },
                     content: "# MCP Server\n\nHandles JSON-RPC protocol for tool dispatch.\n\n## Tools\nThe server exposes structural analysis tools via MCP protocol.".to_string(),
                 },
@@ -3303,6 +3313,7 @@ mod wiki_tests {
                         generated_at: "2026-04-05T10:00:00Z".to_string(),
                         links_to: vec![],
                         covers: vec!["struct:ParserRegistry".to_string()],
+                        contradictions: vec![],
                     },
                     content: "# Parser\n\nTree-sitter and regex-based parsing for 27 languages.".to_string(),
                 },
@@ -3442,7 +3453,8 @@ mod wiki_tests {
         assert!(names.contains(&"wiki_search"));
         assert!(names.contains(&"wiki_read"));
         assert!(names.contains(&"wiki_status"));
-        assert_eq!(names.len(), 9); // 3 compound + 6 wiki
+        assert!(names.contains(&"wiki_suggest_contribution"));
+        assert_eq!(names.len(), 10); // 3 compound + 7 wiki
     }
 
     #[test]
@@ -3480,6 +3492,7 @@ mod wiki_tests {
                     generated_at: "2026-04-05T10:00:00Z".to_string(),
                     links_to: vec![],
                     covers: vec![],
+                    contradictions: vec![],
                 },
                 content: "# Ünïcödé Tëst\n\nThis module uses résumé and naïve approaches with Ñoño patterns.".to_string(),
             }],
@@ -3767,5 +3780,132 @@ mod wiki_tests {
         let result = tool_wiki_update(&store, &ws, &registry, &json!({}));
         let text = result["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("No git ref to diff against"));
+    }
+
+    #[test]
+    fn test_wiki_suggest_contribution_update_source_page() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_suggest_contribution(
+            &store,
+            &json!({
+                "synthesis": "The MCP server handles JSON-RPC tool dispatch with structural analysis.",
+                "source_pages": ["mod-mcp"]
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["suggestion"], "update");
+        assert_eq!(content["target_page"], "mod-mcp");
+        // Source page boost (50) + word overlaps should give high confidence
+        assert!(content["confidence"].as_u64().unwrap() >= 50);
+    }
+
+    #[test]
+    fn test_wiki_suggest_contribution_create_no_match() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_suggest_contribution(
+            &store,
+            &json!({
+                "synthesis": "Kubernetes deployment orchestration with Helm charts."
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["suggestion"], "create");
+        assert!(
+            content["suggested_id"]
+                .as_str()
+                .unwrap()
+                .starts_with("topic-")
+        );
+    }
+
+    #[test]
+    fn test_wiki_suggest_contribution_empty_store() {
+        let store = WikiStore {
+            root: PathBuf::from("/tmp/test-wiki"),
+            manifest: WikiManifest {
+                version: 1,
+                generated_at_ref: "abc1234".to_string(),
+                generated_at: "2026-04-05T10:00:00Z".to_string(),
+                pages: vec![],
+            },
+            pages: vec![],
+        };
+        let result = tool_wiki_suggest_contribution(
+            &store,
+            &json!({
+                "synthesis": "Some analysis about error handling patterns."
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["suggestion"], "create");
+        assert_eq!(content["confidence"].as_u64().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_wiki_suggest_contribution_missing_synthesis() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_suggest_contribution(&store, &json!({}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Missing required parameter: synthesis"));
+    }
+
+    #[test]
+    fn test_wiki_suggest_contribution_short_words_only() {
+        let store = make_test_wiki_store();
+        let result =
+            tool_wiki_suggest_contribution(&store, &json!({ "synthesis": "a b c do it go on" }));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["suggestion"], "create");
+        // All words < 4 chars, so suggested_id should be the fallback
+        assert_eq!(content["suggested_id"], "topic-new");
+    }
+
+    #[test]
+    fn test_wiki_contribute_resolve_contradictions_roundtrip() {
+        let mut store = make_test_wiki_store();
+
+        // Step 1: Add a contradiction to a page
+        tool_wiki_contribute(
+            &mut store,
+            &json!({
+                "page": "mod-mcp",
+                "content": "# MCP Server\n\nUpdated content.",
+                "contradictions": [
+                    { "description": "Wiki stated sync but code is async", "source": "src/mcp/mod.rs:383" }
+                ]
+            }),
+        );
+
+        // Verify the contradiction exists and is unresolved
+        let page = store
+            .pages
+            .iter()
+            .find(|p| p.frontmatter.id == "mod-mcp")
+            .unwrap();
+        assert_eq!(page.frontmatter.contradictions.len(), 1);
+        assert!(page.frontmatter.contradictions[0].resolved_at.is_none());
+
+        // Step 2: Resolve contradictions
+        tool_wiki_contribute(
+            &mut store,
+            &json!({
+                "page": "mod-mcp",
+                "content": "# MCP Server\n\nFully updated content with async.",
+                "resolve_contradictions": true
+            }),
+        );
+
+        // Verify the contradiction is now resolved
+        let page = store
+            .pages
+            .iter()
+            .find(|p| p.frontmatter.id == "mod-mcp")
+            .unwrap();
+        assert_eq!(page.frontmatter.contradictions.len(), 1);
+        assert!(page.frontmatter.contradictions[0].resolved_at.is_some());
     }
 }

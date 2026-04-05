@@ -3,9 +3,11 @@ pub mod page;
 mod prompts;
 pub mod store;
 
+pub(crate) use generate::UpdateResult;
 pub(crate) use generate::WikiGenerator;
 pub(crate) use generate::build_planning_context;
 pub(crate) use generate::extract_wiki_links;
+pub(crate) use generate::floor_char_boundary;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -197,8 +199,9 @@ pub async fn run_wiki_command(
             store.save()?;
 
             eprintln!(
-                "\nWiki updated: {} pages regenerated, {} removed ({} total pages at {})",
+                "\nWiki updated: {} pages regenerated, {} created, {} removed ({} total pages at {})",
                 result.pages_updated,
+                result.pages_created,
                 result.pages_removed,
                 store.pages.len(),
                 wiki_dir.display()
@@ -257,7 +260,7 @@ pub async fn run_wiki_command(
     }
 }
 
-fn build_llm_client(
+pub fn build_llm_client(
     exec_cmd: Option<&str>,
     model_override: Option<&str>,
     max_tokens: usize,

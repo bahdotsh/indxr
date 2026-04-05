@@ -1,6 +1,6 @@
 # Codebase Index: indxr
 
-> Generated: 2026-04-05 18:15:05 UTC | Files: 76 | Lines: 43098
+> Generated: 2026-04-05 19:15:47 UTC | Files: 76 | Lines: 44145
 > Languages: JSON (4), Markdown (17), Python (2), Rust (51), Shell (1), TOML (1)
 
 ## Directory Structure
@@ -528,7 +528,8 @@ indxr/
 
 **src/mcp/mod.rs**
 - `pub mod http`
-- `pub fn run_mcp_server( mut workspace: WorkspaceIndex, config: WorkspaceConfig, watch: bool, debounce_ms: u64, all_tools: bool, ) -> anyhow::Result<()>`
+- `pub struct McpServerConfig`
+- `pub fn run_mcp_server( mut workspace: WorkspaceIndex, config: WorkspaceConfig, mcp_config: McpServerConfig, ) -> anyhow::Result<()>`
 
 **src/mcp/tools.rs**
 - `pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_available: bool) -> Value`
@@ -559,9 +560,10 @@ indxr/
 - `pub(super) fn tool_wiki_search(store: &crate::wiki::store::WikiStore, args: &Value) -> Value`
 - `pub(super) fn tool_wiki_read(store: &crate::wiki::store::WikiStore, args: &Value) -> Value`
 - `pub(super) fn tool_wiki_status( store: &crate::wiki::store::WikiStore, workspace: &WorkspaceIndex, ) -> Value`
+- `pub(super) fn tool_wiki_suggest_contribution( store: &crate::wiki::store::WikiStore, args: &Value, ) -> Value`
 - `pub(super) fn tool_wiki_contribute( store: &mut crate::wiki::store::WikiStore, args: &Value, ) -> Value`
 - `pub(super) fn tool_wiki_generate(workspace: &WorkspaceIndex, args: &Value) -> Value`
-- `pub(super) fn tool_wiki_update( store: &crate::wiki::store::WikiStore, workspace: &WorkspaceIndex, args: &Value, ) -> Value`
+- `pub(super) fn tool_wiki_update( store: &crate::wiki::store::WikiStore, workspace: &WorkspaceIndex, registry: &crate::parser::ParserRegistry, args: &Value, ) -> Value`
 
 **src/mcp/type_flow.rs**
 - `pub(super) struct TypeInfo`
@@ -684,10 +686,12 @@ indxr/
 - `pub mod page`
 - `pub mod store`
 - `pub async fn run_wiki_command( action: &WikiAction, workspace: WorkspaceIndex, wiki_dir_override: &Option<PathBuf>, model_override: Option<&str>, exec_cmd: Option<&str>, ) -> Result<()>`
+- `pub fn build_llm_client( exec_cmd: Option<&str>, model_override: Option<&str>, max_tokens: usize, ) -> Result<LlmClient>`
 
 **src/wiki/page.rs**
 - `pub struct WikiPage`
 - `pub struct Frontmatter`
+- `pub struct Contradiction`
 - `pub enum PageType`
 - `pub fn sanitize_id(id: &str) -> String`
 
@@ -696,6 +700,7 @@ indxr/
 - `pub fn page_system_prompt(page_type: &str) -> String`
 - `pub fn index_system_prompt() -> &'static str`
 - `pub fn update_system_prompt() -> &'static str`
+- `pub fn incremental_plan_system_prompt() -> &'static str`
 
 **src/wiki/store.rs**
 - `pub struct ManifestEntry`
@@ -753,7 +758,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 89.2 KB | **Lines:** 3242
+**Language:** Markdown | **Size:** 89.9 KB | **Lines:** 3255
 
 **Declarations:**
 
@@ -1019,7 +1024,7 @@ indxr/
 
 ## src/cli.rs
 
-**Language:** Rust | **Size:** 11.8 KB | **Lines:** 424
+**Language:** Rust | **Size:** 12.9 KB | **Lines:** 449
 
 **Imports:**
 - `std::path::PathBuf`
@@ -1362,7 +1367,7 @@ indxr/
 
 ## src/llm/mod.rs
 
-**Language:** Rust | **Size:** 6.9 KB | **Lines:** 220
+**Language:** Rust | **Size:** 6.9 KB | **Lines:** 221
 
 **Imports:**
 - `std::time::Duration`
@@ -1433,7 +1438,7 @@ indxr/
 
 ## src/main.rs
 
-**Language:** Rust | **Size:** 14.5 KB | **Lines:** 514
+**Language:** Rust | **Size:** 15.2 KB | **Lines:** 536
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1584,7 +1589,7 @@ indxr/
 
 ## src/mcp/mod.rs
 
-**Language:** Rust | **Size:** 20.6 KB | **Lines:** 638
+**Language:** Rust | **Size:** 27.2 KB | **Lines:** 791
 
 **Imports:**
 - `std::io::{self, BufRead, Write}`
@@ -1642,7 +1647,7 @@ indxr/
 `pub(crate) fn handle_tools_call( id: Value, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, params: &Value, wiki_store: &mut WikiStoreOption, ) -> JsonRpcResponse`
 
 `enum ServerEvent`
-> Variants: `StdinLine`, `StdinClosed`, `FileChanged`
+> Variants: `StdinLine`, `StdinClosed`, `FileChanged`, `WikiUpdateComplete`
 
 `pub(crate) fn process_jsonrpc_request( request: JsonRpcRequest, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, all_tools: bool, wiki_store: &mut WikiStoreOption, ) -> Option<JsonRpcResponse>`
 
@@ -1656,7 +1661,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 134.0 KB | **Lines:** 3747
+**Language:** Rust | **Size:** 139.6 KB | **Lines:** 3903
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2051,7 +2056,7 @@ indxr/
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 111.8 KB | **Lines:** 3170
+**Language:** Rust | **Size:** 122.9 KB | **Lines:** 3453
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2950,7 +2955,7 @@ indxr/
 
 ## src/wiki/generate.rs
 
-**Language:** Rust | **Size:** 34.3 KB | **Lines:** 1006
+**Language:** Rust | **Size:** 45.5 KB | **Lines:** 1288
 
 **Imports:**
 - `std::collections::{HashMap, HashSet}`
@@ -2970,6 +2975,12 @@ indxr/
 `struct PagePlan`
 > Fields: `id: String`, `page_type: PageType`, `title: String`, `source_files: Vec<String>`
 
+`struct IncrementalPlan`
+> Fields: `assignments: Vec<FileAssignment>`, `new_pages: Vec<PagePlan>`
+
+`struct FileAssignment`
+> Fields: `file: String`, `page_id: String`
+
 **`impl<'a> WikiGenerator<'a>`**
   `pub fn new(llm: &'a LlmClient, workspace: &'a WorkspaceIndex) -> Self`
 
@@ -2984,6 +2995,8 @@ indxr/
   `fn collect_all_file_refs(&self) -> Vec<&'a FileIndex>`
 
   `async fn plan_structure(&self) -> Result<Vec<PagePlan>>`
+
+  `async fn plan_incremental( &self, uncovered_files: &[String], existing_pages: &[WikiPage], ) -> Result<IncrementalPlan>`
 
   `async fn generate_page( &self, plan: &PagePlan, all_pages_str: &str, git_ref: &str, timestamp: &str, ) -> Result<WikiPage>`
 
@@ -3014,7 +3027,9 @@ indxr/
 
 `fn extract_json(text: &str) -> &str`
 
-`fn floor_char_boundary(s: &str, max: usize) -> usize`
+`pub(crate) fn floor_char_boundary(s: &str, max: usize) -> usize`
+
+`fn extract_contradictions(content: &str, timestamp: &str) -> (String, Vec<Contradiction>)`
 
 `pub(crate) fn extract_wiki_links(content: &str) -> Vec<String>`
 
@@ -3024,20 +3039,20 @@ indxr/
 
 ## src/wiki/mod.rs
 
-**Language:** Rust | **Size:** 9.2 KB | **Lines:** 295
+**Language:** Rust | **Size:** 9.4 KB | **Lines:** 298
 
 **Imports:**
+- `pub(crate) use generate::UpdateResult`
 - `pub(crate) use generate::WikiGenerator`
 - `pub(crate) use generate::build_planning_context`
 - `pub(crate) use generate::extract_wiki_links`
+- `pub(crate) use generate::floor_char_boundary`
 - `std::collections::{HashMap, HashSet}`
 - `std::path::PathBuf`
 - `std::process::Command`
 - `anyhow::Result`
 - `crate::cli::WikiAction`
-- `crate::diff`
-- `crate::llm::LlmClient`
-- *... and 1 more imports*
+- *... and 3 more imports*
 
 **Declarations:**
 
@@ -3050,8 +3065,6 @@ indxr/
 
 `pub(crate) fn compute_wiki_health( store: &store::WikiStore, workspace: &WorkspaceIndex, ) -> WikiHealthReport`
 
-`fn build_llm_client( exec_cmd: Option<&str>, model_override: Option<&str>, max_tokens: usize, ) -> Result<LlmClient>`
-
 `fn resolve_wiki_dir(override_dir: &Option<PathBuf>, workspace_root: &std::path::Path) -> PathBuf`
 
 `pub(crate) fn commits_behind(root: &std::path::Path, since_ref: &str) -> Result<usize>`
@@ -3060,7 +3073,7 @@ indxr/
 
 ## src/wiki/page.rs
 
-**Language:** Rust | **Size:** 6.1 KB | **Lines:** 190
+**Language:** Rust | **Size:** 8.8 KB | **Lines:** 265
 
 **Imports:**
 - `anyhow::{Context, Result, bail}`
@@ -3096,7 +3109,7 @@ indxr/
 
 ## src/wiki/prompts.rs
 
-**Language:** Rust | **Size:** 4.7 KB | **Lines:** 93
+**Language:** Rust | **Size:** 6.6 KB | **Lines:** 127
 
 **Declarations:**
 

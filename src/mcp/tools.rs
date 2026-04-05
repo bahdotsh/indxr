@@ -630,7 +630,7 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
             if let Some(tools) = defs["tools"].as_array_mut() {
                 tools.push(json!({
                     "name": "wiki_search",
-                    "description": "Search the codebase knowledge wiki by keyword or concept. Returns matching pages with excerpts. Use this to understand modules, architecture, or design decisions before diving into source code.",
+                    "description": "Search the codebase knowledge wiki by keyword or concept. Returns matching pages with excerpts. Use this to understand modules, architecture, or design decisions before diving into source code. If your query synthesizes insights from multiple pages, consider calling wiki_contribute to persist the synthesis.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -648,7 +648,7 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
                 }));
                 tools.push(json!({
                     "name": "wiki_read",
-                    "description": "Read a wiki page by ID (e.g. 'architecture', 'mod-mcp'). Returns full page content with metadata.",
+                    "description": "Read a wiki page by ID (e.g. 'architecture', 'mod-mcp'). Returns full page content with metadata. If you combine this with other knowledge, call wiki_contribute to file the synthesis.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -695,6 +695,22 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
                                 "type": "array",
                                 "items": { "type": "string" },
                                 "description": "Source files this page relates to (optional)"
+                            },
+                            "resolve_contradictions": {
+                                "type": "boolean",
+                                "description": "If true, marks all existing unresolved contradictions on this page as resolved"
+                            },
+                            "contradictions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "description": { "type": "string", "description": "What the contradiction is" },
+                                        "source": { "type": "string", "description": "Source location, e.g. 'src/foo.rs:42'" }
+                                    },
+                                    "required": ["description"]
+                                },
+                                "description": "Contradictions to add to the page"
                             }
                         },
                         "required": ["page", "content"]
@@ -711,6 +727,25 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
                                 "description": "Git ref to diff against (default: wiki's stored ref)"
                             }
                         }
+                    }
+                }));
+                tools.push(json!({
+                    "name": "wiki_suggest_contribution",
+                    "description": "Given a synthesis or analysis, suggest which wiki page to update or whether to create a new one. Lightweight (no LLM call) — uses keyword matching against existing pages.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "synthesis": {
+                                "type": "string",
+                                "description": "The synthesized knowledge or analysis text"
+                            },
+                            "source_pages": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Wiki page IDs that were consulted during synthesis"
+                            }
+                        },
+                        "required": ["synthesis"]
                     }
                 }));
             }
@@ -2672,21 +2707,46 @@ pub(super) fn tool_wiki_search(store: &crate::wiki::store::WikiStore, args: &Val
             // Extract a short excerpt around the query match
             let excerpt = extract_excerpt(&page.content, &query_lower, 150);
 
-            json!({
+            let mut entry = json!({
                 "id": page.frontmatter.id,
                 "title": page.frontmatter.title,
                 "type": page.frontmatter.page_type.as_str(),
                 "score": score,
                 "excerpt": excerpt,
-            })
+            });
+            let unresolved = page
+                .frontmatter
+                .contradictions
+                .iter()
+                .filter(|c| c.resolved_at.is_none())
+                .count();
+            if unresolved > 0 {
+                entry["has_contradictions"] = json!(true);
+                entry["unresolved_contradictions"] = json!(unresolved);
+            }
+            entry
         })
         .collect();
 
-    tool_result(json!({
+    let touched_pages: Vec<&str> = scored
+        .iter()
+        .map(|(_, page)| page.frontmatter.id.as_str())
+        .collect();
+
+    let mut response = json!({
         "query": query,
         "matches": results.len(),
         "results": results,
-    }))
+    });
+
+    if touched_pages.len() >= 2 {
+        response["contribute_hint"] = json!(
+            "If you synthesized insights from these pages, persist them with wiki_contribute."
+        );
+        response["touched_pages"] = json!(touched_pages);
+    }
+
+    tool_result(response)
 }
 
 #[cfg(feature = "wiki")]
@@ -2826,12 +2886,40 @@ fn format_wiki_page(page: &crate::wiki::page::WikiPage) -> Value {
         },
     );
 
-    tool_result(json!({
+    let mut result = json!({
         "id": fm.id,
         "title": fm.title,
         "type": fm.page_type.as_str(),
         "content": format!("{}\n\n{}", header, page.content),
-    }))
+    });
+
+    if !fm.contradictions.is_empty() {
+        let contras: Vec<Value> = fm
+            .contradictions
+            .iter()
+            .map(|c| {
+                let mut obj = json!({
+                    "description": c.description,
+                    "source": c.source,
+                    "detected_at": c.detected_at,
+                });
+                if let Some(ref resolved) = c.resolved_at {
+                    obj["resolved_at"] = json!(resolved);
+                }
+                obj
+            })
+            .collect();
+        result["contradictions"] = json!(contras);
+    }
+
+    if !fm.links_to.is_empty() {
+        result["contribute_hint"] = json!(
+            "If you combined this with other sources, file the synthesis via wiki_contribute."
+        );
+        result["related_pages"] = json!(fm.links_to);
+    }
+
+    tool_result(result)
 }
 
 #[cfg(feature = "wiki")]
@@ -2840,6 +2928,24 @@ pub(super) fn tool_wiki_status(
     workspace: &WorkspaceIndex,
 ) -> Value {
     let health = crate::wiki::compute_wiki_health(store, workspace);
+
+    // Gather contradiction stats
+    let mut total_contradictions = 0usize;
+    let mut unresolved_contradictions = 0usize;
+    let mut pages_with_contradictions = Vec::new();
+    for page in &store.pages {
+        let unresolved: Vec<_> = page
+            .frontmatter
+            .contradictions
+            .iter()
+            .filter(|c| c.resolved_at.is_none())
+            .collect();
+        if !unresolved.is_empty() {
+            pages_with_contradictions.push(page.frontmatter.id.clone());
+            unresolved_contradictions += unresolved.len();
+        }
+        total_contradictions += page.frontmatter.contradictions.len();
+    }
 
     tool_result(json!({
         "pages": health.pages,
@@ -2852,7 +2958,112 @@ pub(super) fn tool_wiki_status(
             "covered_files": health.covered_files,
             "total_files": health.total_files,
             "percentage": health.coverage_pct
+        },
+        "contradictions": {
+            "total": total_contradictions,
+            "unresolved": unresolved_contradictions,
+            "pages_with_contradictions": pages_with_contradictions
         }
+    }))
+}
+
+#[cfg(feature = "wiki")]
+pub(super) fn tool_wiki_suggest_contribution(
+    store: &crate::wiki::store::WikiStore,
+    args: &Value,
+) -> Value {
+    let synthesis = match args.get("synthesis").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return tool_error("Missing required parameter: synthesis"),
+    };
+    let source_pages: Vec<&str> = args
+        .get("source_pages")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+
+    let synthesis_lower = synthesis.to_lowercase();
+    let synthesis_words: Vec<&str> = synthesis_lower.split_whitespace().collect();
+
+    // Score each existing page by keyword overlap with the synthesis
+    let mut best_score = 0usize;
+    let mut best_page: Option<&crate::wiki::page::WikiPage> = None;
+
+    for page in &store.pages {
+        if page.frontmatter.page_type == crate::wiki::page::PageType::Index {
+            continue;
+        }
+        let mut score = 0usize;
+
+        // Boost if this page was a source
+        if source_pages.contains(&page.frontmatter.id.as_str()) {
+            score += 50;
+        }
+
+        // Title word overlap
+        let title_lower = page.frontmatter.title.to_lowercase();
+        for word in &synthesis_words {
+            if word.len() >= 4 && title_lower.contains(word) {
+                score += 10;
+            }
+        }
+
+        // Content word overlap (sample first ~1000 chars, skipping the heading)
+        let content_body = page
+            .content
+            .strip_prefix('#')
+            .and_then(|s| s.find('\n').map(|i| &s[i + 1..]))
+            .unwrap_or(&page.content);
+        let sample_end = crate::wiki::floor_char_boundary(content_body, 1000);
+        let content_sample = content_body[..sample_end].to_lowercase();
+        for word in &synthesis_words {
+            if word.len() >= 4 && content_sample.contains(word) {
+                score += 2;
+            }
+        }
+
+        if score > best_score {
+            best_score = score;
+            best_page = Some(page);
+        }
+    }
+
+    // Decide: update existing page or create new one
+    if let Some(page) = best_page {
+        if best_score >= 20 {
+            return tool_result(json!({
+                "suggestion": "update",
+                "target_page": page.frontmatter.id,
+                "target_title": page.frontmatter.title,
+                "confidence": best_score,
+                "reason": format!("Synthesis overlaps most with '{}' (score: {})", page.frontmatter.title, best_score),
+            }));
+        }
+    }
+
+    // If no good match or score too low, suggest creating a new page
+    // Try to derive a suggested ID from the first few significant words
+    let significant_words: Vec<&str> = synthesis_words
+        .iter()
+        .filter(|w| w.len() >= 4)
+        .take(3)
+        .copied()
+        .collect();
+    let suggested_id = if significant_words.is_empty() {
+        "topic-new".to_string()
+    } else {
+        format!("topic-{}", significant_words.join("-"))
+    };
+
+    tool_result(json!({
+        "suggestion": "create",
+        "suggested_id": suggested_id,
+        "confidence": best_score,
+        "reason": if best_score == 0 {
+            "Synthesis doesn't overlap with any existing pages".to_string()
+        } else {
+            format!("Best match score ({}) is too low for a confident update", best_score)
+        },
     }))
 }
 
@@ -2891,6 +3102,31 @@ pub(super) fn tool_wiki_contribute(
 
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
+    let resolve_contradictions = args
+        .get("resolve_contradictions")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Parse explicit contradictions from args
+    let new_contradictions: Vec<crate::wiki::page::Contradiction> = args
+        .get("contradictions")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    let desc = v.get("description")?.as_str()?;
+                    let source = v.get("source")?.as_str().unwrap_or("");
+                    Some(crate::wiki::page::Contradiction {
+                        description: desc.to_string(),
+                        source: source.to_string(),
+                        detected_at: now.clone(),
+                        resolved_at: None,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let existing = store.pages.iter().find(|p| p.frontmatter.id == page_id);
     let action;
 
@@ -2908,6 +3144,26 @@ pub(super) fn tool_wiki_contribute(
             .map(|s| s.to_string())
             .unwrap_or_else(|| old.frontmatter.title.clone());
 
+        // Handle contradictions: resolve existing if requested, then add new ones
+        let mut contradictions = if resolve_contradictions {
+            old.frontmatter
+                .contradictions
+                .iter()
+                .map(|c| {
+                    if c.resolved_at.is_none() {
+                        let mut resolved = c.clone();
+                        resolved.resolved_at = Some(now.clone());
+                        resolved
+                    } else {
+                        c.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+        } else {
+            old.frontmatter.contradictions.clone()
+        };
+        contradictions.extend(new_contradictions);
+
         let page = WikiPage {
             frontmatter: Frontmatter {
                 id: page_id.clone(),
@@ -2918,6 +3174,7 @@ pub(super) fn tool_wiki_contribute(
                 generated_at: now.clone(),
                 links_to,
                 covers: old.frontmatter.covers.clone(),
+                contradictions,
             },
             content,
         };
@@ -2955,6 +3212,7 @@ pub(super) fn tool_wiki_contribute(
                 generated_at: now.clone(),
                 links_to,
                 covers: Vec::new(),
+                contradictions: new_contradictions,
             },
             content,
         };
@@ -3124,7 +3382,19 @@ pub(super) fn tool_wiki_update(
         })
         .collect();
 
-    if affected_pages.is_empty() {
+    // Find uncovered changed files (not covered by any existing page)
+    let covered_files: HashSet<&str> = store
+        .pages
+        .iter()
+        .flat_map(|p| p.frontmatter.source_files.iter().map(|s| s.as_str()))
+        .collect();
+    let uncovered_changed_files: Vec<&str> = changed_set
+        .iter()
+        .filter(|f| !covered_files.contains(f.as_str()))
+        .map(|s| s.as_str())
+        .collect();
+
+    if affected_pages.is_empty() && uncovered_changed_files.is_empty() {
         return tool_result(json!({
             "action": "no_affected_pages",
             "since_ref": since_ref,
@@ -3154,13 +3424,18 @@ For each affected page:
 3. Rewrite the page content: preserve accurate existing knowledge, update what changed, flag significant architectural changes
 4. Call `wiki_contribute` with the page ID and new content
 
+## Uncovered files
+If `uncovered_changed_files` is non-empty, these files are not covered by any existing wiki page. Either:
+- Assign them to an existing page by calling `wiki_contribute` with updated source_files
+- Create a new page via `wiki_contribute` if they represent significant new functionality
+
 ## Content guidelines
 - Preserve existing knowledge that is still accurate
 - Update sections that reference changed declarations
 - Use [[page-id]] links for cross-references
 - If a page's source files were all deleted, note that the page may be obsolete"#;
 
-    tool_result(json!({
+    let mut response = json!({
         "action": "analysis",
         "since_ref": since_ref,
         "changed_files": changed_paths.len(),
@@ -3168,5 +3443,11 @@ For each affected page:
         "affected_pages": affected_pages,
         "all_pages": all_pages,
         "instructions": instructions,
-    }))
+    });
+
+    if !uncovered_changed_files.is_empty() {
+        response["uncovered_changed_files"] = json!(uncovered_changed_files);
+    }
+
+    tool_result(response)
 }
