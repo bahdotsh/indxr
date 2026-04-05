@@ -74,8 +74,7 @@ Create a Markdown index that:
 Output ONLY the Markdown content (no frontmatter)."#
 }
 
-/// System prompt for incremental wiki updates (Phase 2).
-#[allow(dead_code)]
+/// System prompt for incremental wiki updates.
 pub fn update_system_prompt() -> &'static str {
     r#"You are updating an existing wiki page to reflect code changes. You will receive:
 

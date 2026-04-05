@@ -58,8 +58,8 @@ impl WikiStore {
     pub fn load(wiki_dir: &Path) -> Result<Self> {
         let manifest_path = wiki_dir.join("manifest.yaml");
         let manifest: WikiManifest = if manifest_path.exists() {
-            let text = fs::read_to_string(&manifest_path)
-                .context("Failed to read wiki manifest")?;
+            let text =
+                fs::read_to_string(&manifest_path).context("Failed to read wiki manifest")?;
             serde_yaml::from_str(&text).context("Failed to parse wiki manifest")?
         } else {
             WikiManifest::default()
@@ -73,7 +73,10 @@ impl WikiStore {
                     .with_context(|| format!("Failed to read wiki page: {}", entry.file))?;
                 match WikiPage::parse(&text) {
                     Ok(page) => pages.push(page),
-                    Err(e) => eprintln!("Warning: skipping malformed wiki page {}: {}", entry.file, e),
+                    Err(e) => eprintln!(
+                        "Warning: skipping malformed wiki page {}: {}",
+                        entry.file, e
+                    ),
                 }
             }
         }

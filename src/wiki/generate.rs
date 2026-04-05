@@ -1,12 +1,16 @@
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use crate::diff;
+use crate::languages::Language;
 use crate::llm::{LlmClient, Message, Role};
 use crate::model::declarations::{Declaration, Visibility};
-use crate::model::{FileIndex, TreeEntry, WorkspaceIndex};
+use crate::model::{CodebaseIndex, FileIndex, IndexStats, TreeEntry, WorkspaceIndex};
+use crate::parser::ParserRegistry;
 
 use super::page::{Frontmatter, PageType, WikiPage};
 use super::prompts;
@@ -19,6 +23,12 @@ struct PagePlan {
     page_type: PageType,
     title: String,
     source_files: Vec<String>,
+}
+
+/// Result of an incremental wiki update.
+pub struct UpdateResult {
+    pub pages_updated: usize,
+    pub pages_removed: usize,
 }
 
 pub struct WikiGenerator<'a> {
@@ -70,11 +80,12 @@ impl<'a> WikiGenerator<'a> {
         store.manifest.generated_at = timestamp.clone();
 
         // Stage 2: Generate each page
-        let total = plans.len();
-        for (i, plan) in plans.iter().enumerate() {
-            if plan.page_type == PageType::Index {
-                continue; // generate index last
-            }
+        let content_plans: Vec<&PagePlan> = plans
+            .iter()
+            .filter(|p| p.page_type != PageType::Index)
+            .collect();
+        let total = content_plans.len();
+        for (i, plan) in content_plans.iter().enumerate() {
             eprintln!("Generating page {}/{}: {}...", i + 1, total, plan.title);
 
             let page = self
@@ -91,6 +102,279 @@ impl<'a> WikiGenerator<'a> {
         store.upsert_page(index_page);
 
         Ok(store)
+    }
+
+    /// Incremental update: regenerate only wiki pages affected by code changes.
+    pub async fn update_affected(
+        &self,
+        store: &mut WikiStore,
+        since_ref: &str,
+    ) -> Result<UpdateResult> {
+        let root = &self.workspace.root;
+        let git_ref = current_git_ref(root)?;
+        let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+        // 1. Get changed files since the reference
+        let changed_paths = diff::get_changed_files(root, since_ref)?;
+        if changed_paths.is_empty() {
+            eprintln!("No file changes since {}", since_ref);
+            return Ok(UpdateResult {
+                pages_updated: 0,
+                pages_removed: 0,
+            });
+        }
+        eprintln!(
+            "Found {} changed files since {}",
+            changed_paths.len(),
+            since_ref
+        );
+
+        // 2. Build structural diff for context
+        let all_files = self.collect_all_files();
+        let registry = ParserRegistry::new();
+        let mut old_files: HashMap<PathBuf, FileIndex> = HashMap::new();
+        for path in &changed_paths {
+            if let Ok(Some(old_content)) = diff::get_file_at_ref(root, path, since_ref)
+                && let Some(lang) = Language::detect(path)
+                && let Some(parser) = registry.get_parser(&lang)
+                && let Ok(index) = parser.parse_file(path, &old_content)
+            {
+                old_files.insert(path.clone(), index);
+            }
+        }
+
+        let temp_index = CodebaseIndex {
+            root: root.to_path_buf(),
+            root_name: String::new(),
+            generated_at: String::new(),
+            files: all_files,
+            tree: Vec::new(),
+            stats: IndexStats {
+                total_files: 0,
+                total_lines: 0,
+                languages: HashMap::new(),
+                duration_ms: 0,
+            },
+        };
+        let structural_diff =
+            diff::compute_structural_diff(&temp_index, &old_files, &changed_paths);
+        let diff_markdown = diff::format_diff_markdown(&structural_diff);
+
+        // 3. Collect all changed file paths as strings for matching
+        let changed_set: HashSet<String> = changed_paths
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+
+        // 4. Find affected pages: any page whose source_files overlap with changed files
+        let affected_ids: Vec<String> = store
+            .pages
+            .iter()
+            .filter(|page| {
+                page.frontmatter.page_type != PageType::Index
+                    && page
+                        .frontmatter
+                        .source_files
+                        .iter()
+                        .any(|sf| changed_set.contains(sf))
+            })
+            .map(|page| page.frontmatter.id.clone())
+            .collect();
+
+        if affected_ids.is_empty() {
+            eprintln!("No wiki pages are affected by these changes");
+            // Still update the ref so we don't re-check the same range
+            store.manifest.generated_at_ref = git_ref;
+            store.manifest.generated_at = timestamp;
+            return Ok(UpdateResult {
+                pages_updated: 0,
+                pages_removed: 0,
+            });
+        }
+
+        eprintln!(
+            "Updating {} affected pages: {}",
+            affected_ids.len(),
+            affected_ids.join(", ")
+        );
+
+        // 5. Build cross-reference context from all pages
+        let all_pages_str: String = store
+            .pages
+            .iter()
+            .map(|p| format!("[[{}]] — {}", p.frontmatter.id, p.frontmatter.title))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // 6. Regenerate each affected page with update context
+        let total = affected_ids.len();
+        let mut pages_updated = 0;
+        for (i, page_id) in affected_ids.iter().enumerate() {
+            let existing_page = store.pages.iter().find(|p| &p.frontmatter.id == page_id);
+            let existing_page = match existing_page {
+                Some(p) => p.clone(),
+                None => continue,
+            };
+
+            eprintln!(
+                "Updating page {}/{}: {}...",
+                i + 1,
+                total,
+                existing_page.frontmatter.title
+            );
+
+            let updated = self
+                .update_page(
+                    &existing_page,
+                    &diff_markdown,
+                    &all_pages_str,
+                    &git_ref,
+                    &timestamp,
+                )
+                .await?;
+            store.upsert_page(updated);
+            pages_updated += 1;
+        }
+
+        // 7. Remove pages whose source files have all been deleted
+        let deleted_set: HashSet<String> = structural_diff
+            .files_removed
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        let mut pages_removed = 0;
+        store.pages.retain(|page| {
+            if page.frontmatter.page_type == PageType::Index {
+                return true;
+            }
+            if page.frontmatter.source_files.is_empty() {
+                return true;
+            }
+            let all_deleted = page
+                .frontmatter
+                .source_files
+                .iter()
+                .all(|sf| deleted_set.contains(sf));
+            if all_deleted {
+                eprintln!(
+                    "Removing page: {} (all source files deleted)",
+                    page.frontmatter.id
+                );
+                pages_removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+
+        // 8. Regenerate index page if anything changed
+        if pages_updated > 0 || pages_removed > 0 {
+            eprintln!("Regenerating cross-reference index...");
+            let non_index: Vec<WikiPage> = store
+                .pages
+                .iter()
+                .filter(|p| p.frontmatter.page_type != PageType::Index)
+                .cloned()
+                .collect();
+            let index_page = self
+                .generate_index(&non_index, &git_ref, &timestamp)
+                .await?;
+            store.upsert_page(index_page);
+        }
+
+        // 9. Update manifest ref
+        store.manifest.generated_at_ref = git_ref;
+        store.manifest.generated_at = timestamp;
+
+        Ok(UpdateResult {
+            pages_updated,
+            pages_removed,
+        })
+    }
+
+    /// Update a single wiki page with diff context.
+    async fn update_page(
+        &self,
+        existing: &WikiPage,
+        diff_markdown: &str,
+        all_pages_str: &str,
+        git_ref: &str,
+        timestamp: &str,
+    ) -> Result<WikiPage> {
+        let mut ctx = String::new();
+
+        ctx.push_str("# Current Wiki Page Content\n\n");
+        ctx.push_str(&existing.content);
+        ctx.push_str("\n\n");
+
+        ctx.push_str("# Structural Diff\n\n");
+        ctx.push_str(diff_markdown);
+        ctx.push_str("\n\n");
+
+        ctx.push_str("# Other Wiki Pages\n");
+        ctx.push_str(all_pages_str);
+        ctx.push_str("\n\n");
+
+        // Fresh structural data for source files
+        ctx.push_str("# Current Source File Details\n\n");
+        for source_path in &existing.frontmatter.source_files {
+            if let Some(file) = self.find_file(source_path) {
+                ctx.push_str(&format!("## {}\n", source_path));
+                ctx.push_str(&format!(
+                    "Language: {}, Lines: {}, Size: {} bytes\n\n",
+                    file.language.name(),
+                    file.lines,
+                    file.size,
+                ));
+                if !file.imports.is_empty() {
+                    ctx.push_str("**Imports:**\n");
+                    for imp in &file.imports {
+                        ctx.push_str(&format!("- `{}`\n", imp.text));
+                    }
+                    ctx.push('\n');
+                }
+                ctx.push_str("**Declarations:**\n");
+                format_declarations(&file.declarations, &mut ctx, 0);
+                ctx.push('\n');
+            }
+        }
+
+        let content = self
+            .llm
+            .complete(
+                prompts::update_system_prompt(),
+                &[Message {
+                    role: Role::User,
+                    content: ctx,
+                }],
+            )
+            .await
+            .with_context(|| format!("Failed to update wiki page: {}", existing.frontmatter.id))?;
+
+        let links_to = extract_wiki_links(&content);
+
+        Ok(WikiPage {
+            frontmatter: Frontmatter {
+                id: existing.frontmatter.id.clone(),
+                title: existing.frontmatter.title.clone(),
+                page_type: existing.frontmatter.page_type.clone(),
+                source_files: existing.frontmatter.source_files.clone(),
+                generated_at_ref: git_ref.to_string(),
+                generated_at: timestamp.to_string(),
+                links_to,
+                covers: self.extract_covers(&existing.frontmatter.source_files),
+            },
+            content,
+        })
+    }
+
+    /// Collect all FileIndex entries across workspace members.
+    fn collect_all_files(&self) -> Vec<FileIndex> {
+        self.workspace
+            .members
+            .iter()
+            .flat_map(|m| m.index.files.clone())
+            .collect()
     }
 
     /// Ask the LLM to plan the wiki structure from the structural index.
@@ -113,6 +397,19 @@ impl<'a> WikiGenerator<'a> {
         let json_str = extract_json(&response);
         let plans: Vec<PagePlan> =
             serde_json::from_str(json_str).context("Failed to parse wiki plan JSON from LLM")?;
+
+        if plans.is_empty() {
+            anyhow::bail!("LLM returned an empty wiki plan — no pages to generate");
+        }
+
+        // Sanitize all page IDs to prevent path traversal
+        let plans: Vec<PagePlan> = plans
+            .into_iter()
+            .map(|mut p| {
+                p.id = super::page::sanitize_id(&p.id);
+                p
+            })
+            .collect();
 
         Ok(plans)
     }
@@ -245,10 +542,7 @@ impl<'a> WikiGenerator<'a> {
 
                 // List top-level declarations (name + kind only for planning)
                 for decl in &file.declarations {
-                    ctx.push_str(&format!(
-                        "  - {} `{}`",
-                        decl.kind, decl.name,
-                    ));
+                    ctx.push_str(&format!("  - {} `{}`", decl.kind, decl.name,));
                     if !decl.children.is_empty() {
                         ctx.push_str(&format!(" ({} children)", decl.children.len()));
                     }
@@ -274,7 +568,7 @@ impl<'a> WikiGenerator<'a> {
     fn build_page_context(&self, plan: &PagePlan, all_pages_str: &str) -> String {
         let mut ctx = String::new();
 
-        ctx.push_str(&format!("# Page Plan\n"));
+        ctx.push_str("# Page Plan\n");
         ctx.push_str(&format!("- ID: {}\n", plan.id));
         ctx.push_str(&format!("- Title: {}\n", plan.title));
         ctx.push_str(&format!("- Type: {:?}\n\n", plan.page_type));
@@ -334,8 +628,16 @@ impl<'a> WikiGenerator<'a> {
         for member in &self.workspace.members {
             for file in &member.index.files {
                 let file_path = file.path.to_string_lossy();
-                if file_path == path || file_path.ends_with(path) {
+                if file_path == path {
                     return Some(file);
+                }
+                // Path-component-aware suffix match: the character before the
+                // suffix must be a '/' to avoid partial directory matches
+                // (e.g. "bar/foo.rs" should not match "foobar/foo.rs").
+                if let Some(prefix) = file_path.strip_suffix(path) {
+                    if prefix.is_empty() || prefix.ends_with('/') {
+                        return Some(file);
+                    }
                 }
             }
         }
@@ -426,14 +728,12 @@ fn current_git_ref(root: &Path) -> Result<String> {
 /// Extract JSON content from an LLM response that might be wrapped in markdown fencing.
 fn extract_json(text: &str) -> &str {
     let trimmed = text.trim();
-    if trimmed.starts_with("```json") {
-        let after = &trimmed[7..];
+    if let Some(after) = trimmed.strip_prefix("```json") {
         if let Some(end) = after.rfind("```") {
             return after[..end].trim();
         }
     }
-    if trimmed.starts_with("```") {
-        let after = &trimmed[3..];
+    if let Some(after) = trimmed.strip_prefix("```") {
         if let Some(end) = after.rfind("```") {
             return after[..end].trim();
         }

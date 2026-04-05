@@ -96,8 +96,16 @@ impl WikiPage {
 
     /// Filename for this page on disk.
     pub fn filename(&self) -> String {
-        format!("{}.md", self.frontmatter.id)
+        format!("{}.md", sanitize_id(&self.frontmatter.id))
     }
+}
+
+/// Sanitize a page ID to only allow safe filesystem characters: [a-z0-9-_].
+/// Strips everything else to prevent path traversal.
+pub fn sanitize_id(id: &str) -> String {
+    id.chars()
+        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-' || *c == '_')
+        .collect()
 }
 
 #[cfg(test)]
@@ -125,5 +133,14 @@ mod tests {
         assert_eq!(parsed.frontmatter.id, "mod-mcp");
         assert_eq!(parsed.frontmatter.page_type, PageType::Module);
         assert!(parsed.content.contains("MCP Server"));
+    }
+
+    #[test]
+    fn test_sanitize_id_strips_path_traversal() {
+        assert_eq!(sanitize_id("../../etc/passwd"), "etcpasswd");
+        assert_eq!(sanitize_id("mod-parser"), "mod-parser");
+        assert_eq!(sanitize_id("entity_cache"), "entity_cache");
+        assert_eq!(sanitize_id("Hello/World"), "elloorld");
+        assert_eq!(sanitize_id("a b c"), "abc");
     }
 }

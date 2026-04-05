@@ -25,8 +25,7 @@ pub async fn run_wiki_command(
             dry_run,
         } => {
             let wiki_dir = resolve_wiki_dir(wiki_dir_override, &workspace.root);
-            let llm = LlmClient::from_env(model_override)?
-                .with_max_tokens(*max_response_tokens);
+            let llm = LlmClient::from_env(model_override)?.with_max_tokens(*max_response_tokens);
 
             eprintln!("Using model: {}", llm.model());
             eprintln!("Wiki output: {}", wiki_dir.display());
@@ -50,10 +49,9 @@ pub async fn run_wiki_command(
             max_response_tokens,
         } => {
             let wiki_dir = resolve_wiki_dir(wiki_dir_override, &workspace.root);
-            let llm = LlmClient::from_env(model_override)?
-                .with_max_tokens(*max_response_tokens);
+            let llm = LlmClient::from_env(model_override)?.with_max_tokens(*max_response_tokens);
 
-            let store = store::WikiStore::load(&wiki_dir)?;
+            let mut store = store::WikiStore::load(&wiki_dir)?;
             if store.pages.is_empty() {
                 anyhow::bail!(
                     "No wiki found at {}. Run `indxr wiki generate` first.",
@@ -62,24 +60,29 @@ pub async fn run_wiki_command(
             }
 
             let since_ref = since
-                .as_deref()
-                .unwrap_or(&store.manifest.generated_at_ref);
+                .clone()
+                .unwrap_or_else(|| store.manifest.generated_at_ref.clone());
+
+            if since_ref.is_empty() {
+                anyhow::bail!(
+                    "No git ref to diff against. Pass --since <ref> or regenerate the wiki."
+                );
+            }
 
             eprintln!("Updating wiki from ref: {}", since_ref);
             eprintln!("Using model: {}", llm.model());
 
-            // Phase 2 incremental update will go here.
-            // For now, regenerate affected pages.
             let generator = WikiGenerator::new(&llm, &workspace);
-            let new_store = generator.generate_full(&wiki_dir, false).await?;
-            new_store.save()?;
+            let result = generator.update_affected(&mut store, &since_ref).await?;
+            store.save()?;
 
             eprintln!(
-                "\nWiki updated: {} pages at {}",
-                new_store.pages.len(),
+                "\nWiki updated: {} pages regenerated, {} removed ({} total pages at {})",
+                result.pages_updated,
+                result.pages_removed,
+                store.pages.len(),
                 wiki_dir.display()
             );
-            let _ = since_ref;
 
             Ok(())
         }
@@ -116,11 +119,7 @@ pub async fn run_wiki_command(
                 .flat_map(|p| p.frontmatter.source_files.iter().map(|s| s.as_str()))
                 .collect();
             let total_files = workspace.stats.total_files;
-            eprintln!(
-                "Source file coverage: {}/{}",
-                covered.len(),
-                total_files
-            );
+            eprintln!("Source file coverage: {}/{}", covered.len(), total_files);
 
             Ok(())
         }
