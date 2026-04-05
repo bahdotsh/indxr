@@ -3863,4 +3863,49 @@ mod wiki_tests {
         // All words < 4 chars, so suggested_id should be the fallback
         assert_eq!(content["suggested_id"], "topic-new");
     }
+
+    #[test]
+    fn test_wiki_contribute_resolve_contradictions_roundtrip() {
+        let mut store = make_test_wiki_store();
+
+        // Step 1: Add a contradiction to a page
+        tool_wiki_contribute(
+            &mut store,
+            &json!({
+                "page": "mod-mcp",
+                "content": "# MCP Server\n\nUpdated content.",
+                "contradictions": [
+                    { "description": "Wiki stated sync but code is async", "source": "src/mcp/mod.rs:383" }
+                ]
+            }),
+        );
+
+        // Verify the contradiction exists and is unresolved
+        let page = store
+            .pages
+            .iter()
+            .find(|p| p.frontmatter.id == "mod-mcp")
+            .unwrap();
+        assert_eq!(page.frontmatter.contradictions.len(), 1);
+        assert!(page.frontmatter.contradictions[0].resolved_at.is_none());
+
+        // Step 2: Resolve contradictions
+        tool_wiki_contribute(
+            &mut store,
+            &json!({
+                "page": "mod-mcp",
+                "content": "# MCP Server\n\nFully updated content with async.",
+                "resolve_contradictions": true
+            }),
+        );
+
+        // Verify the contradiction is now resolved
+        let page = store
+            .pages
+            .iter()
+            .find(|p| p.frontmatter.id == "mod-mcp")
+            .unwrap();
+        assert_eq!(page.frontmatter.contradictions.len(), 1);
+        assert!(page.frontmatter.contradictions[0].resolved_at.is_some());
+    }
 }

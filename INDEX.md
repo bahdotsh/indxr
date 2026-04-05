@@ -1,6 +1,6 @@
 # Codebase Index: indxr
 
-> Generated: 2026-04-05 19:07:56 UTC | Files: 76 | Lines: 44069
+> Generated: 2026-04-05 19:15:47 UTC | Files: 76 | Lines: 44145
 > Languages: JSON (4), Markdown (17), Python (2), Rust (51), Shell (1), TOML (1)
 
 ## Directory Structure
@@ -1589,7 +1589,7 @@ indxr/
 
 ## src/mcp/mod.rs
 
-**Language:** Rust | **Size:** 26.2 KB | **Lines:** 772
+**Language:** Rust | **Size:** 27.2 KB | **Lines:** 791
 
 **Imports:**
 - `std::io::{self, BufRead, Write}`
@@ -1661,7 +1661,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 138.2 KB | **Lines:** 3863
+**Language:** Rust | **Size:** 139.6 KB | **Lines:** 3903
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2056,7 +2056,7 @@ indxr/
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 122.7 KB | **Lines:** 3448
+**Language:** Rust | **Size:** 122.9 KB | **Lines:** 3453
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2955,7 +2955,7 @@ indxr/
 
 ## src/wiki/generate.rs
 
-**Language:** Rust | **Size:** 44.8 KB | **Lines:** 1276
+**Language:** Rust | **Size:** 45.5 KB | **Lines:** 1288
 
 **Imports:**
 - `std::collections::{HashMap, HashSet}`

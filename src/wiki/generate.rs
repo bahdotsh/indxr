@@ -1092,7 +1092,9 @@ fn extract_contradictions(content: &str, timestamp: &str) -> (String, Vec<Contra
 
     let after_marker = &content[start_pos + marker_start.len()..];
     let Some(end_pos) = after_marker.find(marker_end) else {
-        return (content.to_string(), vec![]);
+        // Malformed block (no closing `-->`): strip the broken marker to avoid
+        // leaking raw HTML into wiki pages.
+        return (content[..start_pos].trim_end().to_string(), vec![]);
     };
 
     let json_str = after_marker[..end_pos].trim();
@@ -1271,6 +1273,16 @@ Content.
         let content = "# Module\n\n<!-- CONTRADICTIONS\nnot valid json\n-->";
         let (cleaned, contradictions) = extract_contradictions(content, "2026-04-06T10:00:00Z");
         assert_eq!(cleaned, "# Module");
+        assert!(contradictions.is_empty());
+    }
+
+    #[test]
+    fn test_extract_contradictions_unclosed_marker() {
+        // LLM wrote the marker start but no closing `-->` — should strip the
+        // broken marker from the content rather than leaking raw HTML.
+        let content = "# Module\n\nSome content.\n\n<!-- CONTRADICTIONS\n[{\"description\": \"x\", \"source\": \"y\"}]";
+        let (cleaned, contradictions) = extract_contradictions(content, "2026-04-06T10:00:00Z");
+        assert_eq!(cleaned, "# Module\n\nSome content.");
         assert!(contradictions.is_empty());
     }
 }

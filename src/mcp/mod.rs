@@ -506,59 +506,77 @@ pub fn run_mcp_server(
         let ws_config = config.clone();
         let wiki_tx = tx.clone();
         let update_in_progress = Arc::new(AtomicBool::new(false));
+        // Tracks whether new changes arrived while an update was in progress.
+        // Checked after each update completes so those changes aren't lost.
+        let dirty = Arc::new(AtomicBool::new(false));
 
-        thread::spawn(move || {
-            while trigger_rx.recv().is_ok() {
-                // Drain additional triggers (coalesce rapid changes)
-                while trigger_rx.try_recv().is_ok() {}
+        thread::spawn({
+            let dirty = dirty.clone();
+            move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("Failed to create tokio runtime for wiki auto-update");
 
-                // Wait for the debounce period
-                thread::sleep(std::time::Duration::from_millis(wiki_debounce_ms));
+                while trigger_rx.recv().is_ok() {
+                    // Drain additional triggers (coalesce rapid changes)
+                    while trigger_rx.try_recv().is_ok() {}
 
-                // Drain triggers that arrived during the sleep
-                while trigger_rx.try_recv().is_ok() {}
+                    // Wait for the debounce period
+                    thread::sleep(std::time::Duration::from_millis(wiki_debounce_ms));
 
-                // Skip if an update is already running
-                if update_in_progress
-                    .compare_exchange(false, true, Acquire, Relaxed)
-                    .is_err()
-                {
-                    continue;
-                }
+                    // Drain triggers that arrived during the sleep
+                    while trigger_rx.try_recv().is_ok() {}
 
-                let in_progress = update_in_progress.clone();
-                let wiki_tx_inner = wiki_tx.clone();
-                let ws_config_inner = ws_config.clone();
-                let llm_clone = llm_client.clone();
+                    // Skip if an update is already running, but mark dirty so
+                    // the running update re-triggers when it finishes.
+                    if update_in_progress
+                        .compare_exchange(false, true, Acquire, Relaxed)
+                        .is_err()
+                    {
+                        dirty.store(true, Release);
+                        continue;
+                    }
 
-                thread::spawn(move || {
-                    let result = (|| -> Result<crate::wiki::UpdateResult, String> {
-                        // Re-index to get fresh workspace state
-                        let ws = indexer::regenerate_workspace_index(&ws_config_inner)
-                            .map_err(|e| format!("Reindex failed: {}", e))?;
-                        let wiki_dir = ws.root.join(".indxr").join("wiki");
-                        let mut store = crate::wiki::store::WikiStore::load(&wiki_dir)
-                            .map_err(|e| format!("Wiki load failed: {}", e))?;
-                        let since_ref = store.manifest.generated_at_ref.clone();
-                        if since_ref.is_empty() {
-                            return Err("No wiki ref to diff against".to_string());
+                    loop {
+                        dirty.store(false, Relaxed);
+
+                        let ws_config_inner = ws_config.clone();
+                        let llm_clone = llm_client.clone();
+
+                        let result = (|| -> Result<crate::wiki::UpdateResult, String> {
+                            // Re-index to get fresh workspace state
+                            let ws = indexer::regenerate_workspace_index(&ws_config_inner)
+                                .map_err(|e| format!("Reindex failed: {}", e))?;
+                            let wiki_dir = ws.root.join(".indxr").join("wiki");
+                            let mut store = crate::wiki::store::WikiStore::load(&wiki_dir)
+                                .map_err(|e| format!("Wiki load failed: {}", e))?;
+                            let since_ref = store.manifest.generated_at_ref.clone();
+                            if since_ref.is_empty() {
+                                return Err("No wiki ref to diff against".to_string());
+                            }
+                            let generator = crate::wiki::WikiGenerator::new(&llm_clone, &ws);
+                            let update_result = rt
+                                .block_on(generator.update_affected(&mut store, &since_ref))
+                                .map_err(|e| format!("Wiki update failed: {}", e))?;
+                            store
+                                .save()
+                                .map_err(|e| format!("Wiki save failed: {}", e))?;
+                            Ok(update_result)
+                        })();
+                        let _ = wiki_tx.send(ServerEvent::WikiUpdateComplete(result));
+
+                        // If new changes arrived during this update, loop immediately
+                        // instead of waiting for the next file-change event.
+                        if !dirty.swap(false, Acquire) {
+                            break;
                         }
-                        let generator = crate::wiki::WikiGenerator::new(&llm_clone, &ws);
-                        let rt = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .map_err(|e| format!("Tokio runtime failed: {}", e))?;
-                        let update_result = rt
-                            .block_on(generator.update_affected(&mut store, &since_ref))
-                            .map_err(|e| format!("Wiki update failed: {}", e))?;
-                        store
-                            .save()
-                            .map_err(|e| format!("Wiki save failed: {}", e))?;
-                        Ok(update_result)
-                    })();
-                    in_progress.store(false, Release);
-                    let _ = wiki_tx_inner.send(ServerEvent::WikiUpdateComplete(result));
-                });
+                        // Brief pause before re-running to avoid tight loops
+                        thread::sleep(std::time::Duration::from_millis(wiki_debounce_ms));
+                    }
+
+                    update_in_progress.store(false, Release);
+                }
             }
         });
 
