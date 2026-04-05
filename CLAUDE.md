@@ -8,7 +8,7 @@ An MCP server called `indxr` is available. **Always use indxr tools before the R
 
 ### Token savings reference
 
-The MCP server defaults to **3 compound tools** (`find`, `summarize`, `read`). All 26 tools (3 compound + 23 granular) are available with `--all-tools`.
+The MCP server defaults to **3 compound tools** (`find`, `summarize`, `read`). All 26 tools (3 compound + 23 granular) are available with `--all-tools`. With `--features wiki`, 3 additional wiki tools are available.
 
 | Action | Approx tokens | When to use |
 |--------|--------------|-------------|
@@ -60,6 +60,14 @@ With `--all-tools`, all 23 granular tools are also exposed:
 24. `get_imports` — list import statements for a file.
 25. `list_workspace_members` — list detected workspace members (Cargo, npm, Go workspaces).
 26. `regenerate_index` — re-index after code changes. Updates INDEX.md, refreshes in-memory index, and reports what changed (delta).
+
+#### Wiki tools (available when built with `--features wiki`)
+
+If a wiki has been generated (`indxr wiki generate`), these tools are available automatically:
+
+27. `wiki_search(query)` — search the codebase knowledge wiki by keyword or concept. Returns matching pages with excerpts. **Use this first to understand modules, architecture, or design decisions before diving into source code.**
+28. `wiki_read(page)` — read a wiki page by ID (e.g. `"architecture"`, `"mod-mcp"`). Returns full page content with metadata.
+29. `wiki_status()` — check wiki health: page count, staleness (commits behind HEAD), source file coverage.
 
 > **Workspace support:** Most tools accept an optional `member` param to scope queries to a specific workspace member by name.
 

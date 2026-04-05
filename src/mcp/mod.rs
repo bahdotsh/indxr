@@ -23,6 +23,17 @@ use self::tools::{
     handle_tool_call, tool_definitions, tool_get_diff_summary, tool_regenerate_index,
 };
 
+#[cfg(feature = "wiki")]
+use self::tools::{tool_wiki_read, tool_wiki_search, tool_wiki_status};
+
+/// Wiki store state, conditionally compiled.
+#[cfg(feature = "wiki")]
+pub(crate) type WikiStoreOption = Option<crate::wiki::store::WikiStore>;
+
+/// Placeholder when wiki feature is disabled.
+#[cfg(not(feature = "wiki"))]
+pub(crate) type WikiStoreOption = ();
+
 // ---------------------------------------------------------------------------
 // JSON-RPC 2.0 types
 // ---------------------------------------------------------------------------
@@ -127,6 +138,7 @@ pub(crate) fn handle_tools_call(
     config: &WorkspaceConfig,
     registry: &ParserRegistry,
     params: &Value,
+    wiki_store: &WikiStoreOption,
 ) -> JsonRpcResponse {
     let tool_name = match params.get("name").and_then(|v| v.as_str()) {
         Some(n) => n,
@@ -146,6 +158,30 @@ pub(crate) fn handle_tools_call(
         let result = tool_get_diff_summary(workspace, config, registry, &arguments);
         return ok_response(id, result);
     }
+
+    // Wiki tools — early dispatch with wiki store
+    #[cfg(feature = "wiki")]
+    {
+        use self::helpers::tool_error;
+        if matches!(tool_name, "wiki_search" | "wiki_read" | "wiki_status") {
+            return match wiki_store {
+                Some(store) => {
+                    let result = match tool_name {
+                        "wiki_search" => tool_wiki_search(store, &arguments),
+                        "wiki_read" => tool_wiki_read(store, &arguments),
+                        "wiki_status" => tool_wiki_status(store, workspace),
+                        _ => unreachable!(),
+                    };
+                    ok_response(id, result)
+                }
+                None => ok_response(
+                    id,
+                    tool_error("No wiki found. Run `indxr wiki generate` to create one."),
+                ),
+            };
+        }
+    }
+    let _ = wiki_store; // suppress unused warning when wiki feature is off
 
     let result = handle_tool_call(workspace, tool_name, &arguments);
     ok_response(id, result)
@@ -175,6 +211,7 @@ pub(crate) fn process_jsonrpc_request(
     registry: &ParserRegistry,
     transport: Transport,
     all_tools: bool,
+    wiki_store: &WikiStoreOption,
 ) -> Option<JsonRpcResponse> {
     let id = request.id?;
     let params = request.params.unwrap_or(json!({}));
@@ -182,7 +219,7 @@ pub(crate) fn process_jsonrpc_request(
     let response = match request.method.as_str() {
         "initialize" => handle_initialize(id, transport),
         "tools/list" => handle_tools_list(id, workspace, all_tools),
-        "tools/call" => handle_tools_call(id, workspace, config, registry, &params),
+        "tools/call" => handle_tools_call(id, workspace, config, registry, &params, wiki_store),
         _ => err_response(id, -32601, format!("Method not found: {}", request.method)),
     };
 
@@ -202,6 +239,7 @@ pub(crate) fn process_jsonrpc_message(
     registry: &ParserRegistry,
     transport: Transport,
     all_tools: bool,
+    wiki_store: &WikiStoreOption,
 ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse> {
     let line = line.trim();
     if line.is_empty() {
@@ -220,7 +258,7 @@ pub(crate) fn process_jsonrpc_message(
     };
 
     Ok(process_jsonrpc_request(
-        request, workspace, config, registry, transport, all_tools,
+        request, workspace, config, registry, transport, all_tools, wiki_store,
     ))
 }
 
@@ -235,6 +273,7 @@ fn handle_stdin_line(
     registry: &ParserRegistry,
     writer: &mut impl Write,
     all_tools: bool,
+    wiki_store: &WikiStoreOption,
 ) -> anyhow::Result<()> {
     eprintln!("< {}", line);
 
@@ -245,6 +284,7 @@ fn handle_stdin_line(
         registry,
         Transport::Stdio,
         all_tools,
+        wiki_store,
     ) {
         Ok(Some(resp)) => resp,
         Ok(None) => {
@@ -282,6 +322,28 @@ pub fn run_mcp_server(
         workspace.root.display()
     );
     let registry = ParserRegistry::new();
+
+    // Load wiki store if available
+    #[cfg(feature = "wiki")]
+    let wiki_store: WikiStoreOption = {
+        let wiki_dir = workspace.root.join(".indxr").join("wiki");
+        if wiki_dir.exists() {
+            match crate::wiki::store::WikiStore::load(&wiki_dir) {
+                Ok(store) => {
+                    eprintln!("Wiki loaded: {} pages", store.pages.len());
+                    Some(store)
+                }
+                Err(e) => {
+                    eprintln!("Warning: failed to load wiki: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
+    #[cfg(not(feature = "wiki"))]
+    let wiki_store: WikiStoreOption = ();
 
     let (tx, rx) = mpsc::channel::<ServerEvent>();
 
@@ -378,6 +440,7 @@ pub fn run_mcp_server(
                                 &registry,
                                 &mut writer,
                                 all_tools,
+                                &wiki_store,
                             )?;
                         }
                         ServerEvent::FileChanged => unreachable!(),
@@ -392,6 +455,7 @@ pub fn run_mcp_server(
                     &registry,
                     &mut writer,
                     all_tools,
+                    &wiki_store,
                 )?;
             }
         }

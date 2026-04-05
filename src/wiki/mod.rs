@@ -3,11 +3,14 @@ pub mod page;
 mod prompts;
 pub mod store;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::process::Command;
 
 use anyhow::Result;
 
 use crate::cli::WikiAction;
+use crate::diff;
 use crate::llm::LlmClient;
 use crate::model::WorkspaceIndex;
 
@@ -112,14 +115,91 @@ pub async fn run_wiki_command(
                 eprintln!("  {}: {}", ptype, count);
             }
 
-            // Coverage
-            let covered: std::collections::HashSet<&str> = store
+            // Staleness: commits behind HEAD
+            let since_ref = &store.manifest.generated_at_ref;
+            if !since_ref.is_empty() {
+                if let Ok(behind) = commits_behind(&workspace.root, since_ref) {
+                    if behind == 0 {
+                        eprintln!("\nStaleness: up to date");
+                    } else {
+                        eprintln!("\nStaleness: {} commit(s) behind HEAD", behind);
+
+                        // Show which pages would be affected
+                        if let Ok(changed) = diff::get_changed_files(&workspace.root, since_ref) {
+                            let changed_strs: HashSet<String> = changed
+                                .iter()
+                                .filter_map(|p| p.to_str().map(|s| s.to_string()))
+                                .collect();
+
+                            let mut affected: Vec<&str> = Vec::new();
+                            for page in &store.pages {
+                                if page
+                                    .frontmatter
+                                    .source_files
+                                    .iter()
+                                    .any(|sf| changed_strs.contains(sf.as_str()))
+                                {
+                                    affected.push(&page.frontmatter.title);
+                                }
+                            }
+
+                            if !affected.is_empty() {
+                                eprintln!("Affected pages ({}):", affected.len());
+                                for title in &affected {
+                                    eprintln!("  - {}", title);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Coverage: which workspace files are covered by wiki pages
+            let covered: HashSet<&str> = store
                 .pages
                 .iter()
                 .flat_map(|p| p.frontmatter.source_files.iter().map(|s| s.as_str()))
                 .collect();
-            let total_files = workspace.stats.total_files;
-            eprintln!("Source file coverage: {}/{}", covered.len(), total_files);
+
+            let all_files: Vec<String> = workspace
+                .members
+                .iter()
+                .flat_map(|m| {
+                    m.index
+                        .files
+                        .iter()
+                        .map(|f| f.path.to_string_lossy().to_string())
+                })
+                .collect();
+            let total_files = all_files.len();
+
+            let uncovered: Vec<&String> = all_files
+                .iter()
+                .filter(|f| !covered.contains(f.as_str()))
+                .collect();
+
+            eprintln!(
+                "\nSource file coverage: {}/{} ({:.0}%)",
+                total_files - uncovered.len(),
+                total_files,
+                if total_files > 0 {
+                    ((total_files - uncovered.len()) as f64 / total_files as f64) * 100.0
+                } else {
+                    100.0
+                }
+            );
+
+            if !uncovered.is_empty() && uncovered.len() <= 20 {
+                eprintln!("Uncovered files:");
+                for f in &uncovered {
+                    eprintln!("  - {}", f);
+                }
+            } else if !uncovered.is_empty() {
+                eprintln!(
+                    "  ({} uncovered files — run with --verbose to list)",
+                    uncovered.len()
+                );
+            }
 
             Ok(())
         }
@@ -143,4 +223,17 @@ fn resolve_wiki_dir(override_dir: &Option<PathBuf>, workspace_root: &std::path::
     override_dir
         .clone()
         .unwrap_or_else(|| workspace_root.join(".indxr").join("wiki"))
+}
+
+/// Count how many commits exist between `since_ref` and HEAD.
+pub(crate) fn commits_behind(root: &std::path::Path, since_ref: &str) -> Result<usize> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["rev-list", "--count", &format!("{}..HEAD", since_ref)])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("git rev-list failed");
+    }
+    let count_str = String::from_utf8_lossy(&output.stdout);
+    Ok(count_str.trim().parse::<usize>().unwrap_or(0))
 }
