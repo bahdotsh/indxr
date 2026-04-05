@@ -13,9 +13,20 @@ use crate::workspace::WorkspaceKind;
 use super::helpers::*;
 use super::tools::*;
 use super::type_flow::*;
-use super::{Transport, process_jsonrpc_message};
+use super::{Transport, WikiStoreOption, process_jsonrpc_message};
 use crate::indexer::{IndexConfig, WorkspaceConfig};
 use crate::parser::ParserRegistry;
+
+#[cfg(feature = "wiki")]
+fn test_wiki_store() -> WikiStoreOption {
+    None
+}
+
+#[cfg(not(feature = "wiki"))]
+#[allow(clippy::unused_unit)]
+fn test_wiki_store() -> WikiStoreOption {
+    ()
+}
 
 /// Wrap a `CodebaseIndex` in a single-member `WorkspaceIndex` for testing.
 fn wrap_workspace(index: CodebaseIndex) -> WorkspaceIndex {
@@ -195,7 +206,7 @@ fn test_simple_glob_match() {
 #[test]
 fn test_tool_definitions_all_tools() {
     // With all_tools=true, all 23 tools should be present
-    let defs = tool_definitions(false, true);
+    let defs = tool_definitions(false, true, false);
     let tools = defs["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"get_token_estimate"));
@@ -213,13 +224,13 @@ fn test_tool_definitions_all_tools() {
     assert!(names.contains(&"get_health"));
     assert!(names.contains(&"get_type_flow"));
     assert!(names.contains(&"list_workspace_members"));
-    assert_eq!(names.len(), 26); // 3 compound + 23 granular
+    assert_eq!(names.len(), 26); // 3 compound + 23 granular (no wiki)
 }
 
 #[test]
 fn test_tool_definitions_default_excludes_extended() {
     // Default (all_tools=false) should only show compound tools
-    let defs = tool_definitions(false, false);
+    let defs = tool_definitions(false, false, false);
     let tools = defs["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     // Compound tools present
@@ -235,13 +246,17 @@ fn test_tool_definitions_default_excludes_extended() {
     assert!(!names.contains(&"get_health"));
     assert!(!names.contains(&"list_workspace_members"));
     assert!(!names.contains(&"regenerate_index"));
-    assert_eq!(names.len(), 3);
+    // Wiki tools absent (no wiki available)
+    assert!(!names.contains(&"wiki_search"));
+    assert!(!names.contains(&"wiki_read"));
+    assert!(!names.contains(&"wiki_status"));
+    assert_eq!(names.len(), 3); // compound tools only
 }
 
 #[test]
 fn test_tool_definitions_member_param_only_in_workspace() {
     // Single-project: no member param
-    let defs = tool_definitions(false, true);
+    let defs = tool_definitions(false, true, false);
     let tools = defs["tools"].as_array().unwrap();
     for tool in tools {
         let name = tool["name"].as_str().unwrap();
@@ -253,7 +268,7 @@ fn test_tool_definitions_member_param_only_in_workspace() {
     }
 
     // Multi-member workspace: member param added
-    let defs = tool_definitions(true, true);
+    let defs = tool_definitions(true, true, false);
     let tools = defs["tools"].as_array().unwrap();
     let skip = ["list_workspace_members", "regenerate_index"];
     for tool in tools {
@@ -299,6 +314,7 @@ fn test_extended_tools_callable_when_hidden() {
             &registry,
             Transport::Stdio,
             false,
+            &mut test_wiki_store(),
         );
         let resp = result.unwrap().unwrap();
         let json = serde_json::to_value(&resp).unwrap();
@@ -2212,8 +2228,15 @@ fn test_process_jsonrpc_empty_line() {
     let (ws_config, _config) = make_test_config();
     let registry = ParserRegistry::new();
     let mut ws = wrap_workspace(make_test_index());
-    let result =
-        process_jsonrpc_message("", &mut ws, &ws_config, &registry, Transport::Stdio, false);
+    let result = process_jsonrpc_message(
+        "",
+        &mut ws,
+        &ws_config,
+        &registry,
+        Transport::Stdio,
+        false,
+        &mut test_wiki_store(),
+    );
     assert!(result.unwrap().is_none());
 }
 
@@ -2223,8 +2246,15 @@ fn test_process_jsonrpc_notification_returns_none() {
     let registry = ParserRegistry::new();
     let mut ws = wrap_workspace(make_test_index());
     let msg = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-    let result =
-        process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio, false);
+    let result = process_jsonrpc_message(
+        msg,
+        &mut ws,
+        &ws_config,
+        &registry,
+        Transport::Stdio,
+        false,
+        &mut test_wiki_store(),
+    );
     assert!(result.unwrap().is_none());
 }
 
@@ -2240,6 +2270,7 @@ fn test_process_jsonrpc_parse_error() {
         &registry,
         Transport::Stdio,
         false,
+        &mut test_wiki_store(),
     );
     let err_resp = result.unwrap_err();
     let json = serde_json::to_value(&err_resp).unwrap();
@@ -2252,8 +2283,15 @@ fn test_process_jsonrpc_initialize() {
     let registry = ParserRegistry::new();
     let mut ws = wrap_workspace(make_test_index());
     let msg = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
-    let result =
-        process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio, false);
+    let result = process_jsonrpc_message(
+        msg,
+        &mut ws,
+        &ws_config,
+        &registry,
+        Transport::Stdio,
+        false,
+        &mut test_wiki_store(),
+    );
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();
     assert_eq!(json["result"]["protocolVersion"], "2024-11-05");
@@ -2266,8 +2304,15 @@ fn test_process_jsonrpc_tools_list() {
     let registry = ParserRegistry::new();
     let mut ws = wrap_workspace(make_test_index());
     let msg = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#;
-    let result =
-        process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio, false);
+    let result = process_jsonrpc_message(
+        msg,
+        &mut ws,
+        &ws_config,
+        &registry,
+        Transport::Stdio,
+        false,
+        &mut test_wiki_store(),
+    );
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();
     let tools = json["result"]["tools"].as_array().unwrap();
@@ -2283,8 +2328,15 @@ fn test_process_jsonrpc_unknown_method() {
     let registry = ParserRegistry::new();
     let mut ws = wrap_workspace(make_test_index());
     let msg = r#"{"jsonrpc":"2.0","id":3,"method":"bogus/method","params":{}}"#;
-    let result =
-        process_jsonrpc_message(msg, &mut ws, &ws_config, &registry, Transport::Stdio, false);
+    let result = process_jsonrpc_message(
+        msg,
+        &mut ws,
+        &ws_config,
+        &registry,
+        Transport::Stdio,
+        false,
+        &mut test_wiki_store(),
+    );
     let resp = result.unwrap().unwrap();
     let json = serde_json::to_value(&resp).unwrap();
     assert_eq!(json["error"]["code"], -32601);
@@ -3181,4 +3233,256 @@ fn test_tool_batch_file_summaries_non_compact() {
     let summaries = content["summaries"].as_array().unwrap();
     assert!(!summaries.is_empty());
     assert!(summaries[0]["file"].is_string());
+}
+
+// ---------------------------------------------------------------------------
+// Wiki tool tests
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "wiki")]
+mod wiki_tests {
+    use super::*;
+    use crate::wiki::page::{Frontmatter, PageType, WikiPage};
+    use crate::wiki::store::{WikiManifest, WikiStore};
+
+    fn make_test_wiki_store() -> WikiStore {
+        WikiStore {
+            root: PathBuf::from("/tmp/test-wiki"),
+            manifest: WikiManifest {
+                version: 1,
+                generated_at_ref: "abc1234".to_string(),
+                generated_at: "2026-04-05T10:00:00Z".to_string(),
+                pages: vec![],
+            },
+            pages: vec![
+                WikiPage {
+                    frontmatter: Frontmatter {
+                        id: "architecture".to_string(),
+                        title: "Architecture Overview".to_string(),
+                        page_type: PageType::Architecture,
+                        source_files: vec![
+                            "src/main.rs".to_string(),
+                            "src/indexer.rs".to_string(),
+                        ],
+                        generated_at_ref: "abc1234".to_string(),
+                        generated_at: "2026-04-05T10:00:00Z".to_string(),
+                        links_to: vec!["mod-mcp".to_string()],
+                        covers: vec![
+                            "fn:main".to_string(),
+                            "fn:build_workspace_index".to_string(),
+                        ],
+                    },
+                    content: "# Architecture\n\nThis codebase uses tree-sitter for parsing and rayon for parallelism.\n\n## Key Components\n- Indexer\n- MCP Server\n- Parser".to_string(),
+                },
+                WikiPage {
+                    frontmatter: Frontmatter {
+                        id: "mod-mcp".to_string(),
+                        title: "MCP Server Module".to_string(),
+                        page_type: PageType::Module,
+                        source_files: vec![
+                            "src/mcp/mod.rs".to_string(),
+                            "src/mcp/tools.rs".to_string(),
+                        ],
+                        generated_at_ref: "abc1234".to_string(),
+                        generated_at: "2026-04-05T10:00:00Z".to_string(),
+                        links_to: vec!["architecture".to_string()],
+                        covers: vec![
+                            "fn:run_mcp_server".to_string(),
+                            "fn:handle_tool_call".to_string(),
+                        ],
+                    },
+                    content: "# MCP Server\n\nHandles JSON-RPC protocol for tool dispatch.\n\n## Tools\nThe server exposes structural analysis tools via MCP protocol.".to_string(),
+                },
+                WikiPage {
+                    frontmatter: Frontmatter {
+                        id: "mod-parser".to_string(),
+                        title: "Parser Module".to_string(),
+                        page_type: PageType::Module,
+                        source_files: vec!["src/parser/mod.rs".to_string()],
+                        generated_at_ref: "abc1234".to_string(),
+                        generated_at: "2026-04-05T10:00:00Z".to_string(),
+                        links_to: vec![],
+                        covers: vec!["struct:ParserRegistry".to_string()],
+                    },
+                    content: "# Parser\n\nTree-sitter and regex-based parsing for 27 languages.".to_string(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_wiki_search_by_title() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_search(&store, &json!({"query": "MCP Server"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(content["matches"].as_u64().unwrap() > 0);
+        let results = content["results"].as_array().unwrap();
+        // MCP Server Module should be top result
+        assert_eq!(results[0]["id"], "mod-mcp");
+    }
+
+    #[test]
+    fn test_wiki_search_by_covers() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_search(&store, &json!({"query": "run_mcp_server"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(content["matches"].as_u64().unwrap() > 0);
+        let results = content["results"].as_array().unwrap();
+        assert_eq!(results[0]["id"], "mod-mcp");
+    }
+
+    #[test]
+    fn test_wiki_search_by_content() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_search(&store, &json!({"query": "tree-sitter"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(content["matches"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn test_wiki_search_no_match() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_search(&store, &json!({"query": "xyznonexistent"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["matches"].as_u64().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_wiki_search_with_limit() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_search(&store, &json!({"query": "module", "limit": 1}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        let results = content["results"].as_array().unwrap();
+        assert!(results.len() <= 1);
+    }
+
+    #[test]
+    fn test_wiki_search_missing_query() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_search(&store, &json!({}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Missing required parameter"));
+    }
+
+    #[test]
+    fn test_wiki_read_by_exact_id() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_read(&store, &json!({"page": "architecture"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["id"], "architecture");
+        assert_eq!(content["title"], "Architecture Overview");
+        let text = content["content"].as_str().unwrap();
+        assert!(text.contains("Architecture"));
+        assert!(text.contains("tree-sitter"));
+    }
+
+    #[test]
+    fn test_wiki_read_by_title() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_read(&store, &json!({"page": "MCP Server Module"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["id"], "mod-mcp");
+    }
+
+    #[test]
+    fn test_wiki_read_partial_match() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_read(&store, &json!({"page": "parser"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["id"], "mod-parser");
+    }
+
+    #[test]
+    fn test_wiki_read_not_found() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_read(&store, &json!({"page": "nonexistent-page"}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("not found"));
+        assert!(text.contains("Available pages"));
+    }
+
+    #[test]
+    fn test_wiki_read_missing_param() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_read(&store, &json!({}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Missing required parameter"));
+    }
+
+    #[test]
+    fn test_wiki_status() {
+        let store = make_test_wiki_store();
+        let ws = wrap_workspace(make_test_index());
+        let result = tool_wiki_status(&store, &ws);
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["pages"].as_u64().unwrap(), 3);
+        assert_eq!(content["generated_at_ref"], "abc1234");
+        assert!(content["staleness"].is_string());
+        assert!(content["coverage"]["total_files"].is_number());
+        assert!(content["coverage"]["percentage"].is_string());
+        let by_type = content["pages_by_type"].as_object().unwrap();
+        assert_eq!(by_type["architecture"].as_u64().unwrap(), 1);
+        assert_eq!(by_type["module"].as_u64().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_wiki_tools_listed_when_available() {
+        let defs = tool_definitions(false, false, true);
+        let tools = defs["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"wiki_search"));
+        assert!(names.contains(&"wiki_read"));
+        assert!(names.contains(&"wiki_status"));
+        assert_eq!(names.len(), 6); // 3 compound + 3 wiki
+    }
+
+    #[test]
+    fn test_wiki_tools_hidden_when_unavailable() {
+        let defs = tool_definitions(false, false, false);
+        let tools = defs["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(!names.contains(&"wiki_search"));
+        assert!(!names.contains(&"wiki_read"));
+        assert!(!names.contains(&"wiki_status"));
+    }
+
+    #[test]
+    fn test_wiki_search_unicode_content() {
+        let store = WikiStore {
+            root: PathBuf::from("/tmp/test-wiki"),
+            manifest: WikiManifest {
+                version: 1,
+                generated_at_ref: "abc1234".to_string(),
+                generated_at: "2026-04-05T10:00:00Z".to_string(),
+                pages: vec![],
+            },
+            pages: vec![WikiPage {
+                frontmatter: Frontmatter {
+                    id: "unicode-test".to_string(),
+                    title: "Unicode Test".to_string(),
+                    page_type: PageType::Module,
+                    source_files: vec![],
+                    generated_at_ref: "abc1234".to_string(),
+                    generated_at: "2026-04-05T10:00:00Z".to_string(),
+                    links_to: vec![],
+                    covers: vec![],
+                },
+                content: "# Ünïcödé Tëst\n\nThis module uses résumé and naïve approaches with Ñoño patterns.".to_string(),
+            }],
+        };
+        // Should not panic on non-ASCII content
+        let result = tool_wiki_search(&store, &json!({"query": "résumé"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(content["matches"].as_u64().unwrap() > 0);
+    }
 }

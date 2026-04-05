@@ -681,6 +681,11 @@ With `--all-tools`, all 23 granular tools are also exposed. Key granular tools:
 - `get_type_flow` — track where a type flows across function boundaries
 - `regenerate_index` — re-index after code changes
 
+If built with `--features wiki` and a wiki exists (`indxr wiki generate`):
+- `wiki_search(query)` — search the codebase knowledge wiki by keyword. **Use first for understanding modules/architecture.**
+- `wiki_read(page)` — read a wiki page by ID (e.g. `"architecture"`, `"mod-mcp"`)
+- `wiki_status()` — check wiki health: page count, staleness, coverage
+
 ### When to use the Read tool instead
 - You need to **edit** a file (Read is required before Edit)
 - You need exact formatting/whitespace that `read` doesn't preserve
@@ -777,6 +782,9 @@ An MCP server called `indxr` is available with 3 compound tools. Always use indx
 - Read full source files just to understand what's in them — use `summarize(path)`
 - Dump all files into context — use MCP tools to be surgical
 - Use `git diff` when `get_diff_summary` would suffice (requires `--all-tools`)
+
+## Wiki tools (if available)
+If a codebase wiki exists, use `wiki_search(query)` and `wiki_read(page)` as a first step for understanding architecture and module design before diving into structural tools.
 
 ## After making code changes
 Run `regenerate_index` to keep the index current.

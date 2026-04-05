@@ -1,7 +1,7 @@
 # Codebase Index: indxr
 
-> Generated: 2026-03-29 05:28:40 UTC | Files: 72 | Lines: 36646
-> Languages: JSON (3), Markdown (15), Python (11), Rust (41), Shell (1), TOML (1)
+> Generated: 2026-04-05 17:00:57 UTC | Files: 76 | Lines: 42317
+> Languages: JSON (4), Markdown (17), Python (2), Rust (51), Shell (1), TOML (1)
 
 ## Directory Structure
 
@@ -13,21 +13,12 @@ indxr/
   README.md
   accuracy_bench.py
   accuracy_questions.json
-  bench/
-    __init__.py
-    __main__.py
-    agent.py
-    output.py
-    runner.py
-    scoring.py
-    stats.py
-    tools_baseline.py
-    tools_indxr.py
   bench_questions/
     indxr.json
   benchmark.md
   benchmark.sh
   benchmark_results.json
+  benchmark_results_v2.json
   docs/
     agent-integration.md
     caching.md
@@ -39,6 +30,7 @@ indxr/
     mcp-server.md
     output-formats.md
     token-budget.md
+  plan.md
   roadmap.md
   src/
     budget.rs
@@ -54,6 +46,11 @@ indxr/
     indexer.rs
     init.rs
     languages.rs
+    llm/
+      claude.rs
+      command.rs
+      mod.rs
+      openai.rs
     main.rs
     mcp/
       helpers.rs
@@ -88,8 +85,17 @@ indxr/
     walker/
       mod.rs
     watch.rs
+    wiki/
+      generate.rs
+      mod.rs
+      page.rs
+      prompts.rs
+      store.rs
     workspace.rs
+  tests/
+    wiki_integration.rs
   token_count.py
+  wiki-plan.md
 ```
 
 ---
@@ -114,6 +120,8 @@ indxr/
 - `# Complexity hotspots`
 - `# Dependency graph`
 - `# Other`
+- `# Note: serve, watch, and diff subcommands also accept shared indexing options:`
+- `# --max-depth, --max-file-size, -e/--exclude, --no-gitignore, --cache-dir, --member, --no-workspace`
 
 **Cargo.toml**
 - `[package]`
@@ -149,59 +157,6 @@ indxr/
 - `"version": 1`
 - `"description": "indxr accuracy benchmark: measures LLM answer quality with full-file context vs indxr structural context"`
 - `"questions": [`
-
-**bench/agent.py**
-- `API_DELAY = 0.3`
-- `@dataclass class ToolCall`
-- `@dataclass class AgentResult`
-- `BASELINE_SYSTEM_PROMPT = ( "You are answering a question about a codebase. " "Use the provided tools to explore the code and find the answer. " "Be thorough but efficient — use the minimum tools needed to answer confidently. " "When you have enough information, stop calling tools and give your final answer. " "Answer concisely and precisely. Include file paths, function names, " "types, and other concrete details. Do not hedge or speculate. " "If you cannot determine the answer from the available tools, say so clearly." )`
-- `def make_indxr_system_prompt(tree_context: str) -> str`
-- `def run_agent(
-    client,
-    model: str,
-    tools: list[dict],
-    execute_tool: Callable[[str, dict], str],
-    question: str,
-    max_rounds: int = 10,
-    max_input_tokens: int = 50_000,
-    system_prompt: str = BASELINE_SYSTEM_PROMPT,
-) -> AgentResult`
-
-**bench/output.py**
-- `def print_results(question_stats, summary, model: str, verbose: bool = False)`
-- `def write_json(question_stats, summary, all_runs, metadata, output_path: str)`
-
-**bench/runner.py**
-- `DEFAULT_MODEL = "claude-sonnet-4-6"`
-- `DEFAULT_QUESTIONS = "bench_questions/indxr.json"`
-- `DEFAULT_OUTPUT = "benchmark_results_v2.json"`
-- `def main()`
-
-**bench/scoring.py**
-- `@dataclass class ScoreResult`
-- `def score_answer(question: dict, answer: str) -> ScoreResult`
-
-**bench/stats.py**
-- `@dataclass class QuestionStats`
-- `@dataclass class SummaryStats`
-- `def compute_question_stats(
-    question_id: str, category: str, runs: list[dict]
-) -> QuestionStats`
-- `def compute_summary(
-    question_stats: list[QuestionStats], n_runs: int
-) -> SummaryStats`
-- `def bootstrap_ci(
-    data: list[float],
-    n_bootstrap: int = 10_000,
-    ci: float = 0.95,
-) -> tuple[float, float]`
-
-**bench/tools_baseline.py**
-- `def make_baseline_tools() -> list[dict]`
-- `class BaselineToolkit`
-
-**bench/tools_indxr.py**
-- `class IndxrToolkit`
 
 **bench_questions/indxr.json**
 - `"version": 2`
@@ -261,6 +216,12 @@ indxr/
 - `"metadata": {`
 - `"results": [`
 - `"summary": {`
+
+**benchmark_results_v2.json**
+- `"metadata": {`
+- `"summary": {`
+- `"per_question": [`
+- `"runs": [`
 
 **docs/agent-integration.md**
 - `# Agent Integration Guide`
@@ -411,7 +372,7 @@ indxr/
 - `# Start on a specific address`
 - `# Send initialize`
 - `# Send initialized notification`
-- `# Call a tool`
+- `# Call a compound tool`
 - `# Initialize (creates a session)`
 - `# Response includes Mcp-Session-Id header`
 - `# Call a tool (include session ID)`
@@ -430,6 +391,10 @@ indxr/
 - `# Public API within budget`
 - `# Scoped to a directory within budget`
 - `# Specific language within budget`
+
+**plan.md**
+- `# ⚠️  DO NOT COMMIT OR PUSH THIS FILE — local planning only ⚠️`
+- `# Plan: Adapt cx Ideas into indxr`
 
 **roadmap.md**
 - `# indxr Roadmap`
@@ -450,6 +415,7 @@ indxr/
 - `pub struct Cli`
 - `pub struct IndexOpts`
 - `pub enum Command`
+- `pub enum WikiAction`
 - `pub enum OutputFormat`
 - `pub enum GraphFormat`
 - `pub enum GraphLevel`
@@ -477,7 +443,7 @@ indxr/
 - `pub fn get_added_files(root: &Path, since_ref: &str) -> Result<Vec<PathBuf>>`
 - `pub fn get_deleted_files(root: &Path, since_ref: &str) -> Result<Vec<PathBuf>>`
 - `pub fn get_file_at_ref(root: &Path, file_path: &Path, git_ref: &str) -> Result<Option<String>>`
-- `pub fn compute_structural_diff( current_index: &CodebaseIndex, old_files: &HashMap<PathBuf, FileIndex>, changed_paths: &[PathBuf], ) -> StructuralDiff`
+- `pub fn compute_structural_diff<'a>( current_files: impl IntoIterator<Item = &'a FileIndex>, old_files: &HashMap<PathBuf, FileIndex>, changed_paths: &[PathBuf], ) -> StructuralDiff`
 - `pub fn format_diff_markdown(diff: &StructuralDiff) -> String`
 - `pub fn format_diff_json(diff: &StructuralDiff) -> Result<String>`
 
@@ -510,6 +476,22 @@ indxr/
 
 **src/languages.rs**
 - `pub enum Language`
+
+**src/llm/claude.rs**
+- `pub async fn complete( client: &reqwest::Client, api_key: &str, model: &str, system: &str, messages: &[Message], max_tokens: usize, ) -> Result<String>`
+
+**src/llm/command.rs**
+- `pub async fn complete( cmd: &str, system: &str, messages: &[Message], max_tokens: usize, ) -> Result<String>`
+
+**src/llm/mod.rs**
+- `pub struct Message`
+- `pub enum Role`
+- `pub struct LlmConfig`
+- `pub enum Provider`
+- `pub struct LlmClient`
+
+**src/llm/openai.rs**
+- `pub async fn complete( client: &reqwest::Client, api_key: &str, base_url: &str, model: &str, system: &str, messages: &[Message], max_tokens: usize, ) -> Result<String>`
 
 **src/mcp/helpers.rs**
 - `pub(super) fn tool_result(content: Value) -> Value`
@@ -549,7 +531,7 @@ indxr/
 - `pub fn run_mcp_server( mut workspace: WorkspaceIndex, config: WorkspaceConfig, watch: bool, debounce_ms: u64, all_tools: bool, ) -> anyhow::Result<()>`
 
 **src/mcp/tools.rs**
-- `pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value`
+- `pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_available: bool) -> Value`
 - `pub(super) fn handle_tool_call(workspace: &WorkspaceIndex, name: &str, args: &Value) -> Value`
 - `pub(super) fn looks_like_file(s: &str) -> bool`
 - `pub(super) fn tool_regenerate_index( workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, ) -> Value`
@@ -574,6 +556,9 @@ indxr/
 - `pub(super) fn tool_get_hotspots(workspace: &WorkspaceIndex, args: &Value) -> Value`
 - `pub(super) fn tool_get_health(workspace: &WorkspaceIndex, args: &Value) -> Value`
 - `pub(super) fn tool_get_type_flow(workspace: &WorkspaceIndex, args: &Value) -> Value`
+- `pub(super) fn tool_wiki_search(store: &crate::wiki::store::WikiStore, args: &Value) -> Value`
+- `pub(super) fn tool_wiki_read(store: &crate::wiki::store::WikiStore, args: &Value) -> Value`
+- `pub(super) fn tool_wiki_status( store: &crate::wiki::store::WikiStore, workspace: &WorkspaceIndex, ) -> Value`
 
 **src/mcp/type_flow.rs**
 - `pub(super) struct TypeInfo`
@@ -688,6 +673,32 @@ indxr/
 - `pub fn run_watch(opts: WatchOptions) -> Result<()>`
 - `pub fn spawn_watcher( root: &Path, cache_dir: &Path, output_path: &Path, debounce_ms: u64, ) -> Result<(mpsc::Receiver<()>, WatchGuard)>`
 
+**src/wiki/generate.rs**
+- `pub struct UpdateResult`
+- `pub struct WikiGenerator<'a>`
+
+**src/wiki/mod.rs**
+- `pub mod page`
+- `pub mod store`
+- `pub async fn run_wiki_command( action: &WikiAction, workspace: WorkspaceIndex, wiki_dir_override: &Option<PathBuf>, model_override: Option<&str>, exec_cmd: Option<&str>, ) -> Result<()>`
+
+**src/wiki/page.rs**
+- `pub struct WikiPage`
+- `pub struct Frontmatter`
+- `pub enum PageType`
+- `pub fn sanitize_id(id: &str) -> String`
+
+**src/wiki/prompts.rs**
+- `pub fn plan_system_prompt() -> &'static str`
+- `pub fn page_system_prompt(page_type: &str) -> String`
+- `pub fn index_system_prompt() -> &'static str`
+- `pub fn update_system_prompt() -> &'static str`
+
+**src/wiki/store.rs**
+- `pub struct ManifestEntry`
+- `pub struct WikiManifest`
+- `pub struct WikiStore`
+
 **src/workspace.rs**
 - `pub enum WorkspaceKind`
 - `pub struct WorkspaceMember`
@@ -700,11 +711,17 @@ indxr/
 - `def count_claude(text: str) -> int | None`
 - `def main()`
 
+**wiki-plan.md**
+- `# Wiki Feature — Phase 2 & 3 Plan`
+- `# Current Wiki Page`
+- `# Structural Changes Since <old_ref>`
+- `# Fresh Structural Data`
+
 ---
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 11.6 KB | **Lines:** 203
+**Language:** Markdown | **Size:** 14.3 KB | **Lines:** 235
 
 **Declarations:**
 
@@ -712,7 +729,7 @@ indxr/
 
 ## Cargo.toml
 
-**Language:** TOML | **Size:** 1.4 KB | **Lines:** 52
+**Language:** TOML | **Size:** 1.5 KB | **Lines:** 54
 
 **Imports:**
 - `anyhow`
@@ -725,7 +742,7 @@ indxr/
 - `regex`
 - `serde`
 - `serde_json`
-- *... and 22 more imports*
+- *... and 23 more imports*
 
 **Declarations:**
 
@@ -733,7 +750,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 80.9 KB | **Lines:** 2938
+**Language:** Markdown | **Size:** 88.5 KB | **Lines:** 3229
 
 **Declarations:**
 
@@ -775,134 +792,6 @@ indxr/
 
 ---
 
-## bench/__init__.py
-
-**Language:** Python | **Size:** 58 B | **Lines:** 1
-
----
-
-## bench/__main__.py
-
-**Language:** Python | **Size:** 73 B | **Lines:** 4
-
-**Imports:**
-- `from .runner import main`
-
----
-
-## bench/agent.py
-
-**Language:** Python | **Size:** 7.0 KB | **Lines:** 213
-
-**Imports:**
-- `import time`
-- `from dataclasses import dataclass, field`
-- `from typing import Callable`
-
-**Declarations:**
-
-`def _extract_text(content) -> str`
-
----
-
-## bench/output.py
-
-**Language:** Python | **Size:** 7.0 KB | **Lines:** 177
-
-**Imports:**
-- `import json`
-- `import time`
-- `from .stats import _mean`
-
-**Declarations:**
-
-`def _print_stat(label: str, value: float, ci=None)`
-
----
-
-## bench/runner.py
-
-**Language:** Python | **Size:** 12.2 KB | **Lines:** 334
-
-**Imports:**
-- `import argparse`
-- `import json`
-- `import math`
-- `import os`
-- `import sys`
-- `import time`
-- `from dataclasses import asdict`
-- `from pathlib import Path`
-- `from .agent import run_agent, BASELINE_SYSTEM_PROMPT, make_indxr_system_prompt`
-- `from .tools_baseline import make_baseline_tools, BaselineToolkit`
-- *... and 4 more imports*
-
-**Declarations:**
-
-`def _indicator(s: float) -> str`
-
-`def _dry_run(questions, baseline_tools, indxr_tools)`
-
-`def _estimate_schema_tokens(tools: list[dict], system_prompt: str) -> int`
-
----
-
-## bench/scoring.py
-
-**Language:** Python | **Size:** 3.0 KB | **Lines:** 88
-
-**Imports:**
-- `import re`
-- `from dataclasses import dataclass`
-
-**Declarations:**
-
----
-
-## bench/stats.py
-
-**Language:** Python | **Size:** 5.6 KB | **Lines:** 171
-
-**Imports:**
-- `import random`
-- `from dataclasses import dataclass, field`
-
-**Declarations:**
-
-`def _mean(data) -> float`
-
----
-
-## bench/tools_baseline.py
-
-**Language:** Python | **Size:** 7.7 KB | **Lines:** 228
-
-**Imports:**
-- `import os`
-- `import subprocess`
-- `from pathlib import Path`
-
-**Declarations:**
-
----
-
-## bench/tools_indxr.py
-
-**Language:** Python | **Size:** 4.2 KB | **Lines:** 137
-
-**Imports:**
-- `import json`
-- `import os`
-- `import subprocess`
-- `import sys`
-- `from pathlib import Path`
-
-**Declarations:**
-
-`def _find_indxr() -> str`
-
----
-
 ## bench_questions/indxr.json
 
 **Language:** JSON | **Size:** 22.0 KB | **Lines:** 437
@@ -935,9 +824,17 @@ indxr/
 
 ---
 
+## benchmark_results_v2.json
+
+**Language:** JSON | **Size:** 400.6 KB | **Lines:** 2557
+
+**Declarations:**
+
+---
+
 ## docs/agent-integration.md
 
-**Language:** Markdown | **Size:** 17.7 KB | **Lines:** 499
+**Language:** Markdown | **Size:** 18.2 KB | **Lines:** 504
 
 **Declarations:**
 
@@ -945,7 +842,7 @@ indxr/
 
 ## docs/caching.md
 
-**Language:** Markdown | **Size:** 2.5 KB | **Lines:** 87
+**Language:** Markdown | **Size:** 2.6 KB | **Lines:** 87
 
 **Declarations:**
 
@@ -1010,6 +907,14 @@ indxr/
 ## docs/token-budget.md
 
 **Language:** Markdown | **Size:** 3.3 KB | **Lines:** 92
+
+**Declarations:**
+
+---
+
+## plan.md
+
+**Language:** Markdown | **Size:** 8.9 KB | **Lines:** 216
 
 **Declarations:**
 
@@ -1111,7 +1016,7 @@ indxr/
 
 ## src/cli.rs
 
-**Language:** Rust | **Size:** 10.3 KB | **Lines:** 371
+**Language:** Rust | **Size:** 11.8 KB | **Lines:** 424
 
 **Imports:**
 - `std::path::PathBuf`
@@ -1177,7 +1082,7 @@ indxr/
 
 ## src/diff.rs
 
-**Language:** Rust | **Size:** 16.3 KB | **Lines:** 484
+**Language:** Rust | **Size:** 16.4 KB | **Lines:** 483
 
 **Imports:**
 - `std::collections::{HashMap, HashSet}`
@@ -1185,8 +1090,8 @@ indxr/
 - `std::process::Command`
 - `anyhow::{Context, Result}`
 - `serde::Serialize`
+- `crate::model::FileIndex`
 - `crate::model::declarations::{DeclKind, Declaration}`
-- `crate::model::{CodebaseIndex, FileIndex}`
 
 **Declarations:**
 
@@ -1297,7 +1202,7 @@ indxr/
 
 ## src/init.rs
 
-**Language:** Rust | **Size:** 53.7 KB | **Lines:** 1502
+**Language:** Rust | **Size:** 53.5 KB | **Lines:** 1501
 
 **Imports:**
 - `std::fs`
@@ -1410,9 +1315,122 @@ indxr/
 
 ---
 
+## src/llm/claude.rs
+
+**Language:** Rust | **Size:** 2.1 KB | **Lines:** 89
+
+**Imports:**
+- `anyhow::{Context, Result, bail}`
+- `serde::Deserialize`
+- `super::{Message, TransientLlmError}`
+
+**Declarations:**
+
+`struct ClaudeResponse`
+> Fields: `content: Vec<ContentBlock>`, `error: Option<ClaudeError>`
+
+`struct ContentBlock`
+> Fields: `text: Option<String>`
+
+`struct ClaudeError`
+> Fields: `message: String`
+
+`struct ClaudeErrorResponse`
+> Fields: `error: ClaudeError`
+
+---
+
+## src/llm/command.rs
+
+**Language:** Rust | **Size:** 2.6 KB | **Lines:** 83
+
+**Imports:**
+- `std::time::Duration`
+- `anyhow::{Context, Result, bail}`
+- `tokio::io::AsyncWriteExt`
+- `tokio::process::Command`
+- `super::{Message, TransientLlmError}`
+
+**Declarations:**
+
+`const COMMAND_TIMEOUT: Duration = Duration::from_secs(300)`
+
+---
+
+## src/llm/mod.rs
+
+**Language:** Rust | **Size:** 6.9 KB | **Lines:** 220
+
+**Imports:**
+- `std::time::Duration`
+- `anyhow::{Result, bail}`
+- `serde::{Deserialize, Serialize}`
+
+**Declarations:**
+
+`mod claude`
+
+`mod command`
+
+`mod openai`
+
+`pub(crate) struct TransientLlmError(pub String)`
+
+**`impl std::fmt::Display for TransientLlmError`**
+  `fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result`
+
+
+**`impl std::error::Error for TransientLlmError`**
+
+**`impl LlmClient`**
+  `pub fn from_env(model_override: Option<&str>) -> Result<Self>`
+
+  `pub fn from_command(cmd: String, model_override: Option<&str>) -> Self`
+
+  `pub fn with_config(config: LlmConfig) -> Self`
+
+  `pub fn with_max_tokens(mut self, max_tokens: usize) -> Self`
+
+  `pub async fn complete(&self, system: &str, messages: &[Message]) -> Result<String>`
+
+  `async fn complete_once(&self, system: &str, messages: &[Message]) -> Result<String>`
+
+  `pub fn model(&self) -> &str`
+
+
+---
+
+## src/llm/openai.rs
+
+**Language:** Rust | **Size:** 2.5 KB | **Lines:** 101
+
+**Imports:**
+- `anyhow::{Context, Result, bail}`
+- `serde::Deserialize`
+- `super::{Message, Role, TransientLlmError}`
+
+**Declarations:**
+
+`struct ChatResponse`
+> Fields: `choices: Vec<Choice>`
+
+`struct Choice`
+> Fields: `message: ChatMessage`
+
+`struct ChatMessage`
+> Fields: `content: Option<String>`
+
+`struct OpenAiError`
+> Fields: `error: OpenAiErrorDetail`
+
+`struct OpenAiErrorDetail`
+> Fields: `message: String`
+
+---
+
 ## src/main.rs
 
-**Language:** Rust | **Size:** 14.2 KB | **Lines:** 497
+**Language:** Rust | **Size:** 14.5 KB | **Lines:** 514
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1451,6 +1469,8 @@ indxr/
 
 `mod languages`
 
+`mod llm`
+
 `mod mcp`
 
 `mod model`
@@ -1464,6 +1484,8 @@ indxr/
 `mod walker`
 
 `mod watch`
+
+`mod wiki`
 
 `mod workspace`
 
@@ -1497,7 +1519,7 @@ indxr/
 
 ## src/mcp/http.rs
 
-**Language:** Rust | **Size:** 39.2 KB | **Lines:** 1154
+**Language:** Rust | **Size:** 40.0 KB | **Lines:** 1178
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1515,7 +1537,7 @@ indxr/
 **Declarations:**
 
 `struct AppState`
-> Fields: `index: RwLock<WorkspaceIndex>`, `config: WorkspaceConfig`, `registry: ParserRegistry`, `notify_tx: broadcast::Sender<SseEvent>`, `sessions: AsyncRwLock<HashMap<String, SessionInfo>>`, `all_tools: bool`
+> Fields: `index: RwLock<WorkspaceIndex>`, `config: WorkspaceConfig`, `registry: ParserRegistry`, `notify_tx: broadcast::Sender<SseEvent>`, `sessions: AsyncRwLock<HashMap<String, SessionInfo>>`, `all_tools: bool`, `wiki_store: super::WikiStoreOption`
 
 `struct SessionInfo`
 > Fields: `last_accessed: Instant`, `close_tx: watch::Sender<bool>`
@@ -1559,7 +1581,7 @@ indxr/
 
 ## src/mcp/mod.rs
 
-**Language:** Rust | **Size:** 15.7 KB | **Lines:** 499
+**Language:** Rust | **Size:** 18.3 KB | **Lines:** 572
 
 **Imports:**
 - `std::io::{self, BufRead, Write}`
@@ -1574,6 +1596,7 @@ indxr/
 - `self::tools::{
     handle_tool_call, tool_definitions, tool_get_diff_summary, tool_regenerate_index,
 }`
+- *... and 1 more imports*
 
 **Declarations:**
 
@@ -1584,6 +1607,10 @@ indxr/
 `mod type_flow`
 
 `mod tests`
+
+`pub(crate) type WikiStoreOption = Option<crate::wiki::store::WikiStore>`
+
+`pub(crate) type WikiStoreOption = ()`
 
 `pub(crate) struct JsonRpcRequest`
 > Fields: `jsonrpc: String`, `id: Option<Value>`, `method: String`, `params: Option<Value>`
@@ -1603,18 +1630,18 @@ indxr/
 
 `pub(crate) fn handle_initialize(id: Value, transport: Transport) -> JsonRpcResponse`
 
-`pub(crate) fn handle_tools_list( id: Value, workspace: &WorkspaceIndex, all_tools: bool, ) -> JsonRpcResponse`
+`pub(crate) fn handle_tools_list( id: Value, workspace: &WorkspaceIndex, all_tools: bool, wiki_store: &WikiStoreOption, ) -> JsonRpcResponse`
 
-`pub(crate) fn handle_tools_call( id: Value, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, params: &Value, ) -> JsonRpcResponse`
+`pub(crate) fn handle_tools_call( id: Value, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, params: &Value, wiki_store: &WikiStoreOption, ) -> JsonRpcResponse`
 
 `enum ServerEvent`
 > Variants: `StdinLine`, `StdinClosed`, `FileChanged`
 
-`pub(crate) fn process_jsonrpc_request( request: JsonRpcRequest, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, all_tools: bool, ) -> Option<JsonRpcResponse>`
+`pub(crate) fn process_jsonrpc_request( request: JsonRpcRequest, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, all_tools: bool, wiki_store: &WikiStoreOption, ) -> Option<JsonRpcResponse>`
 
-`pub(crate) fn process_jsonrpc_message( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, all_tools: bool, ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse>`
+`pub(crate) fn process_jsonrpc_message( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, transport: Transport, all_tools: bool, wiki_store: &WikiStoreOption, ) -> Result<Option<JsonRpcResponse>, JsonRpcResponse>`
 
-`fn handle_stdin_line( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, writer: &mut impl Write, all_tools: bool, ) -> anyhow::Result<()>`
+`fn handle_stdin_line( line: &str, workspace: &mut WorkspaceIndex, config: &WorkspaceConfig, registry: &ParserRegistry, writer: &mut impl Write, all_tools: bool, wiki_store: &WikiStoreOption, ) -> anyhow::Result<()>`
 
 `mod coalesce_tests`
 
@@ -1622,7 +1649,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 104.8 KB | **Lines:** 2996
+**Language:** Rust | **Size:** 123.8 KB | **Lines:** 3488
 
 **Imports:**
 - `std::collections::HashMap`
@@ -1640,6 +1667,10 @@ indxr/
 - *... and 3 more imports*
 
 **Declarations:**
+
+`fn test_wiki_store() -> WikiStoreOption`
+
+`fn test_wiki_store() -> WikiStoreOption`
 
 `fn wrap_workspace(index: CodebaseIndex) -> WorkspaceIndex`
 
@@ -1989,11 +2020,31 @@ indxr/
 
 `fn test_compound_find_kind_ignored_for_non_relevant_modes()`
 
+`fn test_compound_find_forwards_member_symbol_mode()`
+
+`fn test_compound_find_forwards_member_relevant_mode()`
+
+`fn test_compound_find_forwards_member_callers_mode()`
+
+`fn test_compound_find_forwards_member_signature_mode()`
+
+`fn test_compound_summarize_forwards_member()`
+
+`fn test_tool_get_callers_compact()`
+
+`fn test_tool_get_callers_non_compact()`
+
+`fn test_tool_batch_file_summaries_compact()`
+
+`fn test_tool_batch_file_summaries_non_compact()`
+
+`mod wiki_tests`
+
 ---
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 84.3 KB | **Lines:** 2424
+**Language:** Rust | **Size:** 96.2 KB | **Lines:** 2752
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2025,6 +2076,8 @@ indxr/
 
 `fn merge_member_diffs( workspace: &WorkspaceIndex, old_files: &HashMap<PathBuf, FileIndex>, changed_paths: &[PathBuf], ) -> MergedStructuralDiff`
 
+`fn forward_member(from: &Value, to: &mut Value)`
+
 `fn tool_find(workspace: &WorkspaceIndex, args: &Value) -> Value`
 
 `fn tool_summarize(workspace: &WorkspaceIndex, args: &Value) -> Value`
@@ -2032,6 +2085,10 @@ indxr/
 `fn is_known_directory(workspace: &WorkspaceIndex, name: &str) -> bool`
 
 `fn tool_list_workspace_members(workspace: &WorkspaceIndex) -> Value`
+
+`fn extract_excerpt(content: &str, query: &str, max_chars: usize) -> String`
+
+`fn format_wiki_page(page: &crate::wiki::page::WikiPage) -> Value`
 
 ---
 
@@ -2884,6 +2941,197 @@ indxr/
 
 ---
 
+## src/wiki/generate.rs
+
+**Language:** Rust | **Size:** 34.2 KB | **Lines:** 999
+
+**Imports:**
+- `std::collections::{HashMap, HashSet}`
+- `std::path::{Path, PathBuf}`
+- `std::process::Command`
+- `anyhow::{Context, Result}`
+- `serde::Deserialize`
+- `crate::diff`
+- `crate::languages::Language`
+- `crate::llm::{LlmClient, Message, Role}`
+- `crate::model::declarations::{Declaration, Visibility}`
+- `crate::model::{FileIndex, TreeEntry, WorkspaceIndex}`
+- *... and 4 more imports*
+
+**Declarations:**
+
+`struct PagePlan`
+> Fields: `id: String`, `page_type: PageType`, `title: String`, `source_files: Vec<String>`
+
+**`impl<'a> WikiGenerator<'a>`**
+  `pub fn new(llm: &'a LlmClient, workspace: &'a WorkspaceIndex) -> Self`
+
+  `fn build_file_index( workspace: &'a WorkspaceIndex, ) -> HashMap<String, Vec<(&'a FileIndex, String)>>`
+
+  `pub async fn generate_full(&self, wiki_dir: &Path, dry_run: bool) -> Result<WikiStore>`
+
+  `pub async fn update_affected( &self, store: &mut WikiStore, since_ref: &str, ) -> Result<UpdateResult>`
+
+  `async fn update_page( &self, existing: &WikiPage, diff_markdown: &str, all_pages_str: &str, git_ref: &str, timestamp: &str, ) -> Result<WikiPage>`
+
+  `fn collect_all_file_refs(&self) -> Vec<&'a FileIndex>`
+
+  `async fn plan_structure(&self) -> Result<Vec<PagePlan>>`
+
+  `async fn generate_page( &self, plan: &PagePlan, all_pages_str: &str, git_ref: &str, timestamp: &str, ) -> Result<WikiPage>`
+
+  `async fn generate_index( &self, pages: &[WikiPage], git_ref: &str, timestamp: &str, ) -> Result<WikiPage>`
+
+  `fn build_planning_context(&self) -> String`
+
+  `fn build_page_context(&self, plan: &PagePlan, all_pages_str: &str) -> String`
+
+  `fn extract_covers(&self, source_files: &[String]) -> Vec<String>`
+
+  `fn find_file(&self, path: &str) -> Option<&'a FileIndex>`
+
+
+`fn format_tree(entries: &[TreeEntry], out: &mut String)`
+
+`fn format_declarations(decls: &[Declaration], out: &mut String, depth: usize)`
+
+`fn count_declarations(decls: &[Declaration]) -> usize`
+
+`fn count_public(decls: &[Declaration]) -> usize`
+
+`fn current_git_ref(root: &Path) -> Result<String>`
+
+`fn extract_json(text: &str) -> &str`
+
+`fn floor_char_boundary(s: &str, max: usize) -> usize`
+
+`fn extract_wiki_links(content: &str) -> Vec<String>`
+
+`mod tests`
+
+---
+
+## src/wiki/mod.rs
+
+**Language:** Rust | **Size:** 8.9 KB | **Lines:** 288
+
+**Imports:**
+- `std::collections::{HashMap, HashSet}`
+- `std::path::PathBuf`
+- `std::process::Command`
+- `anyhow::Result`
+- `crate::cli::WikiAction`
+- `crate::diff`
+- `crate::llm::LlmClient`
+- `crate::model::WorkspaceIndex`
+- `generate::WikiGenerator`
+
+**Declarations:**
+
+`mod generate`
+
+`mod prompts`
+
+`pub(crate) struct WikiHealthReport`
+> Fields: `pages: usize`, `pages_by_type: HashMap<String, usize>`, `generated_at_ref: String`, `generated_at: String`, `commits_behind: usize`, `staleness: String`, `covered_files: usize`, `total_files: usize`, `coverage_pct: String`, `affected_pages: Vec<String>`, `uncovered_files: Vec<String>`
+
+`pub(crate) fn compute_wiki_health( store: &store::WikiStore, workspace: &WorkspaceIndex, ) -> WikiHealthReport`
+
+`fn build_llm_client( exec_cmd: Option<&str>, model_override: Option<&str>, max_tokens: usize, ) -> Result<LlmClient>`
+
+`fn resolve_wiki_dir(override_dir: &Option<PathBuf>, workspace_root: &std::path::Path) -> PathBuf`
+
+`pub(crate) fn commits_behind(root: &std::path::Path, since_ref: &str) -> Result<usize>`
+
+---
+
+## src/wiki/page.rs
+
+**Language:** Rust | **Size:** 6.1 KB | **Lines:** 190
+
+**Imports:**
+- `anyhow::{Context, Result, bail}`
+- `serde::{Deserialize, Serialize}`
+
+**Declarations:**
+
+**`impl std::fmt::Display for PageType`**
+  `fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result`
+
+
+**`impl PageType`**
+  `pub fn as_str(&self) -> &'static str`
+
+  `fn as_str_title(&self) -> &'static str`
+
+
+**`impl PageType`**
+  `pub fn subdir(&self) -> Option<&'static str>`
+
+
+**`impl WikiPage`**
+  `pub fn parse(text: &str) -> Result<Self>`
+
+  `pub fn render(&self) -> Result<String>`
+
+  `pub fn filename(&self) -> String`
+
+
+`mod tests`
+
+---
+
+## src/wiki/prompts.rs
+
+**Language:** Rust | **Size:** 4.7 KB | **Lines:** 93
+
+**Declarations:**
+
+---
+
+## src/wiki/store.rs
+
+**Language:** Rust | **Size:** 6.0 KB | **Lines:** 199
+
+**Imports:**
+- `std::fs`
+- `std::path::{Path, PathBuf}`
+- `anyhow::{Context, Result}`
+- `serde::{Deserialize, Serialize}`
+- `super::page::{PageType, WikiPage}`
+
+**Declarations:**
+
+**`impl Default for WikiManifest`**
+  `fn default() -> Self`
+
+
+**`impl WikiStore`**
+  `pub fn new(wiki_dir: &Path) -> Self`
+
+  `pub fn load(wiki_dir: &Path) -> Result<Self>`
+
+  `pub fn save(&self) -> Result<()>`
+
+  `pub fn save_incremental(&self, page_id: &str) -> Result<()>`
+
+  `fn ensure_subdirs(&self) -> Result<()>`
+
+  `fn write_page(&self, page: &WikiPage) -> Result<()>`
+
+  `fn save_manifest(&self) -> Result<()>`
+
+  `pub fn get_page(&self, id: &str) -> Option<&WikiPage>`
+
+  `pub fn pages_covering_file(&self, path: &str) -> Vec<&WikiPage>`
+
+  `pub fn upsert_page(&mut self, page: WikiPage)`
+
+
+`fn page_relative_path(page: &WikiPage) -> String`
+
+---
+
 ## src/workspace.rs
 
 **Language:** Rust | **Size:** 22.9 KB | **Lines:** 773
@@ -2925,6 +3173,41 @@ indxr/
 
 ---
 
+## tests/wiki_integration.rs
+
+**Language:** Rust | **Size:** 12.5 KB | **Lines:** 421
+
+**Imports:**
+- `std::fs`
+- `std::io::Write`
+- `std::os::unix::fs::PermissionsExt`
+- `std::process::Command`
+- `tempfile::TempDir`
+
+**Declarations:**
+
+`fn create_mock_llm_script(dir: &std::path::Path) -> std::path::PathBuf`
+
+`fn create_test_project(dir: &std::path::Path)`
+
+`fn indxr_bin() -> std::path::PathBuf`
+
+`fn test_wiki_generate_with_exec()`
+
+`fn test_wiki_dry_run_does_not_write()`
+
+`fn test_wiki_status_no_wiki()`
+
+`fn test_wiki_status_after_generate()`
+
+`fn test_wiki_update_after_code_change()`
+
+`fn test_wiki_update_no_changes()`
+
+`fn test_mock_llm_script_returns_valid_plan()`
+
+---
+
 ## token_count.py
 
 **Language:** Python | **Size:** 2.9 KB | **Lines:** 89
@@ -2933,6 +3216,14 @@ indxr/
 - `import sys`
 - `import os`
 - `import argparse`
+
+**Declarations:**
+
+---
+
+## wiki-plan.md
+
+**Language:** Markdown | **Size:** 8.3 KB | **Lines:** 253
 
 **Declarations:**
 

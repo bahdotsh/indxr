@@ -65,7 +65,7 @@ fn member_property() -> Value {
     })
 }
 
-pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value {
+pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_available: bool) -> Value {
     let mut defs = json!({
         "tools": [
             // -- Compound tools (default surface: 3 tools, ~420 tok/round) --
@@ -605,6 +605,54 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool) -> Value {
             }
         ]
     });
+
+    // Append wiki tools when the wiki feature is compiled in and a wiki exists.
+    #[cfg(feature = "wiki")]
+    if wiki_available {
+        if let Some(tools) = defs["tools"].as_array_mut() {
+            tools.push(json!({
+                "name": "wiki_search",
+                "description": "Search the codebase knowledge wiki by keyword or concept. Returns matching pages with excerpts. Use this to understand modules, architecture, or design decisions before diving into source code.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search term or concept"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max results (default: 5)"
+                        }
+                    },
+                    "required": ["query"]
+                }
+            }));
+            tools.push(json!({
+                "name": "wiki_read",
+                "description": "Read a wiki page by ID (e.g. 'architecture', 'mod-mcp'). Returns full page content with metadata.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "page": {
+                            "type": "string",
+                            "description": "Page ID or partial title to search"
+                        }
+                    },
+                    "required": ["page"]
+                }
+            }));
+            tools.push(json!({
+                "name": "wiki_status",
+                "description": "Check wiki health: page count, how stale it is, source file coverage.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }));
+        }
+    }
+    let _ = wiki_available; // suppress unused warning when wiki feature is off
 
     // Post-process: conditionally add `member` property and filter extended tools.
     let mp = member_property();
@@ -2473,5 +2521,273 @@ pub(super) fn tool_get_type_flow(workspace: &WorkspaceIndex, args: &Value) -> Va
         "consumers_count": consumers_total,
         "producers": producers,
         "consumers": consumers,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Wiki tools (feature-gated)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "wiki")]
+pub(super) fn tool_wiki_search(store: &crate::wiki::store::WikiStore, args: &Value) -> Value {
+    let query = match args["query"].as_str() {
+        Some(q) if !q.is_empty() => q,
+        _ => return tool_error("Missing required parameter: query"),
+    };
+    let limit = args["limit"].as_u64().unwrap_or(5) as usize;
+    let query_lower = query.to_lowercase();
+    let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+
+    let mut scored: Vec<(usize, &crate::wiki::page::WikiPage)> = store
+        .pages
+        .iter()
+        .filter_map(|page| {
+            let mut score = 0usize;
+
+            // Title match (highest weight)
+            let title_lower = page.frontmatter.title.to_lowercase();
+            if title_lower == query_lower {
+                score += 100;
+            } else if title_lower.contains(&query_lower) {
+                score += 50;
+            } else if query_words.iter().any(|w| title_lower.contains(w)) {
+                score += 25;
+            }
+
+            // ID match
+            let id_lower = page.frontmatter.id.to_lowercase();
+            if id_lower.contains(&query_lower) {
+                score += 40;
+            } else if query_words.iter().any(|w| id_lower.contains(w)) {
+                score += 15;
+            }
+
+            // Covers match (declaration references)
+            for cover in &page.frontmatter.covers {
+                let cover_lower = cover.to_lowercase();
+                if cover_lower.contains(&query_lower) {
+                    score += 30;
+                } else if query_words.iter().any(|w| cover_lower.contains(w)) {
+                    score += 10;
+                }
+            }
+
+            // Content match (lower weight)
+            let content_lower = page.content.to_lowercase();
+            if content_lower.contains(&query_lower) {
+                score += 20;
+            } else {
+                let word_hits = query_words
+                    .iter()
+                    .filter(|w| content_lower.contains(*w))
+                    .count();
+                if word_hits > 0 {
+                    score += 5 * word_hits;
+                }
+            }
+
+            // Source files match
+            for sf in &page.frontmatter.source_files {
+                let sf_lower = sf.to_lowercase();
+                if query_words.iter().any(|w| sf_lower.contains(w)) {
+                    score += 10;
+                    break;
+                }
+            }
+
+            if score > 0 { Some((score, page)) } else { None }
+        })
+        .collect();
+
+    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.truncate(limit);
+
+    let results: Vec<Value> = scored
+        .iter()
+        .map(|(score, page)| {
+            // Extract a short excerpt around the query match
+            let excerpt = extract_excerpt(&page.content, &query_lower, 150);
+
+            json!({
+                "id": page.frontmatter.id,
+                "title": page.frontmatter.title,
+                "type": page.frontmatter.page_type.as_str(),
+                "score": score,
+                "excerpt": excerpt,
+            })
+        })
+        .collect();
+
+    tool_result(json!({
+        "query": query,
+        "matches": results.len(),
+        "results": results,
+    }))
+}
+
+#[cfg(feature = "wiki")]
+fn extract_excerpt(content: &str, query: &str, max_chars: usize) -> String {
+    if content.trim().is_empty() {
+        return "(empty page)".to_string();
+    }
+
+    // Build lowered version with per-byte mapping back to original offsets so we
+    // can search case-insensitively but return an excerpt with original casing.
+    let mut content_lower = String::with_capacity(content.len());
+    let mut map: Vec<usize> = Vec::with_capacity(content.len() + 1);
+    for (orig_byte, ch) in content.char_indices() {
+        for lc in ch.to_lowercase() {
+            for _ in 0..lc.len_utf8() {
+                map.push(orig_byte);
+            }
+            content_lower.push(lc);
+        }
+    }
+    map.push(content.len()); // sentinel
+
+    let to_orig =
+        |lower_off: usize| -> usize { map.get(lower_off).copied().unwrap_or(content.len()) };
+
+    // Snap a byte offset to the next valid char boundary in `s`.
+    let snap = |s: &str, off: usize| -> usize {
+        let off = off.min(s.len());
+        (off..=s.len())
+            .find(|&i| s.is_char_boundary(i))
+            .unwrap_or(s.len())
+    };
+
+    // Snap a byte offset backward to the nearest word boundary (whitespace).
+    let snap_word_start = |s: &str, off: usize| -> usize {
+        let off = snap(s, off);
+        // Search backward from off for whitespace, then return the position after it.
+        s[..off]
+            .rfind(|c: char| c.is_whitespace())
+            .map(|i| i + s[i..].chars().next().map_or(1, |c| c.len_utf8()))
+            .unwrap_or(0)
+    };
+
+    if let Some(pos) = content_lower.find(query) {
+        let orig_start = to_orig(pos);
+        let orig_end = to_orig(pos + query.len());
+
+        let start = content[..orig_start]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or_else(|| snap_word_start(content, orig_start.saturating_sub(max_chars / 2)));
+
+        let tentative = snap(content, (orig_end + max_chars / 2).min(content.len()));
+        let end = content[..tentative]
+            .rfind('\n')
+            .unwrap_or(tentative)
+            .max(orig_end);
+
+        let mut excerpt = content[start..end].trim().to_string();
+        if start > 0 {
+            excerpt.insert_str(0, "...");
+        }
+        if end < content.len() {
+            excerpt.push_str("...");
+        }
+        excerpt
+    } else {
+        // No exact match — return first max_chars bytes of original content.
+        let end_off = snap(content, max_chars.min(content.len()));
+        let end = content[..end_off].rfind('\n').unwrap_or(end_off);
+        let mut excerpt = content[..end].trim().to_string();
+        if end < content.len() {
+            excerpt.push_str("...");
+        }
+        excerpt
+    }
+}
+
+#[cfg(feature = "wiki")]
+pub(super) fn tool_wiki_read(store: &crate::wiki::store::WikiStore, args: &Value) -> Value {
+    let page_query = match args["page"].as_str() {
+        Some(p) if !p.is_empty() => p,
+        _ => return tool_error("Missing required parameter: page"),
+    };
+
+    // Try exact ID match first
+    if let Some(page) = store.get_page(page_query) {
+        return format_wiki_page(page);
+    }
+
+    // Try case-insensitive ID match
+    let query_lower = page_query.to_lowercase();
+    let found = store.pages.iter().find(|p| {
+        p.frontmatter.id.to_lowercase() == query_lower
+            || p.frontmatter.title.to_lowercase() == query_lower
+    });
+    if let Some(page) = found {
+        return format_wiki_page(page);
+    }
+
+    // Try partial title/ID match
+    let found = store.pages.iter().find(|p| {
+        p.frontmatter.id.to_lowercase().contains(&query_lower)
+            || p.frontmatter.title.to_lowercase().contains(&query_lower)
+    });
+    if let Some(page) = found {
+        return format_wiki_page(page);
+    }
+
+    // Not found — list available pages
+    let available: Vec<String> = store
+        .pages
+        .iter()
+        .map(|p| format!("{} ({})", p.frontmatter.id, p.frontmatter.title))
+        .collect();
+    tool_error(&format!(
+        "Page '{}' not found. Available pages:\n{}",
+        page_query,
+        available.join("\n")
+    ))
+}
+
+#[cfg(feature = "wiki")]
+fn format_wiki_page(page: &crate::wiki::page::WikiPage) -> Value {
+    let fm = &page.frontmatter;
+    let header = format!(
+        "# {}\n\nType: {} | Sources: {} | Covers: {} declarations\nSource files: {}\nLinks to: {}",
+        fm.title,
+        fm.page_type.as_str(),
+        fm.source_files.len(),
+        fm.covers.len(),
+        fm.source_files.join(", "),
+        if fm.links_to.is_empty() {
+            "none".to_string()
+        } else {
+            fm.links_to.join(", ")
+        },
+    );
+
+    tool_result(json!({
+        "id": fm.id,
+        "title": fm.title,
+        "type": fm.page_type.as_str(),
+        "content": format!("{}\n\n{}", header, page.content),
+    }))
+}
+
+#[cfg(feature = "wiki")]
+pub(super) fn tool_wiki_status(
+    store: &crate::wiki::store::WikiStore,
+    workspace: &WorkspaceIndex,
+) -> Value {
+    let health = crate::wiki::compute_wiki_health(store, workspace);
+
+    tool_result(json!({
+        "pages": health.pages,
+        "pages_by_type": health.pages_by_type,
+        "generated_at_ref": health.generated_at_ref,
+        "generated_at": health.generated_at,
+        "staleness": health.staleness,
+        "commits_behind": health.commits_behind,
+        "coverage": {
+            "covered_files": health.covered_files,
+            "total_files": health.total_files,
+            "percentage": health.coverage_pct
+        }
     }))
 }
