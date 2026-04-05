@@ -1065,7 +1065,7 @@ fn extract_json(text: &str) -> &str {
 }
 
 /// Find the largest byte index ≤ `max` that falls on a char boundary.
-fn floor_char_boundary(s: &str, max: usize) -> usize {
+pub(crate) fn floor_char_boundary(s: &str, max: usize) -> usize {
     if max >= s.len() {
         return s.len();
     }

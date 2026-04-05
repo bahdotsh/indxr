@@ -7,6 +7,7 @@ pub(crate) use generate::UpdateResult;
 pub(crate) use generate::WikiGenerator;
 pub(crate) use generate::build_planning_context;
 pub(crate) use generate::extract_wiki_links;
+pub(crate) use generate::floor_char_boundary;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

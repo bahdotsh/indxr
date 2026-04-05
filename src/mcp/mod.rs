@@ -492,7 +492,7 @@ pub fn run_mcp_server(
     #[cfg(feature = "wiki")]
     let wiki_trigger_tx: Option<mpsc::Sender<()>> = if mcp_config.wiki_auto_update {
         use std::sync::Arc;
-        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::atomic::{AtomicBool, Ordering::*};
 
         // Validate LLM availability at startup
         let llm_client = crate::wiki::build_llm_client(
@@ -520,7 +520,7 @@ pub fn run_mcp_server(
 
                 // Skip if an update is already running
                 if update_in_progress
-                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .compare_exchange(false, true, Acquire, Relaxed)
                     .is_err()
                 {
                     continue;
@@ -556,7 +556,7 @@ pub fn run_mcp_server(
                             .map_err(|e| format!("Wiki save failed: {}", e))?;
                         Ok(update_result)
                     })();
-                    in_progress.store(false, Ordering::SeqCst);
+                    in_progress.store(false, Release);
                     let _ = wiki_tx_inner.send(ServerEvent::WikiUpdateComplete(result));
                 });
             }

@@ -3781,4 +3781,86 @@ mod wiki_tests {
         let text = result["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("No git ref to diff against"));
     }
+
+    #[test]
+    fn test_wiki_suggest_contribution_update_source_page() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_suggest_contribution(
+            &store,
+            &json!({
+                "synthesis": "The MCP server handles JSON-RPC tool dispatch with structural analysis.",
+                "source_pages": ["mod-mcp"]
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["suggestion"], "update");
+        assert_eq!(content["target_page"], "mod-mcp");
+        // Source page boost (50) + word overlaps should give high confidence
+        assert!(content["confidence"].as_u64().unwrap() >= 50);
+    }
+
+    #[test]
+    fn test_wiki_suggest_contribution_create_no_match() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_suggest_contribution(
+            &store,
+            &json!({
+                "synthesis": "Kubernetes deployment orchestration with Helm charts."
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["suggestion"], "create");
+        assert!(
+            content["suggested_id"]
+                .as_str()
+                .unwrap()
+                .starts_with("topic-")
+        );
+    }
+
+    #[test]
+    fn test_wiki_suggest_contribution_empty_store() {
+        let store = WikiStore {
+            root: PathBuf::from("/tmp/test-wiki"),
+            manifest: WikiManifest {
+                version: 1,
+                generated_at_ref: "abc1234".to_string(),
+                generated_at: "2026-04-05T10:00:00Z".to_string(),
+                pages: vec![],
+            },
+            pages: vec![],
+        };
+        let result = tool_wiki_suggest_contribution(
+            &store,
+            &json!({
+                "synthesis": "Some analysis about error handling patterns."
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["suggestion"], "create");
+        assert_eq!(content["confidence"].as_u64().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_wiki_suggest_contribution_missing_synthesis() {
+        let store = make_test_wiki_store();
+        let result = tool_wiki_suggest_contribution(&store, &json!({}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Missing required parameter: synthesis"));
+    }
+
+    #[test]
+    fn test_wiki_suggest_contribution_short_words_only() {
+        let store = make_test_wiki_store();
+        let result =
+            tool_wiki_suggest_contribution(&store, &json!({ "synthesis": "a b c do it go on" }));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["suggestion"], "create");
+        // All words < 4 chars, so suggested_id should be the fallback
+        assert_eq!(content["suggested_id"], "topic-new");
+    }
 }

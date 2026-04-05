@@ -3008,8 +3008,9 @@ pub(super) fn tool_wiki_suggest_contribution(
             }
         }
 
-        // Content word overlap (sample first 500 chars for efficiency)
-        let content_sample = &page.content[..page.content.len().min(500)].to_lowercase();
+        // Content word overlap (sample first ~500 chars for efficiency)
+        let sample_end = crate::wiki::floor_char_boundary(&page.content, 500);
+        let content_sample = page.content[..sample_end].to_lowercase();
         for word in &synthesis_words {
             if word.len() >= 4 && content_sample.contains(word) {
                 score += 2;
