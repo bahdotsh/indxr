@@ -4088,6 +4088,73 @@ mod wiki_tests {
         );
     }
 
+    #[test]
+    fn test_wiki_status_failure_stats() {
+        let mut store = make_test_wiki_store();
+        let ws = wrap_workspace(make_test_index());
+
+        // Baseline: no failures
+        let result = tool_wiki_status(&store, &ws);
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["failures"]["total"], 0);
+        assert_eq!(content["failures"]["unresolved"], 0);
+        assert!(
+            content["failures"]["pages_with_failures"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+
+        // Add an unresolved failure
+        tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "Tool dispatch fails",
+                "attempted_fix": "Added fallback",
+                "diagnosis": "Wrong error path",
+                "page": "mod-mcp"
+            }),
+        );
+
+        let result = tool_wiki_status(&store, &ws);
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["failures"]["total"], 1);
+        assert_eq!(content["failures"]["unresolved"], 1);
+        assert!(
+            content["failures"]["pages_with_failures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "mod-mcp")
+        );
+
+        // Add a resolved failure (has actual_fix)
+        tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "Parser panics on empty input",
+                "attempted_fix": "Added nil check",
+                "diagnosis": "Wrong layer",
+                "actual_fix": "Added early return in tokenizer",
+                "page": "mod-parser"
+            }),
+        );
+
+        let result = tool_wiki_status(&store, &ws);
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["failures"]["total"], 2);
+        assert_eq!(content["failures"]["unresolved"], 1);
+        // Only mod-mcp has unresolved failures
+        let pages_with = content["failures"]["pages_with_failures"]
+            .as_array()
+            .unwrap();
+        assert_eq!(pages_with.len(), 1);
+        assert_eq!(pages_with[0], "mod-mcp");
+    }
+
     // -----------------------------------------------------------------------
     // wiki_record_failure tests
     // -----------------------------------------------------------------------
@@ -4114,9 +4181,11 @@ mod wiki_tests {
 
         let page = store.get_page("mod-mcp").unwrap();
         assert_eq!(page.frontmatter.failures.len(), 1);
-        assert!(page.frontmatter.failures[0]
-            .symptom
-            .contains("Server module crashes"));
+        assert!(
+            page.frontmatter.failures[0]
+                .symptom
+                .contains("Server module crashes")
+        );
         assert!(page.frontmatter.failures[0].resolved_at.is_none());
     }
 
@@ -4213,9 +4282,11 @@ mod wiki_tests {
 
         let page = store.get_page("mod-mcp").unwrap();
         assert_eq!(page.frontmatter.failures.len(), 1);
-        assert!(page.frontmatter.failures[0]
-            .symptom
-            .contains("Tool dispatch hangs"));
+        assert!(
+            page.frontmatter.failures[0]
+                .symptom
+                .contains("Tool dispatch hangs")
+        );
     }
 
     #[test]
@@ -4323,8 +4394,7 @@ mod wiki_tests {
         assert!(mcp_result.get("failures").is_none());
 
         // With flag — failure details included
-        let result =
-            tool_wiki_search(&store, &json!({"query": "MCP", "include_failures": true}));
+        let result = tool_wiki_search(&store, &json!({"query": "MCP", "include_failures": true}));
         let content: Value =
             serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
         let mcp_result = content["results"]

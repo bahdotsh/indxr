@@ -3233,6 +3233,37 @@ pub(super) fn tool_wiki_compound(store: &mut crate::wiki::store::WikiStore, args
     }
 }
 
+/// Record a failure on an existing page: push the failure, save, and return a response.
+#[cfg(feature = "wiki")]
+fn record_failure_on_page(
+    store: &mut crate::wiki::store::WikiStore,
+    page_id: &str,
+    failure: crate::wiki::page::FailurePattern,
+    now: &str,
+) -> Result<Value, Value> {
+    let page = match store.pages.iter_mut().find(|p| p.frontmatter.id == page_id) {
+        Some(p) => p,
+        None => return Err(tool_error(&format!("Page '{}' not found", page_id))),
+    };
+    let failure_index = page.frontmatter.failures.len();
+    page.frontmatter.failures.push(failure);
+    page.frontmatter.generated_at = now.to_string();
+    if let Err(e) = store.save_incremental(page_id) {
+        return Err(tool_error(&format!("Failed to save: {}", e)));
+    }
+    let title = store
+        .get_page(page_id)
+        .map(|p| p.frontmatter.title.clone())
+        .unwrap_or_default();
+    Ok(tool_result(json!({
+        "action": "recorded_on_existing",
+        "page_id": page_id,
+        "title": title,
+        "failure_index": failure_index,
+        "total_wiki_pages": store.pages.len(),
+    })))
+}
+
 #[cfg(feature = "wiki")]
 pub(super) fn tool_wiki_record_failure(
     store: &mut crate::wiki::store::WikiStore,
@@ -3282,32 +3313,14 @@ pub(super) fn tool_wiki_record_failure(
     };
 
     if let Some(page_id_raw) = target_page {
-        // Explicit page target
         let page_id = sanitize_id(page_id_raw);
         if page_id.is_empty() {
             return tool_error("Invalid page ID");
         }
-        let page = match store.pages.iter_mut().find(|p| p.frontmatter.id == page_id) {
-            Some(p) => p,
-            None => return tool_error(&format!("Page '{}' not found", page_id)),
+        return match record_failure_on_page(store, &page_id, failure, &now) {
+            Ok(v) => v,
+            Err(e) => e,
         };
-        let failure_index = page.frontmatter.failures.len();
-        page.frontmatter.failures.push(failure);
-        page.frontmatter.generated_at = now;
-        if let Err(e) = store.save_incremental(&page_id) {
-            return tool_error(&format!("Failed to save: {}", e));
-        }
-        let title = store
-            .get_page(&page_id)
-            .map(|p| p.frontmatter.title.clone())
-            .unwrap_or_default();
-        return tool_result(json!({
-            "action": "recorded_on_existing",
-            "page_id": page_id,
-            "title": title,
-            "failure_index": failure_index,
-            "total_wiki_pages": store.pages.len(),
-        }));
     }
 
     // Auto-route: score pages using symptom + diagnosis text
@@ -3317,28 +3330,10 @@ pub(super) fn tool_wiki_record_failure(
 
     if let Some((best_score, target_id)) = best {
         if best_score >= 20 {
-            let page = store
-                .pages
-                .iter_mut()
-                .find(|p| p.frontmatter.id == target_id)
-                .unwrap();
-            let failure_index = page.frontmatter.failures.len();
-            page.frontmatter.failures.push(failure);
-            page.frontmatter.generated_at = now;
-            if let Err(e) = store.save_incremental(&target_id) {
-                return tool_error(&format!("Failed to save: {}", e));
-            }
-            let title = store
-                .get_page(&target_id)
-                .map(|p| p.frontmatter.title.clone())
-                .unwrap_or_default();
-            return tool_result(json!({
-                "action": "recorded_on_existing",
-                "page_id": target_id,
-                "title": title,
-                "failure_index": failure_index,
-                "total_wiki_pages": store.pages.len(),
-            }));
+            return match record_failure_on_page(store, &target_id, failure, &now) {
+                Ok(v) => v,
+                Err(e) => e,
+            };
         }
     }
 
@@ -3391,7 +3386,7 @@ pub(super) fn tool_wiki_record_failure(
             id: page_id.clone(),
             title: page_title.clone(),
             page_type: PageType::Topic,
-            source_files: source_files,
+            source_files,
             generated_at_ref: store.manifest.generated_at_ref.clone(),
             generated_at: now,
             links_to,
@@ -3485,30 +3480,7 @@ pub(super) fn tool_wiki_contribute(
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|v| {
-                    let symptom = v.get("symptom")?.as_str()?;
-                    let attempted_fix = v.get("attempted_fix")?.as_str()?;
-                    let diagnosis = v.get("diagnosis")?.as_str()?;
-                    let actual_fix = v.get("actual_fix").and_then(|v| v.as_str());
-                    let source_files: Vec<String> = v
-                        .get("source_files")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    Some(crate::wiki::page::FailurePattern {
-                        symptom: symptom.to_string(),
-                        attempted_fix: attempted_fix.to_string(),
-                        diagnosis: diagnosis.to_string(),
-                        actual_fix: actual_fix.map(String::from),
-                        source_files,
-                        recorded_at: now.clone(),
-                        resolved_at: None,
-                    })
-                })
+                .filter_map(|v| crate::wiki::page::FailurePattern::from_json(v, &now))
                 .collect()
         })
         .unwrap_or_default();

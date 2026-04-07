@@ -79,6 +79,35 @@ pub struct FailurePattern {
     pub resolved_at: Option<String>,
 }
 
+impl FailurePattern {
+    /// Parse a `FailurePattern` from a JSON value, using `now` as the `recorded_at` timestamp.
+    /// Returns `None` if required fields (`symptom`, `attempted_fix`, `diagnosis`) are missing.
+    pub fn from_json(v: &serde_json::Value, now: &str) -> Option<Self> {
+        let symptom = v.get("symptom")?.as_str()?;
+        let attempted_fix = v.get("attempted_fix")?.as_str()?;
+        let diagnosis = v.get("diagnosis")?.as_str()?;
+        let actual_fix = v.get("actual_fix").and_then(|v| v.as_str());
+        let source_files: Vec<String> = v
+            .get("source_files")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(Self {
+            symptom: symptom.to_string(),
+            attempted_fix: attempted_fix.to_string(),
+            diagnosis: diagnosis.to_string(),
+            actual_fix: actual_fix.map(String::from),
+            source_files,
+            recorded_at: now.to_string(),
+            resolved_at: None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PageType {
