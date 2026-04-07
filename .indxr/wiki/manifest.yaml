@@ -1,0 +1,114 @@
+version: 1
+generated_at_ref: ''
+generated_at: ''
+pages:
+- id: architecture
+  page_type: architecture
+  file: architecture.md
+  source_files:
+  - src/main.rs
+  - src/indexer.rs
+  - src/cli.rs
+  - src/model/mod.rs
+  - src/model/declarations.rs
+- id: mod-parser
+  page_type: module
+  file: modules/mod-parser.md
+  source_files:
+  - src/parser/mod.rs
+  - src/parser/tree_sitter_parser.rs
+  - src/parser/regex_parser.rs
+  - src/parser/complexity.rs
+  - src/parser/queries/mod.rs
+- id: mod-model
+  page_type: module
+  file: modules/mod-model.md
+  source_files:
+  - src/model/mod.rs
+  - src/model/declarations.rs
+- id: mod-indexer
+  page_type: module
+  file: modules/mod-indexer.md
+  source_files:
+  - src/indexer.rs
+- id: mod-mcp
+  page_type: module
+  file: modules/mod-mcp.md
+  source_files:
+  - src/mcp/mod.rs
+  - src/mcp/tools.rs
+  - src/mcp/helpers.rs
+  - src/mcp/http.rs
+  - src/mcp/type_flow.rs
+- id: mod-wiki
+  page_type: module
+  file: modules/mod-wiki.md
+  source_files:
+  - src/wiki/mod.rs
+  - src/wiki/page.rs
+  - src/wiki/store.rs
+  - src/wiki/generate.rs
+  - src/wiki/prompts.rs
+- id: mod-cache
+  page_type: module
+  file: modules/mod-cache.md
+  source_files:
+  - src/cache/mod.rs
+  - src/cache/fingerprint.rs
+- id: mod-diff
+  page_type: module
+  file: modules/mod-diff.md
+  source_files:
+  - src/diff.rs
+  - src/github.rs
+- id: mod-dep-graph
+  page_type: module
+  file: modules/mod-dep-graph.md
+  source_files:
+  - src/dep_graph.rs
+- id: mod-workspace
+  page_type: module
+  file: modules/mod-workspace.md
+  source_files:
+  - src/workspace.rs
+- id: mod-filter-budget
+  page_type: module
+  file: modules/mod-filter-budget.md
+  source_files:
+  - src/filter.rs
+  - src/budget.rs
+- id: mod-watch
+  page_type: module
+  file: modules/mod-watch.md
+  source_files:
+  - src/watch.rs
+- id: languages
+  page_type: topic
+  file: topics/languages.md
+  source_files:
+  - src/languages.rs
+- id: mod-cli
+  page_type: module
+  file: modules/mod-cli.md
+  source_files:
+  - src/cli.rs
+  - src/main.rs
+- id: mod-output
+  page_type: module
+  file: modules/mod-output.md
+  source_files:
+  - src/output/mod.rs
+  - src/output/markdown.rs
+  - src/output/yaml.rs
+- id: mod-llm
+  page_type: module
+  file: modules/mod-llm.md
+  source_files:
+  - src/llm/mod.rs
+  - src/llm/claude.rs
+  - src/llm/openai.rs
+  - src/llm/command.rs
+- id: index
+  page_type: topic
+  file: topics/index.md
+  source_files: []
