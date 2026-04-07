@@ -4546,4 +4546,62 @@ mod wiki_tests {
             page_id
         );
     }
+
+    #[test]
+    fn test_wiki_from_json_with_actual_fix_sets_resolved() {
+        let now = "2026-04-07T00:00:00Z";
+        let val = serde_json::json!({
+            "symptom": "Build fails on CI",
+            "attempted_fix": "Pinned dependency version",
+            "diagnosis": "Wrong lockfile committed",
+            "actual_fix": "Regenerated lockfile from scratch"
+        });
+        let fp = crate::wiki::page::FailurePattern::from_json(&val, now).unwrap();
+        assert_eq!(
+            fp.actual_fix.as_deref(),
+            Some("Regenerated lockfile from scratch")
+        );
+        assert_eq!(fp.resolved_at.as_deref(), Some(now));
+    }
+
+    #[test]
+    fn test_wiki_from_json_without_actual_fix_not_resolved() {
+        let now = "2026-04-07T00:00:00Z";
+        let val = serde_json::json!({
+            "symptom": "Build fails on CI",
+            "attempted_fix": "Pinned dependency version",
+            "diagnosis": "Wrong lockfile committed"
+        });
+        let fp = crate::wiki::page::FailurePattern::from_json(&val, now).unwrap();
+        assert!(fp.actual_fix.is_none());
+        assert!(fp.resolved_at.is_none());
+    }
+
+    #[test]
+    fn test_wiki_contribute_with_actual_fix_sets_resolved() {
+        let mut store = make_test_wiki_store();
+        tool_wiki_contribute(
+            &mut store,
+            &json!({
+                "page": "mod-mcp",
+                "content": "# MCP Server\n\nUpdated.",
+                "failures": [{
+                    "symptom": "Server hangs on large payload",
+                    "attempted_fix": "Added timeout",
+                    "diagnosis": "Hang was in serialization",
+                    "actual_fix": "Switched to streaming serializer"
+                }]
+            }),
+        );
+        let page = store.get_page("mod-mcp").unwrap();
+        assert_eq!(page.frontmatter.failures.len(), 1);
+        assert_eq!(
+            page.frontmatter.failures[0].actual_fix.as_deref(),
+            Some("Switched to streaming serializer")
+        );
+        assert!(
+            page.frontmatter.failures[0].resolved_at.is_some(),
+            "Failure with actual_fix via wiki_contribute should be marked resolved"
+        );
+    }
 }

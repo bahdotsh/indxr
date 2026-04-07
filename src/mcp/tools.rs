@@ -3311,6 +3311,9 @@ pub(super) fn tool_wiki_record_failure(
                 break candidate;
             }
             suffix += 1;
+            if suffix > 100 {
+                return tool_error("Too many pages with similar IDs — specify an explicit page ID");
+            }
         }
     };
 

@@ -103,7 +103,11 @@ impl FailurePattern {
             actual_fix: actual_fix.map(String::from),
             source_files,
             recorded_at: now.to_string(),
-            resolved_at: None,
+            resolved_at: if actual_fix.is_some() {
+                Some(now.to_string())
+            } else {
+                None
+            },
         })
     }
 
