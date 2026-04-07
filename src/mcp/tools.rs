@@ -641,6 +641,10 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
                             "limit": {
                                 "type": "integer",
                                 "description": "Max results (default: 5)"
+                            },
+                            "include_failures": {
+                                "type": "boolean",
+                                "description": "If true, include failure pattern details in results (default: false)"
                             }
                         },
                         "required": ["query"]
@@ -711,6 +715,25 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
                                     "required": ["description"]
                                 },
                                 "description": "Contradictions to add to the page"
+                            },
+                            "failures": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "symptom": { "type": "string", "description": "What was observed" },
+                                        "attempted_fix": { "type": "string", "description": "What fix was attempted" },
+                                        "diagnosis": { "type": "string", "description": "Why the fix didn't work" },
+                                        "actual_fix": { "type": "string", "description": "What actually worked" },
+                                        "source_files": { "type": "array", "items": { "type": "string" }, "description": "Source files involved" }
+                                    },
+                                    "required": ["symptom", "attempted_fix", "diagnosis"]
+                                },
+                                "description": "Failure patterns to add to the page"
+                            },
+                            "resolve_failures": {
+                                "type": "boolean",
+                                "description": "If true, marks all unresolved failures on this page as resolved"
                             }
                         },
                         "required": ["page", "content"]
@@ -769,6 +792,41 @@ pub(super) fn tool_definitions(is_workspace: bool, all_tools: bool, wiki_availab
                             }
                         },
                         "required": ["synthesis"]
+                    }
+                }));
+                tools.push(json!({
+                    "name": "wiki_record_failure",
+                    "description": "Record a failed fix attempt so future agents can learn from it. Auto-routes to the best matching wiki page, or specify a target page explicitly.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "symptom": {
+                                "type": "string",
+                                "description": "What was observed (error message, test failure, unexpected behavior)"
+                            },
+                            "attempted_fix": {
+                                "type": "string",
+                                "description": "What fix was attempted"
+                            },
+                            "diagnosis": {
+                                "type": "string",
+                                "description": "Why the fix didn't work / root cause analysis"
+                            },
+                            "actual_fix": {
+                                "type": "string",
+                                "description": "What actually worked (if known at recording time)"
+                            },
+                            "source_files": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Source files involved in this failure"
+                            },
+                            "page": {
+                                "type": "string",
+                                "description": "Target wiki page ID. If omitted, auto-routes to best matching page based on symptom and diagnosis text."
+                            }
+                        },
+                        "required": ["symptom", "attempted_fix", "diagnosis"]
                     }
                 }));
             }
@@ -2657,6 +2715,10 @@ pub(super) fn tool_wiki_search(store: &crate::wiki::store::WikiStore, args: &Val
         _ => return tool_error("Missing required parameter: query"),
     };
     let limit = args["limit"].as_u64().unwrap_or(5) as usize;
+    let include_failures = args
+        .get("include_failures")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let query_lower = query.to_lowercase();
     let query_words: Vec<&str> = query_lower.split_whitespace().collect();
 
@@ -2717,6 +2779,18 @@ pub(super) fn tool_wiki_search(store: &crate::wiki::store::WikiStore, args: &Val
                 }
             }
 
+            // Failure symptom match
+            for failure in &page.frontmatter.failures {
+                let symptom_lower = failure.symptom.to_lowercase();
+                if symptom_lower.contains(&query_lower) {
+                    score += 25;
+                    break;
+                } else if query_words.iter().any(|w| symptom_lower.contains(w)) {
+                    score += 8;
+                    break;
+                }
+            }
+
             if score > 0 { Some((score, page)) } else { None }
         })
         .collect();
@@ -2746,6 +2820,41 @@ pub(super) fn tool_wiki_search(store: &crate::wiki::store::WikiStore, args: &Val
             if unresolved > 0 {
                 entry["has_contradictions"] = json!(true);
                 entry["unresolved_contradictions"] = json!(unresolved);
+            }
+            let unresolved_failures = page
+                .frontmatter
+                .failures
+                .iter()
+                .filter(|f| f.resolved_at.is_none())
+                .count();
+            if !page.frontmatter.failures.is_empty() {
+                entry["failure_count"] = json!(page.frontmatter.failures.len());
+                entry["unresolved_failures"] = json!(unresolved_failures);
+            }
+            if include_failures && !page.frontmatter.failures.is_empty() {
+                let failures: Vec<Value> = page
+                    .frontmatter
+                    .failures
+                    .iter()
+                    .map(|f| {
+                        let mut obj = json!({
+                            "symptom": f.symptom,
+                            "attempted_fix": f.attempted_fix,
+                            "diagnosis": f.diagnosis,
+                        });
+                        if let Some(ref fix) = f.actual_fix {
+                            obj["actual_fix"] = json!(fix);
+                        }
+                        if !f.source_files.is_empty() {
+                            obj["source_files"] = json!(f.source_files);
+                        }
+                        if f.resolved_at.is_some() {
+                            obj["resolved"] = json!(true);
+                        }
+                        obj
+                    })
+                    .collect();
+                entry["failures"] = json!(failures);
             }
             entry
         })
@@ -2941,6 +3050,34 @@ fn format_wiki_page(page: &crate::wiki::page::WikiPage) -> Value {
         result["contradictions"] = json!(contras);
     }
 
+    if !fm.failures.is_empty() {
+        let failure_details: Vec<Value> = fm
+            .failures
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let mut obj = json!({
+                    "index": i,
+                    "symptom": f.symptom,
+                    "attempted_fix": f.attempted_fix,
+                    "diagnosis": f.diagnosis,
+                    "recorded_at": f.recorded_at,
+                });
+                if let Some(ref fix) = f.actual_fix {
+                    obj["actual_fix"] = json!(fix);
+                }
+                if let Some(ref resolved) = f.resolved_at {
+                    obj["resolved_at"] = json!(resolved);
+                }
+                if !f.source_files.is_empty() {
+                    obj["source_files"] = json!(f.source_files);
+                }
+                obj
+            })
+            .collect();
+        result["failures"] = json!(failure_details);
+    }
+
     if !fm.links_to.is_empty() {
         let mut related = fm.links_to.clone();
         if !related.contains(&fm.id) {
@@ -2980,6 +3117,24 @@ pub(super) fn tool_wiki_status(
         total_contradictions += page.frontmatter.contradictions.len();
     }
 
+    // Gather failure stats
+    let mut total_failures = 0usize;
+    let mut unresolved_failures = 0usize;
+    let mut pages_with_failures = Vec::new();
+    for page in &store.pages {
+        let unresolved: Vec<_> = page
+            .frontmatter
+            .failures
+            .iter()
+            .filter(|f| f.resolved_at.is_none())
+            .collect();
+        if !unresolved.is_empty() {
+            pages_with_failures.push(page.frontmatter.id.clone());
+            unresolved_failures += unresolved.len();
+        }
+        total_failures += page.frontmatter.failures.len();
+    }
+
     tool_result(json!({
         "pages": health.pages,
         "pages_by_type": health.pages_by_type,
@@ -2996,6 +3151,11 @@ pub(super) fn tool_wiki_status(
             "total": total_contradictions,
             "unresolved": unresolved_contradictions,
             "pages_with_contradictions": pages_with_contradictions
+        },
+        "failures": {
+            "total": total_failures,
+            "unresolved": unresolved_failures,
+            "pages_with_failures": pages_with_failures
         }
     }))
 }
@@ -3074,6 +3234,187 @@ pub(super) fn tool_wiki_compound(store: &mut crate::wiki::store::WikiStore, args
 }
 
 #[cfg(feature = "wiki")]
+pub(super) fn tool_wiki_record_failure(
+    store: &mut crate::wiki::store::WikiStore,
+    args: &Value,
+) -> Value {
+    use crate::wiki::page::{FailurePattern, Frontmatter, PageType, WikiPage, sanitize_id};
+    use crate::wiki::{derive_topic_id, extract_wiki_links, score_pages};
+
+    let symptom = match args.get("symptom").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return tool_error("Missing required parameter: symptom"),
+    };
+    let attempted_fix = match args.get("attempted_fix").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return tool_error("Missing required parameter: attempted_fix"),
+    };
+    let diagnosis = match args.get("diagnosis").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return tool_error("Missing required parameter: diagnosis"),
+    };
+    let actual_fix = args.get("actual_fix").and_then(|v| v.as_str());
+    let source_files: Vec<String> = args
+        .get("source_files")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let target_page = args.get("page").and_then(|v| v.as_str());
+
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+
+    let failure = FailurePattern {
+        symptom: symptom.to_string(),
+        attempted_fix: attempted_fix.to_string(),
+        diagnosis: diagnosis.to_string(),
+        actual_fix: actual_fix.map(String::from),
+        source_files: source_files.clone(),
+        recorded_at: now.clone(),
+        resolved_at: if actual_fix.is_some() {
+            Some(now.clone())
+        } else {
+            None
+        },
+    };
+
+    if let Some(page_id_raw) = target_page {
+        // Explicit page target
+        let page_id = sanitize_id(page_id_raw);
+        if page_id.is_empty() {
+            return tool_error("Invalid page ID");
+        }
+        let page = match store.pages.iter_mut().find(|p| p.frontmatter.id == page_id) {
+            Some(p) => p,
+            None => return tool_error(&format!("Page '{}' not found", page_id)),
+        };
+        let failure_index = page.frontmatter.failures.len();
+        page.frontmatter.failures.push(failure);
+        page.frontmatter.generated_at = now;
+        if let Err(e) = store.save_incremental(&page_id) {
+            return tool_error(&format!("Failed to save: {}", e));
+        }
+        let title = store
+            .get_page(&page_id)
+            .map(|p| p.frontmatter.title.clone())
+            .unwrap_or_default();
+        return tool_result(json!({
+            "action": "recorded_on_existing",
+            "page_id": page_id,
+            "title": title,
+            "failure_index": failure_index,
+            "total_wiki_pages": store.pages.len(),
+        }));
+    }
+
+    // Auto-route: score pages using symptom + diagnosis text
+    let scoring_text = format!("{} {}", symptom, diagnosis);
+    let scored = score_pages(store, &scoring_text, &[]);
+    let best = scored.first().map(|(score, id)| (*score, id.clone()));
+
+    if let Some((best_score, target_id)) = best {
+        if best_score >= 20 {
+            let page = store
+                .pages
+                .iter_mut()
+                .find(|p| p.frontmatter.id == target_id)
+                .unwrap();
+            let failure_index = page.frontmatter.failures.len();
+            page.frontmatter.failures.push(failure);
+            page.frontmatter.generated_at = now;
+            if let Err(e) = store.save_incremental(&target_id) {
+                return tool_error(&format!("Failed to save: {}", e));
+            }
+            let title = store
+                .get_page(&target_id)
+                .map(|p| p.frontmatter.title.clone())
+                .unwrap_or_default();
+            return tool_result(json!({
+                "action": "recorded_on_existing",
+                "page_id": target_id,
+                "title": title,
+                "failure_index": failure_index,
+                "total_wiki_pages": store.pages.len(),
+            }));
+        }
+    }
+
+    // No good match — create a new topic page
+    let base_id = sanitize_id(&derive_topic_id(symptom));
+    let page_id = if base_id.is_empty() {
+        "topic-failure".to_string()
+    } else if store.get_page(&base_id).is_none() {
+        base_id
+    } else {
+        let mut suffix = 2;
+        loop {
+            let candidate = format!("{}-{}", base_id, suffix);
+            if store.get_page(&candidate).is_none() {
+                break candidate;
+            }
+            suffix += 1;
+        }
+    };
+
+    // Derive title from symptom
+    let page_title = {
+        let words: Vec<String> = symptom
+            .split_whitespace()
+            .filter(|w| w.len() >= 4)
+            .take(5)
+            .map(|w| {
+                let mut c = w.chars();
+                match c.next() {
+                    None => String::new(),
+                    Some(f) => f.to_uppercase().to_string() + c.as_str(),
+                }
+            })
+            .collect();
+        if words.is_empty() {
+            "Failure Pattern".to_string()
+        } else {
+            words.join(" ")
+        }
+    };
+
+    let content = format!(
+        "# {}\n\nThis page tracks failure patterns to help agents avoid repeating mistakes.",
+        page_title
+    );
+    let links_to = extract_wiki_links(&content);
+
+    let page = WikiPage {
+        frontmatter: Frontmatter {
+            id: page_id.clone(),
+            title: page_title.clone(),
+            page_type: PageType::Topic,
+            source_files: source_files,
+            generated_at_ref: store.manifest.generated_at_ref.clone(),
+            generated_at: now,
+            links_to,
+            covers: Vec::new(),
+            contradictions: Vec::new(),
+            failures: vec![failure],
+        },
+        content,
+    };
+    store.upsert_page(page);
+    if let Err(e) = store.save_incremental(&page_id) {
+        return tool_error(&format!("Failed to save: {}", e));
+    }
+    tool_result(json!({
+        "action": "recorded_on_new",
+        "page_id": page_id,
+        "title": page_title,
+        "failure_index": 0,
+        "total_wiki_pages": store.pages.len(),
+    }))
+}
+
+#[cfg(feature = "wiki")]
 pub(super) fn tool_wiki_contribute(
     store: &mut crate::wiki::store::WikiStore,
     args: &Value,
@@ -3133,6 +3474,45 @@ pub(super) fn tool_wiki_contribute(
         })
         .unwrap_or_default();
 
+    let resolve_failures = args
+        .get("resolve_failures")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Parse explicit failures from args
+    let new_failures: Vec<crate::wiki::page::FailurePattern> = args
+        .get("failures")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    let symptom = v.get("symptom")?.as_str()?;
+                    let attempted_fix = v.get("attempted_fix")?.as_str()?;
+                    let diagnosis = v.get("diagnosis")?.as_str()?;
+                    let actual_fix = v.get("actual_fix").and_then(|v| v.as_str());
+                    let source_files: Vec<String> = v
+                        .get("source_files")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    Some(crate::wiki::page::FailurePattern {
+                        symptom: symptom.to_string(),
+                        attempted_fix: attempted_fix.to_string(),
+                        diagnosis: diagnosis.to_string(),
+                        actual_fix: actual_fix.map(String::from),
+                        source_files,
+                        recorded_at: now.clone(),
+                        resolved_at: None,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let existing = store.pages.iter().find(|p| p.frontmatter.id == page_id);
     let action;
 
@@ -3170,6 +3550,26 @@ pub(super) fn tool_wiki_contribute(
         };
         contradictions.extend(new_contradictions);
 
+        // Handle failures: resolve existing if requested, then add new ones
+        let mut failures = if resolve_failures {
+            old.frontmatter
+                .failures
+                .iter()
+                .map(|f| {
+                    if f.resolved_at.is_none() {
+                        let mut resolved = f.clone();
+                        resolved.resolved_at = Some(now.clone());
+                        resolved
+                    } else {
+                        f.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+        } else {
+            old.frontmatter.failures.clone()
+        };
+        failures.extend(new_failures);
+
         let page = WikiPage {
             frontmatter: Frontmatter {
                 id: page_id.clone(),
@@ -3181,6 +3581,7 @@ pub(super) fn tool_wiki_contribute(
                 links_to,
                 covers: old.frontmatter.covers.clone(),
                 contradictions,
+                failures,
             },
             content,
         };
@@ -3219,6 +3620,7 @@ pub(super) fn tool_wiki_contribute(
                 links_to,
                 covers: Vec::new(),
                 contradictions: new_contradictions,
+                failures: new_failures,
             },
             content,
         };

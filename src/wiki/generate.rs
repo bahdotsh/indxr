@@ -532,6 +532,7 @@ impl<'a> WikiGenerator<'a> {
                 links_to,
                 covers: self.extract_covers(&existing.frontmatter.source_files),
                 contradictions,
+                failures: existing.frontmatter.failures.clone(),
             },
             content,
         })
@@ -707,6 +708,7 @@ impl<'a> WikiGenerator<'a> {
                 links_to,
                 covers: self.extract_covers(&plan.source_files),
                 contradictions: vec![],
+                failures: vec![],
             },
             content,
         })
@@ -759,6 +761,7 @@ impl<'a> WikiGenerator<'a> {
                 links_to,
                 covers: Vec::new(),
                 contradictions: vec![],
+                failures: vec![],
             },
             content,
         })

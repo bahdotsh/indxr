@@ -8,7 +8,7 @@ An MCP server called `indxr` is available. **Always use indxr tools before the R
 
 ### Token savings reference
 
-The MCP server defaults to **3 compound tools** (`find`, `summarize`, `read`). All 26 tools (3 compound + 23 granular) are available with `--all-tools`. With `--features wiki`, 6 additional wiki tools are available.
+The MCP server defaults to **3 compound tools** (`find`, `summarize`, `read`). All 26 tools (3 compound + 23 granular) are available with `--all-tools`. With `--features wiki`, 7 additional wiki tools are available.
 
 | Action | Approx tokens | When to use |
 |--------|--------------|-------------|
@@ -72,6 +72,7 @@ If a wiki has been generated (`indxr wiki generate`), these tools are available 
 31. `wiki_generate()` — initialize a new wiki and return codebase structural context for planning pages. The agent plans which pages to create from the context, then calls `wiki_contribute` for each page. No API keys needed.
 32. `wiki_update(since?)` — analyze code changes and return affected wiki pages with diff context. The agent rewrites each affected page and saves via `wiki_contribute`. No API keys needed.
 33. `wiki_compound(synthesis, source_pages?, title?)` — compound new knowledge into the wiki. Automatically routes the synthesis to the best matching page or creates a new topic page. **Use this after answering questions that drew from multiple wiki pages — it makes the wiki grow richer with every interaction.**
+34. `wiki_record_failure(symptom, attempted_fix, diagnosis, actual_fix?, source_files?, page?)` — record a failed fix attempt so future agents can learn from it. Auto-routes to the best matching wiki page, or specify a target page explicitly. **Use this when a fix attempt fails — future agents will see these failures via `wiki_search` before attempting similar fixes.**
 
 > **Workspace support:** Most tools accept an optional `member` param to scope queries to a specific workspace member by name.
 

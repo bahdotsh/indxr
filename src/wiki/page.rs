@@ -36,6 +36,9 @@ pub struct Frontmatter {
     /// contradicts what the wiki previously stated.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contradictions: Vec<Contradiction>,
+    /// Recorded failure patterns — failed fix attempts and their diagnoses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failures: Vec<FailurePattern>,
 }
 
 /// A contradiction detected during wiki update — where new code
@@ -49,6 +52,29 @@ pub struct Contradiction {
     /// ISO 8601 timestamp when the contradiction was detected.
     pub detected_at: String,
     /// ISO 8601 timestamp when the contradiction was resolved, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<String>,
+}
+
+/// A recorded failure pattern — what was tried, why it failed, and what actually worked.
+/// Helps future agents avoid repeating the same mistakes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailurePattern {
+    /// What was observed (error message, test failure, unexpected behavior).
+    pub symptom: String,
+    /// What fix was attempted.
+    pub attempted_fix: String,
+    /// Why the fix didn't work / root cause analysis.
+    pub diagnosis: String,
+    /// What actually worked (filled in later when the issue is resolved).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_fix: Option<String>,
+    /// Source files involved in this failure.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_files: Vec<String>,
+    /// ISO 8601 timestamp when this failure was recorded.
+    pub recorded_at: String,
+    /// ISO 8601 timestamp when the actual fix was provided.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_at: Option<String>,
 }
@@ -175,6 +201,7 @@ mod tests {
                 links_to: vec!["architecture".to_string()],
                 covers: vec!["fn:run_mcp_server".to_string()],
                 contradictions: vec![],
+                failures: vec![],
             },
             content: "# MCP Server\n\nThis module handles the MCP protocol.".to_string(),
         };
@@ -205,6 +232,7 @@ mod tests {
                     detected_at: "2026-04-06T10:00:00Z".to_string(),
                     resolved_at: None,
                 }],
+                failures: vec![],
             },
             content: "# MCP Server".to_string(),
         };
@@ -239,6 +267,68 @@ covers: []
         let parsed = WikiPage::parse(yaml).unwrap();
         assert_eq!(parsed.frontmatter.id, "mod-old");
         assert!(parsed.frontmatter.contradictions.is_empty());
+    }
+
+    #[test]
+    fn test_roundtrip_with_failures() {
+        let page = WikiPage {
+            frontmatter: Frontmatter {
+                id: "mod-parser".to_string(),
+                title: "Parser Module".to_string(),
+                page_type: PageType::Module,
+                source_files: vec!["src/parser/mod.rs".to_string()],
+                generated_at_ref: "abc123".to_string(),
+                generated_at: "2026-04-05T10:00:00Z".to_string(),
+                links_to: vec![],
+                covers: vec![],
+                contradictions: vec![],
+                failures: vec![FailurePattern {
+                    symptom: "test_parse_nested panics with double-free".to_string(),
+                    attempted_fix: "Added clone() in parse_expression".to_string(),
+                    diagnosis: "Root cause was lifetime escape, not missing clone".to_string(),
+                    actual_fix: Some("Restructured callback ownership".to_string()),
+                    source_files: vec!["src/parser/mod.rs".to_string()],
+                    recorded_at: "2026-04-06T10:00:00Z".to_string(),
+                    resolved_at: Some("2026-04-06T11:00:00Z".to_string()),
+                }],
+            },
+            content: "# Parser Module".to_string(),
+        };
+
+        let rendered = page.render().unwrap();
+        let parsed = WikiPage::parse(&rendered).unwrap();
+        assert_eq!(parsed.frontmatter.failures.len(), 1);
+        assert_eq!(
+            parsed.frontmatter.failures[0].symptom,
+            "test_parse_nested panics with double-free"
+        );
+        assert_eq!(
+            parsed.frontmatter.failures[0].actual_fix.as_deref(),
+            Some("Restructured callback ownership")
+        );
+        assert!(parsed.frontmatter.failures[0].resolved_at.is_some());
+    }
+
+    #[test]
+    fn test_backward_compat_no_failures_field() {
+        // Simulate an older wiki page with no failures field in YAML
+        let yaml = r#"---
+id: mod-old
+title: Old Module
+page_type: module
+source_files:
+  - src/old.rs
+generated_at_ref: abc123
+generated_at: "2026-01-01T00:00:00Z"
+links_to: []
+covers: []
+---
+
+# Old Module
+"#;
+        let parsed = WikiPage::parse(yaml).unwrap();
+        assert_eq!(parsed.frontmatter.id, "mod-old");
+        assert!(parsed.frontmatter.failures.is_empty());
     }
 
     #[test]

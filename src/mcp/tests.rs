@@ -3280,6 +3280,7 @@ mod wiki_tests {
                             "fn:build_workspace_index".to_string(),
                         ],
                         contradictions: vec![],
+                        failures: vec![],
                     },
                     content: "# Architecture\n\nThis codebase uses tree-sitter for parsing and rayon for parallelism.\n\n## Key Components\n- Indexer\n- MCP Server\n- Parser".to_string(),
                 },
@@ -3300,6 +3301,7 @@ mod wiki_tests {
                             "fn:handle_tool_call".to_string(),
                         ],
                         contradictions: vec![],
+                        failures: vec![],
                     },
                     content: "# MCP Server\n\nHandles JSON-RPC protocol for tool dispatch.\n\n## Tools\nThe server exposes structural analysis tools via MCP protocol.".to_string(),
                 },
@@ -3314,6 +3316,7 @@ mod wiki_tests {
                         links_to: vec![],
                         covers: vec!["struct:ParserRegistry".to_string()],
                         contradictions: vec![],
+                        failures: vec![],
                     },
                     content: "# Parser\n\nTree-sitter and regex-based parsing for 27 languages.".to_string(),
                 },
@@ -3455,7 +3458,8 @@ mod wiki_tests {
         assert!(names.contains(&"wiki_status"));
         assert!(names.contains(&"wiki_suggest_contribution"));
         assert!(names.contains(&"wiki_compound"));
-        assert_eq!(names.len(), 11); // 3 compound + 8 wiki
+        assert!(names.contains(&"wiki_record_failure"));
+        assert_eq!(names.len(), 12); // 3 compound + 9 wiki
     }
 
     #[test]
@@ -3494,6 +3498,7 @@ mod wiki_tests {
                     links_to: vec![],
                     covers: vec![],
                     contradictions: vec![],
+                    failures: vec![],
                 },
                 content: "# Ünïcödé Tëst\n\nThis module uses résumé and naïve approaches with Ñoño patterns.".to_string(),
             }],
@@ -4081,5 +4086,280 @@ mod wiki_tests {
                 .links_to
                 .contains(&"mod-parser".to_string())
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // wiki_record_failure tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_wiki_record_failure_auto_routes() {
+        let mut store = make_test_wiki_store();
+        // Use words that overlap with page title "MCP Server Module" and content
+        // "Handles JSON-RPC protocol for tool dispatch"
+        let result = tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "Server module crashes on JSON-RPC protocol dispatch",
+                "attempted_fix": "Added a default match arm in handle_tool_call",
+                "diagnosis": "The panic was in tool_definitions, not handle_tool_call dispatch"
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["action"], "recorded_on_existing");
+        // Should route to mod-mcp because symptom+diagnosis overlap with title and content
+        assert_eq!(content["page_id"], "mod-mcp");
+        assert_eq!(content["failure_index"], 0);
+
+        let page = store.get_page("mod-mcp").unwrap();
+        assert_eq!(page.frontmatter.failures.len(), 1);
+        assert!(page.frontmatter.failures[0]
+            .symptom
+            .contains("Server module crashes"));
+        assert!(page.frontmatter.failures[0].resolved_at.is_none());
+    }
+
+    #[test]
+    fn test_wiki_record_failure_explicit_page() {
+        let mut store = make_test_wiki_store();
+        let result = tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "Parsing fails for nested generics",
+                "attempted_fix": "Increased recursion limit",
+                "diagnosis": "The grammar rule was wrong, not the limit",
+                "page": "mod-parser",
+                "source_files": ["src/parser/mod.rs"]
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["action"], "recorded_on_existing");
+        assert_eq!(content["page_id"], "mod-parser");
+
+        let page = store.get_page("mod-parser").unwrap();
+        assert_eq!(page.frontmatter.failures.len(), 1);
+        assert_eq!(
+            page.frontmatter.failures[0].source_files,
+            vec!["src/parser/mod.rs"]
+        );
+    }
+
+    #[test]
+    fn test_wiki_record_failure_creates_new_page() {
+        let mut store = make_test_wiki_store();
+        let initial_count = store.pages.len();
+        let result = tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "Database connection pool exhausted under load",
+                "attempted_fix": "Increased pool size to 200",
+                "diagnosis": "Connections were leaked by unclosed transactions",
+                "actual_fix": "Added drop guard for transactions"
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["action"], "recorded_on_new");
+        assert_eq!(content["failure_index"], 0);
+        assert_eq!(
+            content["total_wiki_pages"].as_u64().unwrap(),
+            (initial_count + 1) as u64
+        );
+
+        // The failure should have actual_fix and resolved_at set
+        let page_id = content["page_id"].as_str().unwrap();
+        let page = store.get_page(page_id).unwrap();
+        assert_eq!(page.frontmatter.failures.len(), 1);
+        assert_eq!(
+            page.frontmatter.failures[0].actual_fix.as_deref(),
+            Some("Added drop guard for transactions")
+        );
+        assert!(page.frontmatter.failures[0].resolved_at.is_some());
+    }
+
+    #[test]
+    fn test_wiki_record_failure_missing_params() {
+        let mut store = make_test_wiki_store();
+        let result = tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "something broke"
+                // missing attempted_fix and diagnosis
+            }),
+        );
+        assert!(result.get("isError").is_some());
+    }
+
+    #[test]
+    fn test_wiki_contribute_with_failures() {
+        let mut store = make_test_wiki_store();
+        let result = tool_wiki_contribute(
+            &mut store,
+            &json!({
+                "page": "mod-mcp",
+                "content": "# MCP Server\n\nUpdated with failure tracking.",
+                "failures": [{
+                    "symptom": "Tool dispatch hangs on large payloads",
+                    "attempted_fix": "Added timeout to tool handler",
+                    "diagnosis": "The hang was in serialization, not dispatch"
+                }]
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["action"], "updated");
+
+        let page = store.get_page("mod-mcp").unwrap();
+        assert_eq!(page.frontmatter.failures.len(), 1);
+        assert!(page.frontmatter.failures[0]
+            .symptom
+            .contains("Tool dispatch hangs"));
+    }
+
+    #[test]
+    fn test_wiki_contribute_resolve_failures() {
+        let mut store = make_test_wiki_store();
+
+        // First, add a failure
+        tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "MCP server crashes on startup",
+                "attempted_fix": "Checked port binding",
+                "diagnosis": "Config file was malformed",
+                "page": "mod-mcp"
+            }),
+        );
+        let page = store.get_page("mod-mcp").unwrap();
+        assert!(page.frontmatter.failures[0].resolved_at.is_none());
+
+        // Now resolve via wiki_contribute
+        tool_wiki_contribute(
+            &mut store,
+            &json!({
+                "page": "mod-mcp",
+                "content": "# MCP Server\n\nFixed startup crash.",
+                "resolve_failures": true
+            }),
+        );
+        let page = store.get_page("mod-mcp").unwrap();
+        assert!(page.frontmatter.failures[0].resolved_at.is_some());
+    }
+
+    #[test]
+    fn test_wiki_search_failure_counts() {
+        let mut store = make_test_wiki_store();
+        // Add a failure to mod-mcp
+        tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "MCP tool returns empty results",
+                "attempted_fix": "Fixed query parsing",
+                "diagnosis": "Index was stale",
+                "page": "mod-mcp"
+            }),
+        );
+
+        let result = tool_wiki_search(&store, &json!({"query": "MCP Server"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        let mcp_result = content["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == "mod-mcp")
+            .unwrap();
+        assert_eq!(mcp_result["failure_count"], 1);
+        assert_eq!(mcp_result["unresolved_failures"], 1);
+    }
+
+    #[test]
+    fn test_wiki_search_matches_symptoms() {
+        let mut store = make_test_wiki_store();
+        // Add a failure with a specific error message
+        tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "ECONNREFUSED when calling external API",
+                "attempted_fix": "Added retry logic",
+                "diagnosis": "DNS resolution was failing",
+                "page": "mod-mcp"
+            }),
+        );
+
+        // Search by the error message — should find the page via failure symptom
+        let result = tool_wiki_search(&store, &json!({"query": "ECONNREFUSED"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(content["matches"].as_u64().unwrap() > 0);
+        assert_eq!(content["results"][0]["id"], "mod-mcp");
+    }
+
+    #[test]
+    fn test_wiki_search_include_failures_flag() {
+        let mut store = make_test_wiki_store();
+        tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "MCP tool timeout",
+                "attempted_fix": "Increased timeout",
+                "diagnosis": "Deadlock in tool handler",
+                "page": "mod-mcp"
+            }),
+        );
+
+        // Without flag — no failure details
+        let result = tool_wiki_search(&store, &json!({"query": "MCP"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        let mcp_result = content["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == "mod-mcp")
+            .unwrap();
+        assert!(mcp_result.get("failures").is_none());
+
+        // With flag — failure details included
+        let result =
+            tool_wiki_search(&store, &json!({"query": "MCP", "include_failures": true}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        let mcp_result = content["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == "mod-mcp")
+            .unwrap();
+        let failures = mcp_result["failures"].as_array().unwrap();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0]["symptom"], "MCP tool timeout");
+        assert_eq!(failures[0]["diagnosis"], "Deadlock in tool handler");
+    }
+
+    #[test]
+    fn test_wiki_read_shows_failures() {
+        let mut store = make_test_wiki_store();
+        tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "MCP server returns malformed JSON",
+                "attempted_fix": "Fixed serialization in response builder",
+                "diagnosis": "The issue was in the content encoding, not serialization",
+                "source_files": ["src/mcp/mod.rs"],
+                "page": "mod-mcp"
+            }),
+        );
+
+        let result = tool_wiki_read(&store, &json!({"page": "mod-mcp"}));
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        let failures = content["failures"].as_array().unwrap();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0]["index"], 0);
+        assert_eq!(failures[0]["symptom"], "MCP server returns malformed JSON");
+        assert!(failures[0].get("source_files").is_some());
     }
 }

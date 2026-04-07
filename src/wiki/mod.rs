@@ -193,6 +193,7 @@ pub(crate) fn compound_into_wiki(
                     links_to,
                     covers: old.frontmatter.covers.clone(),
                     contradictions: old.frontmatter.contradictions.clone(),
+                    failures: old.frontmatter.failures.clone(),
                 },
                 content: new_content,
             };
@@ -268,6 +269,7 @@ pub(crate) fn compound_into_wiki(
             links_to,
             covers: Vec::new(),
             contradictions: Vec::new(),
+            failures: Vec::new(),
         },
         content: format!("# {}\n\n{}", page_title, synthesis),
     };
