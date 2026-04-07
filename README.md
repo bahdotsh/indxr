@@ -2,7 +2,7 @@
 
 # indxr
 
-**A living knowledge base for your codebase, powered by AI agents.**
+**A fast codebase indexer and knowledge wiki for AI agents.**
 
 [![CI](https://github.com/bahdotsh/indxr/actions/workflows/ci.yml/badge.svg)](https://github.com/bahdotsh/indxr/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/indxr.svg)](https://crates.io/crates/indxr)
@@ -10,26 +10,26 @@
 
 </div>
 
-Codebases have documentation that's always out of date and tribal knowledge that lives in people's heads. indxr fixes this by giving AI agents a persistent, self-updating wiki about your codebase — architecture decisions, module responsibilities, failure patterns, and cross-cutting concerns — all grounded in a fast structural index that keeps everything accurate.
+indxr gives AI agents a persistent, self-updating wiki about your codebase backed by a fast structural index. Architecture decisions, module responsibilities, failure patterns — stuff that normally lives in people's heads — gets written down and stays current.
 
 ---
 
 ## Features
 
-- **Codebase knowledge wiki** — persistent, agent-driven wiki with architecture pages, module overviews, failure pattern recording, contradiction tracking, and automatic knowledge compounding. The wiki grows richer with every agent interaction — agents query it, learn from it, and write back to it
-- **9 wiki MCP tools** — `wiki_generate`, `wiki_search`, `wiki_read`, `wiki_contribute`, `wiki_update`, `wiki_compound`, `wiki_suggest_contribution`, `wiki_record_failure`, `wiki_status` — a complete knowledge management API for AI agents
+- **Codebase knowledge wiki** — persistent wiki with architecture pages, module overviews, failure pattern recording, contradiction tracking, and knowledge compounding. Agents query it, learn from it, and write back to it
+- **9 wiki MCP tools** — `wiki_generate`, `wiki_search`, `wiki_read`, `wiki_contribute`, `wiki_update`, `wiki_compound`, `wiki_suggest_contribution`, `wiki_record_failure`, `wiki_status`
 - **Self-updating** — wiki automatically stays in sync with code changes via `indxr serve --watch --wiki-auto-update`
-- **26-tool MCP server** (3 compound default + 23 granular via `--all-tools`) — live structural queries over JSON-RPC: symbol lookup, file summaries, caller tracing, signature search, complexity hotspots, type flow tracking, workspace support, and more
+- **26-tool MCP server** (3 compound default + 23 granular via `--all-tools`) — symbol lookup, file summaries, caller tracing, signature search, complexity hotspots, type flow tracking, workspace support
 - **27 languages** — tree-sitter AST parsing for 8 languages, regex extraction for 19 more
-- **Token-aware** — progressive truncation to fit context windows, ~5x reduction vs reading full files
+- **Token-aware** — progressive truncation to fit context windows
 - **Git structural diffing** — declaration-level diffs (`+` added, `-` removed, `~` changed) against any git ref or GitHub PR
 - **Dependency graphs** — file and symbol dependency visualization as DOT, Mermaid, or JSON
 - **File watching** — continuous re-indexing as you edit, via `indxr watch` or `indxr serve --watch`
-- **Monorepo / workspace support** — auto-detects Cargo, npm, and Go workspaces; scope any tool or command to a specific member via `--member`
-- **One-command agent setup** — `indxr init` configures Claude Code, Cursor, Windsurf, and Codex CLI with MCP, instruction files, and hooks
-- **Incremental caching** — mtime + xxh3 content hashing, sub-20ms indexing for most projects
-- **Complexity hotspots** — per-function cyclomatic complexity, nesting depth, and parameter count via tree-sitter AST analysis; codebase health reports
-- **Composable filters** — by path, kind, symbol name, visibility, and language
+- **Monorepo / workspace support** — Cargo, npm, Go workspaces; `--member` to scope to specific members
+- **One-command agent setup** — `indxr init` configures Claude Code, Cursor, Windsurf, Codex CLI
+- **Incremental caching** — mtime + xxh3 content hashing
+- **Complexity hotspots** — per-function cyclomatic complexity, nesting depth, parameter count; codebase health reports
+- **Composable filters** — path, kind, symbol name, visibility, language
 
 ## Install
 
@@ -78,7 +78,7 @@ indxr members                                # list workspace members (monorepo)
 
 ## Codebase Knowledge Wiki
 
-The wiki is the heart of indxr. While the structural index tells agents *what exists* in your codebase, the wiki tells them *why things exist* — architecture decisions, module responsibilities, failure patterns, and cross-cutting concerns that would otherwise live only in people's heads.
+The structural index tells agents what exists in your codebase. The wiki tells them why. Architecture decisions, module responsibilities, failure patterns — things that usually get lost when someone leaves the team.
 
 ```bash
 indxr wiki generate                          # generate wiki from scratch
@@ -92,13 +92,11 @@ Wiki pages are stored in `.indxr/wiki/` as Markdown with YAML frontmatter. Page 
 
 ### How agents use the wiki
 
-The wiki is designed to grow richer with every agent interaction:
-
-1. **Generate:** Agent calls `wiki_generate`, plans pages from structural context, calls `wiki_contribute` for each
-2. **Query:** Agent calls `wiki_search` to understand modules and design decisions *before* reading any source code
-3. **Learn:** Agent calls `wiki_compound` to persist synthesized insights after cross-page analysis
-4. **Record failures:** Agent calls `wiki_record_failure` so future agents avoid the same mistakes
-5. **Update:** Agent calls `wiki_update` to identify stale pages after code changes, rewrites them via `wiki_contribute`
+1. **Generate:** `wiki_generate` → agent plans pages from structural context, writes each via `wiki_contribute`
+2. **Query:** `wiki_search` to understand modules and design decisions before reading source
+3. **Learn:** `wiki_compound` persists synthesized insights after cross-page analysis
+4. **Record failures:** `wiki_record_failure` so future agents don't repeat mistakes
+5. **Update:** `wiki_update` identifies stale pages after code changes, agent rewrites via `wiki_contribute`
 
 ### Wiki MCP tools (9 tools)
 
@@ -124,7 +122,7 @@ The MCP server keeps the wiki in sync with your code automatically:
 indxr serve --watch --wiki-auto-update
 ```
 
-This triggers wiki page updates when source files change, using the configured LLM provider. LLM configuration: set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or use `--exec` for a custom LLM backend.
+Triggers wiki page updates when source files change. Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or use `--exec` for a custom LLM backend.
 
 See [Wiki docs](docs/wiki.md) for full details on page structure, LLM configuration, and disk layout.
 
@@ -149,11 +147,11 @@ indxr init --no-rtk           # skip RTK hook setup
 | Codex CLI | `.codex/config.toml`, `AGENTS.md` | `~/.codex/config.toml`, `~/.codex/AGENTS.md` |
 | All | `.gitignore` entry, `INDEX.md` | — |
 
-Agents don't always pick MCP tools over file reads on their own. `indxr init` sets up reinforcement — PreToolUse hooks intercept `Read`/`Bash` calls and instruction files teach the exploration workflow.
+Agents don't always pick MCP tools over file reads on their own. `indxr init` sets up PreToolUse hooks that intercept `Read`/`Bash` calls and instruction files that teach the exploration workflow.
 
 ## MCP Server
 
-The MCP server is how agents interact with indxr — both the wiki and the structural index. JSON-RPC 2.0 over stdin/stdout (or Streamable HTTP with `--features http`). By default 3 compound structural tools are listed; pass `--all-tools` to expose all 26 (3 compound + 23 granular). Wiki tools (9) are always available when a wiki exists.
+JSON-RPC 2.0 over stdin/stdout (or Streamable HTTP with `--features http`). 3 compound tools listed by default; `--all-tools` exposes all 26. Wiki tools (9) are available when a wiki exists.
 
 ### Default tools (3 compound)
 
@@ -193,9 +191,9 @@ The MCP server is how agents interact with indxr — both the wiki and the struc
 
 > Granular tools are always callable even when not listed — `--all-tools` only controls whether they appear in `tools/list`.
 
-In addition to the structural tools above, the MCP server exposes **9 wiki tools** for knowledge management — see the [Wiki section](#codebase-knowledge-wiki) above for the full list.
+Wiki tools (9) are also available when a wiki exists. See [Wiki section](#codebase-knowledge-wiki).
 
-In workspace mode (multiple members), tools automatically gain a `member` param to scope queries. List tools support `compact` mode for ~30% token savings. See [MCP Server docs](docs/mcp-server.md) for full parameter details.
+In workspace mode, tools gain a `member` param to scope queries. List tools support `compact` mode. See [MCP Server docs](docs/mcp-server.md) for details.
 
 ## Output
 
@@ -239,7 +237,7 @@ indxr -l rust,python                        # language filter
 indxr --filter-path src/model --kind struct --public-only  # combine
 ```
 
-All filters compose. `--kind` accepts: `function`, `struct`, `class`, `trait`, `enum`, `interface`, `module`, `method`, `constant`, `impl`, `type`, `namespace`, `macro`, and more.
+Filters compose. `--kind` accepts: `function`, `struct`, `class`, `trait`, `enum`, `interface`, `module`, `method`, `constant`, `impl`, `type`, `namespace`, `macro`.
 
 ## Git Structural Diffing
 
@@ -268,9 +266,9 @@ indxr --hotspots                             # top 30 most complex functions
 indxr --hotspots --filter-path src/parser    # scoped to a directory
 ```
 
-Shows cyclomatic complexity, max nesting depth, parameter count, body lines, and a composite score for each function. Only tree-sitter parsed languages are analyzed.
+Shows cyclomatic complexity, max nesting depth, parameter count, body lines, and composite score per function. Tree-sitter parsed languages only.
 
-MCP tools: `get_hotspots` (ranked list with filtering and sorting), `get_health` (aggregate metrics, documentation coverage, test ratio, hottest files), `get_type_flow` (cross-file type flow tracking — producers and consumers of any type).
+MCP tools: `get_hotspots`, `get_health`, `get_type_flow`.
 
 ## Dependency Graph
 
@@ -310,12 +308,6 @@ Detection is by file extension. Full details: [docs/languages.md](docs/languages
 ## Performance
 
 Parallel parsing via rayon. Incremental caching via mtime + xxh3.
-
-| Codebase | Files | Lines | Cold | Cached |
-|---|---|---|---|---|
-| Small (indxr) | 47 | 19K | 17ms | 5ms |
-| Medium (atuin) | 132 | 22K | 20ms | 6ms |
-| Large (cloud-hypervisor) | 243 | 124K | 73ms | ~10ms |
 
 ## Documentation
 
