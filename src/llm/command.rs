@@ -21,9 +21,14 @@ pub async fn complete(
         "max_tokens": max_tokens,
     });
 
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
+    let parts = shlex::split(cmd)
+        .ok_or_else(|| anyhow::anyhow!("Invalid command (mismatched quotes): {cmd}"))?;
+    let (program, args) = parts
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("Empty command"))?;
+
+    let mut child = Command::new(program)
+        .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())
