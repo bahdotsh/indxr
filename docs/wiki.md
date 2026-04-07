@@ -1,16 +1,14 @@
 # Codebase Knowledge Wiki
 
-indxr can generate and maintain a persistent knowledge wiki about your codebase. The wiki captures architectural decisions, module overviews, entity descriptions, and topic-specific knowledge in structured Markdown pages — providing AI agents with rich context that goes beyond structural indexing.
+The wiki is the core feature of indxr. It gives AI agents a persistent, self-updating knowledge base about your codebase — architecture decisions, module responsibilities, failure patterns, and cross-cutting concerns that would otherwise live only in people's heads or get lost between agent sessions.
 
-> **Feature flag:** The wiki requires building with `--features wiki`.
->
-> ```bash
-> cargo install indxr --features wiki
-> ```
+Every agent interaction makes the wiki richer. Agents query it before diving into code, compound new insights after analysis, and record failure patterns so future agents don't repeat mistakes. The structural index (`INDEX.md`) provides the foundation — it tells agents *what exists*. The wiki tells them *why*.
+
+```bash
+cargo install indxr --features wiki
+```
 
 ## Overview
-
-The structural index (`INDEX.md`) tells agents *what exists* — functions, structs, imports, relationships. The wiki tells agents *why things exist* — design decisions, module responsibilities, entity semantics, and cross-cutting concerns.
 
 Wiki pages are stored in `.indxr/wiki/` as Markdown files with YAML frontmatter. They support cross-references via `[[page-id]]` links, source file associations, contradiction tracking, and failure pattern recording.
 

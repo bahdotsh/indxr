@@ -1,6 +1,6 @@
 # MCP Server
 
-indxr includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that lets AI agents query the codebase index on-demand.
+indxr includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that gives AI agents access to the codebase knowledge wiki and structural index. Agents can query the wiki for architecture decisions and module context, search for symbols and files, read specific functions, and write knowledge back — all over JSON-RPC.
 
 Two transports are available:
 - **stdio** (default) — JSON-RPC 2.0 over stdin/stdout, for single-client use

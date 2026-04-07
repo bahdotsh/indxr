@@ -4,11 +4,11 @@ How to use indxr effectively with AI coding agents like Claude Code, Claude Desk
 
 ## The Problem
 
-AI agents exploring a codebase typically read files one at a time, spending tokens to understand project structure. A medium-sized project (100+ files) can easily consume 50K+ tokens just for orientation — before any real work begins.
+AI agents start every session from scratch. They waste thousands of tokens re-reading files to orient themselves, have no memory of past debugging sessions, and repeat the same mistakes across conversations. Architecture decisions, module responsibilities, and hard-won knowledge about why things are the way they are — all of it gets lost.
 
 ## The Solution
 
-indxr gives agents a structural map of the entire codebase in a fraction of the tokens. An agent can see every function, struct, class, interface, and import across hundreds of files in a single context load.
+indxr gives agents a persistent knowledge wiki and a fast structural index of your codebase. Agents can query the wiki to understand *why* things exist before reading a single line of code, and write back what they learn so future agents start with richer context. The structural index provides the foundation — every function, struct, class, interface, and import across hundreds of files, queryable at a fraction of the token cost.
 
 ## Three Integration Modes
 
@@ -73,6 +73,40 @@ This creates all configuration files, agent instruction files, PreToolUse hooks,
 Use `--global` to install indxr into user-level config directories so it's available for every project without per-project setup. Global mode merges the indxr MCP server entry into existing config files (preserving other servers and settings).
 
 The sections below describe what each file does and how to set things up manually.
+
+## Wiki Setup
+
+The wiki is the primary way agents build and retain knowledge about your codebase. Set it up early — it makes every subsequent agent interaction more productive.
+
+```bash
+# Build with wiki support
+cargo install indxr --features wiki
+
+# Generate the wiki (requires LLM — set ANTHROPIC_API_KEY or OPENAI_API_KEY)
+indxr wiki generate
+
+# Or let an agent generate it via MCP (no API key needed — the agent IS the LLM)
+# Agent calls wiki_generate, plans pages, then wiki_contribute for each
+```
+
+### Recommended MCP server setup
+
+For the best experience, run the MCP server with wiki auto-updates enabled:
+
+```bash
+indxr serve --watch --wiki-auto-update
+```
+
+This gives agents both structural queries and wiki tools, with automatic re-indexing and wiki updates as code changes. See [Wiki docs](wiki.md) for full details on LLM configuration, page types, and disk layout.
+
+### Agent workflow with wiki
+
+Every agent session follows this cycle:
+
+1. **Before diving into code:** Agent calls `wiki_search("authentication")` to understand modules, design decisions, and prior failure patterns
+2. **After synthesizing insights:** Agent calls `wiki_compound` to persist knowledge that spans multiple pages
+3. **When a fix fails:** Agent calls `wiki_record_failure` so future agents avoid the same mistake
+4. **After code changes:** Agent calls `wiki_update` to identify stale pages, rewrites them, and saves via `wiki_contribute`
 
 ## Agent-Specific Setup
 
@@ -356,155 +390,9 @@ Agents don't always use MCP tools voluntarily. Two mechanisms help:
 
 See the [Claude Code setup section](#claude-code) above for full details, examples, and a ready-to-copy CLAUDE.md template.
 
-## Codebase Knowledge Wiki
-
-> Requires `--features wiki`. See [Wiki docs](wiki.md) for full details.
-
-The structural index tells agents *what exists*. The wiki tells agents *why things exist* — design decisions, module responsibilities, failure patterns, and cross-cutting concerns.
-
-### Setting up the wiki
-
-```bash
-# Build with wiki support
-cargo install indxr --features wiki
-
-# Generate the wiki (requires LLM — set ANTHROPIC_API_KEY or OPENAI_API_KEY)
-indxr wiki generate
-
-# Or let an agent generate it via MCP (no API key needed — the agent IS the LLM)
-# Agent calls wiki_generate, plans pages, then wiki_contribute for each
-```
-
-### Agent workflow with wiki
-
-The wiki is designed to grow richer with every agent interaction:
-
-1. **Before diving into code:** Agent calls `wiki_search("authentication")` to understand modules and design decisions
-2. **After synthesizing insights:** Agent calls `wiki_compound` to persist knowledge that spans multiple pages
-3. **When a fix fails:** Agent calls `wiki_record_failure` so future agents avoid the same mistake
-4. **After code changes:** Agent calls `wiki_update` to identify stale pages, rewrites them, and saves via `wiki_contribute`
-
-### Auto-updating wiki
-
-The MCP server can keep the wiki up to date automatically:
-
-```bash
-indxr serve --watch --wiki-auto-update
-```
-
-This triggers wiki page updates when source files change, using the configured LLM provider.
-
 ## Effective Usage Patterns
 
-### Pattern 1: Orientation First
-
-Before asking an agent to write code, give it the structural overview:
-
-```bash
-# Generate a scoped index for the area you're working in
-indxr --filter-path src/parser --max-tokens 4000
-```
-
-This lets the agent understand what exists before deciding what to create or modify.
-
-### Pattern 2: Review Recent Changes
-
-When asking an agent to review or continue work:
-
-```bash
-# Show structural changes since the last release
-indxr --since v1.2.0
-
-# Show what changed on this branch
-indxr --since main
-
-# Show structural changes for a GitHub PR
-indxr diff --pr 42
-```
-
-The agent sees exactly which declarations were added, removed, or modified — without reading full diffs. The MCP `get_diff_summary` tool also supports a `pr` parameter for PR-aware diffs.
-
-### Pattern 3: API Surface for Library Work
-
-When working with or on a library:
-
-```bash
-# Public API only, compact
-indxr --public-only --max-tokens 3000
-```
-
-### Pattern 4: Symbol Lookup During Development
-
-With the MCP server running, agents can look up symbols as needed:
-
-```
-Agent: "Let me check what methods are available on the Cache struct"
-→ calls summarize("Cache")
-→ gets: struct Cache — signature, doc comment, children (load, save, get, insert, ...), relationships
-
-Agent: "Who calls estimate_tokens?"
-→ calls find("estimate_tokens", mode="callers")
-→ gets: files and declarations that reference estimate_tokens
-```
-
-### Pattern 5: Token-Budget-Aware Exploration (MCP)
-
-With the compound tools, agents can explore efficiently without wasting tokens:
-
-```
-1. find("caching logic")                → find relevant files/symbols (~200 tokens)
-2. summarize("src/cache.rs")            → understand structure (~300 tokens)
-3. read("src/cache.rs", symbol="load")  → read just the function (~150 tokens)
-                                         Total: ~650 tokens vs ~5000+ for reading the full file
-```
-
-### Pattern 6: Architecture Documentation
-
-Generate a codebase overview for onboarding or documentation:
-
-```bash
-# Summary for high-level overview
-indxr -d summary -o docs/ARCHITECTURE_OVERVIEW.md
-
-# Full signatures for detailed reference
-indxr -d signatures --public-only -o docs/API_REFERENCE.md
-```
-
-### Pattern 7: CI/CD Integration
-
-Auto-generate an index on every commit for agents to consume:
-
-```yaml
-# .github/workflows/index.yml
-- name: Generate codebase index
-  run: |
-    cargo install --path .
-    indxr --public-only --max-tokens 8000 -o INDEX.md
-- name: Commit index
-  run: |
-    git add INDEX.md
-    git diff --cached --quiet || git commit -m "chore: update codebase index"
-```
-
-### Pattern 8: Monorepo / Workspace Projects
-
-For monorepos with multiple packages, use native workspace support:
-
-```bash
-# List detected workspace members
-indxr members
-
-# Serve only a specific member
-indxr serve --member backend
-
-# MCP: scope any tool to a member
-# get_file_summary(path: "src/lib.rs", member: "core")
-# lookup_symbol(name: "Config", member: "cli")
-```
-
-indxr auto-detects Cargo workspaces, npm/Yarn/pnpm workspaces, and Go workspaces. Use `--no-workspace` to disable detection and treat the root as a single project.
-
-### Pattern 9: Wiki-Enhanced Exploration (MCP)
+### Pattern 1: Wiki-Enhanced Exploration (MCP)
 
 With the wiki available, agents can understand the *why* before the *what*:
 
@@ -527,6 +415,114 @@ After completing the work, the agent compounds what it learned:
    instead of braces, which affects the nesting detection regex.")
 → knowledge persisted for future agents
 ```
+
+### Pattern 2: Orientation First
+
+Before asking an agent to write code, give it the structural overview:
+
+```bash
+# Generate a scoped index for the area you're working in
+indxr --filter-path src/parser --max-tokens 4000
+```
+
+This lets the agent understand what exists before deciding what to create or modify.
+
+### Pattern 3: Review Recent Changes
+
+When asking an agent to review or continue work:
+
+```bash
+# Show structural changes since the last release
+indxr --since v1.2.0
+
+# Show what changed on this branch
+indxr --since main
+
+# Show structural changes for a GitHub PR
+indxr diff --pr 42
+```
+
+The agent sees exactly which declarations were added, removed, or modified — without reading full diffs. The MCP `get_diff_summary` tool also supports a `pr` parameter for PR-aware diffs.
+
+### Pattern 4: API Surface for Library Work
+
+When working with or on a library:
+
+```bash
+# Public API only, compact
+indxr --public-only --max-tokens 3000
+```
+
+### Pattern 5: Symbol Lookup During Development
+
+With the MCP server running, agents can look up symbols as needed:
+
+```
+Agent: "Let me check what methods are available on the Cache struct"
+→ calls summarize("Cache")
+→ gets: struct Cache — signature, doc comment, children (load, save, get, insert, ...), relationships
+
+Agent: "Who calls estimate_tokens?"
+→ calls find("estimate_tokens", mode="callers")
+→ gets: files and declarations that reference estimate_tokens
+```
+
+### Pattern 6: Token-Budget-Aware Exploration (MCP)
+
+With the compound tools, agents can explore efficiently without wasting tokens:
+
+```
+1. find("caching logic")                → find relevant files/symbols (~200 tokens)
+2. summarize("src/cache.rs")            → understand structure (~300 tokens)
+3. read("src/cache.rs", symbol="load")  → read just the function (~150 tokens)
+                                         Total: ~650 tokens vs ~5000+ for reading the full file
+```
+
+### Pattern 7: Architecture Documentation
+
+Generate a codebase overview for onboarding or documentation:
+
+```bash
+# Summary for high-level overview
+indxr -d summary -o docs/ARCHITECTURE_OVERVIEW.md
+
+# Full signatures for detailed reference
+indxr -d signatures --public-only -o docs/API_REFERENCE.md
+```
+
+### Pattern 8: CI/CD Integration
+
+Auto-generate an index on every commit for agents to consume:
+
+```yaml
+# .github/workflows/index.yml
+- name: Generate codebase index
+  run: |
+    cargo install --path .
+    indxr --public-only --max-tokens 8000 -o INDEX.md
+- name: Commit index
+  run: |
+    git add INDEX.md
+    git diff --cached --quiet || git commit -m "chore: update codebase index"
+```
+
+### Pattern 9: Monorepo / Workspace Projects
+
+For monorepos with multiple packages, use native workspace support:
+
+```bash
+# List detected workspace members
+indxr members
+
+# Serve only a specific member
+indxr serve --member backend
+
+# MCP: scope any tool to a member
+# get_file_summary(path: "src/lib.rs", member: "core")
+# lookup_symbol(name: "Config", member: "cli")
+```
+
+indxr auto-detects Cargo workspaces, npm/Yarn/pnpm workspaces, and Go workspaces. Use `--no-workspace` to disable detection and treat the root as a single project.
 
 ### Pattern 10: Multi-Language Projects
 
@@ -558,9 +554,11 @@ These are starting points — adjust based on how much context you need for the 
 
 ## Best Practices
 
-1. **Use MCP when available** — it's more efficient than loading the full index, since agents only fetch what they need
-2. **Scope your index** — use `--filter-path`, `--languages`, and `--public-only` to reduce noise
-3. **Set a token budget** — always use `--max-tokens` when piping to agents with limited context
-4. **Keep the index fresh** — use `indxr watch` to auto-update INDEX.md, `indxr serve --watch` for live MCP sessions, or regenerate manually after significant changes
-5. **Combine with source reading** — the index shows structure; agents should still read specific files when they need implementation details
-6. **Use structural diffs for reviews** — `--since main` is more useful than raw git diffs for understanding what changed architecturally
+1. **Generate the wiki first** — run `indxr wiki generate` before starting agent sessions. The wiki provides the "why" context that makes every interaction more productive
+2. **Use `--watch --wiki-auto-update`** — keep both the structural index and wiki in sync with code changes automatically
+3. **Compound knowledge** — after any multi-step investigation, have the agent call `wiki_compound` to persist what it learned for future sessions
+4. **Record failures** — when a fix attempt fails, call `wiki_record_failure` so future agents don't repeat the same mistake
+5. **Use MCP when available** — it's more efficient than loading the full index, since agents only fetch what they need
+6. **Scope your index** — use `--filter-path`, `--languages`, and `--public-only` to reduce noise
+7. **Set a token budget** — always use `--max-tokens` when piping to agents with limited context
+8. **Use structural diffs for reviews** — `--since main` is more useful than raw git diffs for understanding what changed architecturally

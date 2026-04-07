@@ -2,7 +2,7 @@
 
 # indxr
 
-**A fast codebase indexer and MCP server for AI coding agents.**
+**A living knowledge base for your codebase, powered by AI agents.**
 
 [![CI](https://github.com/bahdotsh/indxr/actions/workflows/ci.yml/badge.svg)](https://github.com/bahdotsh/indxr/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/indxr.svg)](https://crates.io/crates/indxr)
@@ -10,15 +10,17 @@
 
 </div>
 
-AI coding agents waste thousands of tokens reading entire source files just to understand what's in them. indxr gives agents a structural map of your codebase — declarations, imports, relationships, and dependency graphs — so they can query for exactly what they need at a fraction of the token cost.
+Codebases have documentation that's always out of date and tribal knowledge that lives in people's heads. indxr fixes this by giving AI agents a persistent, self-updating wiki about your codebase — architecture decisions, module responsibilities, failure patterns, and cross-cutting concerns — all grounded in a fast structural index that keeps everything accurate.
 
 ---
 
 ## Features
 
+- **Codebase knowledge wiki** — persistent, agent-driven wiki with architecture pages, module overviews, failure pattern recording, contradiction tracking, and automatic knowledge compounding. The wiki grows richer with every agent interaction — agents query it, learn from it, and write back to it
+- **9 wiki MCP tools** — `wiki_generate`, `wiki_search`, `wiki_read`, `wiki_contribute`, `wiki_update`, `wiki_compound`, `wiki_suggest_contribution`, `wiki_record_failure`, `wiki_status` — a complete knowledge management API for AI agents
+- **Self-updating** — wiki automatically stays in sync with code changes via `indxr serve --watch --wiki-auto-update`
+- **26-tool MCP server** (3 compound default + 23 granular via `--all-tools`) — live structural queries over JSON-RPC: symbol lookup, file summaries, caller tracing, signature search, complexity hotspots, type flow tracking, workspace support, and more
 - **27 languages** — tree-sitter AST parsing for 8 languages, regex extraction for 19 more
-- **26-tool MCP server** (3 compound default + 23 granular via `--all-tools`) — live codebase queries over JSON-RPC: symbol lookup, file summaries, caller tracing, signature search, complexity hotspots, type flow tracking, workspace support, and more
-- **Codebase knowledge wiki** — persistent, agent-driven wiki with architecture pages, module overviews, failure pattern recording, and automatic knowledge compounding (`--features wiki`, adds 9 MCP tools)
 - **Token-aware** — progressive truncation to fit context windows, ~5x reduction vs reading full files
 - **Git structural diffing** — declaration-level diffs (`+` added, `-` removed, `~` changed) against any git ref or GitHub PR
 - **Dependency graphs** — file and symbol dependency visualization as DOT, Mermaid, or JSON
@@ -27,48 +29,104 @@ AI coding agents waste thousands of tokens reading entire source files just to u
 - **One-command agent setup** — `indxr init` configures Claude Code, Cursor, Windsurf, and Codex CLI with MCP, instruction files, and hooks
 - **Incremental caching** — mtime + xxh3 content hashing, sub-20ms indexing for most projects
 - **Complexity hotspots** — per-function cyclomatic complexity, nesting depth, and parameter count via tree-sitter AST analysis; codebase health reports
-- **Type flow tracking** — cross-file analysis showing which functions produce (return) and consume (accept) a given type
 - **Composable filters** — by path, kind, symbol name, visibility, and language
-- **Three output formats** — Markdown (default), JSON, YAML at three detail levels
 
 ## Install
 
 ```bash
-cargo install indxr
+cargo install indxr --features wiki
 ```
 
-With optional features:
+This installs indxr with the full wiki system. For additional transports:
 
 ```bash
-cargo install indxr --features wiki        # codebase knowledge wiki
-cargo install indxr --features http        # Streamable HTTP transport
-cargo install indxr --features wiki,http   # both
+cargo install indxr --features wiki,http   # + Streamable HTTP transport
 ```
 
 Or build from source:
 
 ```bash
 git clone https://github.com/bahdotsh/indxr.git
-cd indxr && cargo build --release
-# With wiki support:
 cd indxr && cargo build --release --features wiki
 ```
+
+> You can also install without the wiki feature (`cargo install indxr`) if you only need structural indexing.
 
 ## Usage
 
 ```bash
-indxr                                        # index cwd → stdout
-indxr ./my-project -o INDEX.md               # index project → file
-indxr -f json -l rust,python -o index.json   # JSON, filter by language
-indxr serve ./my-project                     # start MCP server
-indxr serve ./my-project --watch             # MCP server with auto-reindex
-indxr watch ./my-project                     # watch & keep INDEX.md updated
-indxr members                                # list workspace members (monorepo)
-indxr init                                   # set up all agent configs
+# Wiki — the core workflow
 indxr wiki generate                          # generate codebase knowledge wiki
 indxr wiki update                            # update wiki after code changes
 indxr wiki status                            # check wiki health
+indxr wiki compound notes.txt                # compound knowledge from file
+
+# MCP server — live queries + wiki tools for AI agents
+indxr serve ./my-project --watch --wiki-auto-update  # recommended: full setup
+indxr serve ./my-project                     # start MCP server (structural only)
+indxr serve ./my-project --watch             # MCP server with auto-reindex
+
+# Structural indexing
+indxr                                        # index cwd → stdout
+indxr ./my-project -o INDEX.md               # index project → file
+indxr -f json -l rust,python -o index.json   # JSON, filter by language
+
+# Setup
+indxr init                                   # set up all agent configs
+indxr members                                # list workspace members (monorepo)
 ```
+
+## Codebase Knowledge Wiki
+
+The wiki is the heart of indxr. While the structural index tells agents *what exists* in your codebase, the wiki tells them *why things exist* — architecture decisions, module responsibilities, failure patterns, and cross-cutting concerns that would otherwise live only in people's heads.
+
+```bash
+indxr wiki generate                          # generate wiki from scratch
+indxr wiki update                            # update after code changes
+indxr wiki status                            # check wiki health
+indxr wiki compound notes.txt                # compound knowledge from file
+echo "synthesis" | indxr wiki compound -     # compound from stdin
+```
+
+Wiki pages are stored in `.indxr/wiki/` as Markdown with YAML frontmatter. Page types: `architecture`, `module`, `entity`, `topic`. Pages support `[[page-id]]` cross-references, contradiction tracking, and failure pattern recording.
+
+### How agents use the wiki
+
+The wiki is designed to grow richer with every agent interaction:
+
+1. **Generate:** Agent calls `wiki_generate`, plans pages from structural context, calls `wiki_contribute` for each
+2. **Query:** Agent calls `wiki_search` to understand modules and design decisions *before* reading any source code
+3. **Learn:** Agent calls `wiki_compound` to persist synthesized insights after cross-page analysis
+4. **Record failures:** Agent calls `wiki_record_failure` so future agents avoid the same mistakes
+5. **Update:** Agent calls `wiki_update` to identify stale pages after code changes, rewrites them via `wiki_contribute`
+
+### Wiki MCP tools (9 tools)
+
+| Tool | Description |
+|---|---|
+| `wiki_generate` | Initialize a new wiki and return structural context for page planning |
+| `wiki_search` | Search wiki by keyword or concept; returns matching pages with excerpts |
+| `wiki_read` | Read a wiki page by ID; returns full content with metadata |
+| `wiki_status` | Check wiki health: page count, staleness, source file coverage |
+| `wiki_contribute` | Write knowledge back to the wiki (create or update pages) |
+| `wiki_update` | Analyze code changes and return affected pages with diff context |
+| `wiki_suggest_contribution` | Suggest which page to update for a given synthesis (no LLM call) |
+| `wiki_compound` | Auto-route synthesized knowledge to the best matching page |
+| `wiki_record_failure` | Record a failed fix attempt for future agents to learn from |
+
+> `wiki_generate` is always listed; the remaining 8 tools appear once a wiki exists. Wiki tools support contradiction tracking and failure pattern recording.
+
+### Auto-updating wiki
+
+The MCP server keeps the wiki in sync with your code automatically:
+
+```bash
+indxr serve --watch --wiki-auto-update
+```
+
+This triggers wiki page updates when source files change, using the configured LLM provider. LLM configuration: set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or use `--exec` for a custom LLM backend.
+
+See [Wiki docs](docs/wiki.md) for full details on page structure, LLM configuration, and disk layout.
 
 ## Agent Setup
 
@@ -95,7 +153,7 @@ Agents don't always pick MCP tools over file reads on their own. `indxr init` se
 
 ## MCP Server
 
-JSON-RPC 2.0 over stdin/stdout (or Streamable HTTP with `--features http`). By default 3 compound tools are listed to minimize per-request token overhead; pass `--all-tools` to expose all 26 (3 compound + 23 granular).
+The MCP server is how agents interact with indxr — both the wiki and the structural index. JSON-RPC 2.0 over stdin/stdout (or Streamable HTTP with `--features http`). By default 3 compound structural tools are listed; pass `--all-tools` to expose all 26 (3 compound + 23 granular). Wiki tools (9) are always available when a wiki exists.
 
 ### Default tools (3 compound)
 
@@ -135,21 +193,7 @@ JSON-RPC 2.0 over stdin/stdout (or Streamable HTTP with `--features http`). By d
 
 > Granular tools are always callable even when not listed — `--all-tools` only controls whether they appear in `tools/list`.
 
-### Wiki tools (9 — requires `--features wiki`)
-
-| Tool | Description |
-|---|---|
-| `wiki_generate` | Initialize a new wiki and return structural context for page planning |
-| `wiki_search` | Search wiki by keyword or concept; returns matching pages with excerpts |
-| `wiki_read` | Read a wiki page by ID; returns full content with metadata |
-| `wiki_status` | Check wiki health: page count, staleness, source file coverage |
-| `wiki_contribute` | Write knowledge back to the wiki (create or update pages) |
-| `wiki_update` | Analyze code changes and return affected pages with diff context |
-| `wiki_suggest_contribution` | Suggest which page to update for a given synthesis (no LLM call) |
-| `wiki_compound` | Auto-route synthesized knowledge to the best matching page |
-| `wiki_record_failure` | Record a failed fix attempt for future agents to learn from |
-
-> `wiki_generate` is always listed; the remaining 8 tools appear once a wiki exists. Wiki tools support contradiction tracking and failure pattern recording.
+In addition to the structural tools above, the MCP server exposes **9 wiki tools** for knowledge management — see the [Wiki section](#codebase-knowledge-wiki) above for the full list.
 
 In workspace mode (multiple members), tools automatically gain a `member` param to scope queries. List tools support `compact` mode for ~30% token savings. See [MCP Server docs](docs/mcp-server.md) for full parameter details.
 
@@ -244,38 +288,6 @@ indxr --graph dot --graph-depth 2            # limit to 2 hops
 | `file` (default) | File-to-file import relationships |
 | `symbol` | Symbol-to-symbol relationships (trait impls, method calls) |
 
-## Codebase Knowledge Wiki
-
-> Requires `--features wiki`: `cargo install indxr --features wiki`
-
-The structural index tells agents *what exists*. The wiki tells agents *why things exist* — design decisions, module responsibilities, failure patterns, and cross-cutting concerns.
-
-```bash
-indxr wiki generate                          # generate wiki from scratch
-indxr wiki update                            # update after code changes
-indxr wiki status                            # check wiki health
-indxr wiki compound notes.txt                # compound knowledge from file
-echo "synthesis" | indxr wiki compound -     # compound from stdin
-```
-
-Wiki pages are stored in `.indxr/wiki/` as Markdown with YAML frontmatter. Page types: `architecture`, `module`, `entity`, `topic`. Pages support `[[page-id]]` cross-references, contradiction tracking, and failure pattern recording.
-
-The wiki is designed to be agent-driven via MCP tools:
-
-1. **Generate:** Agent calls `wiki_generate`, plans pages, calls `wiki_contribute` for each
-2. **Query:** Agent calls `wiki_search` to understand modules and design decisions before reading code
-3. **Learn:** Agent calls `wiki_compound` to persist synthesized insights after cross-page analysis
-4. **Record failures:** Agent calls `wiki_record_failure` so future agents avoid the same mistakes
-5. **Update:** Agent calls `wiki_update` to identify stale pages after code changes
-
-The MCP server can auto-update the wiki on file changes:
-
-```bash
-indxr serve --watch --wiki-auto-update
-```
-
-LLM configuration: set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or use `--exec` for a custom LLM backend.
-
 ## Token Budget
 
 ```bash
@@ -309,17 +321,17 @@ Parallel parsing via rayon. Incremental caching via mtime + xxh3.
 
 | Document | Description |
 |---|---|
+| [Wiki](docs/wiki.md) | Codebase knowledge wiki — generation, maintenance, and agent workflows |
+| [Agent Integration](docs/agent-integration.md) | Usage with Claude, Codex, Cursor, Copilot, etc. |
+| [MCP Server](docs/mcp-server.md) | MCP tools, protocol, and client setup |
 | [CLI Reference](docs/cli-reference.md) | Complete flag and option reference |
 | [Languages](docs/languages.md) | Per-language extraction details |
 | [Output Formats](docs/output-formats.md) | Format and detail level reference |
-| [Filtering](docs/filtering.md) | Path, kind, symbol, visibility filters |
-| [Dependency Graph](docs/dep-graph.md) | File and symbol dependency visualization |
 | [Git Diffing](docs/git-diffing.md) | Structural diff since any git ref or GitHub PR |
+| [Dependency Graph](docs/dep-graph.md) | File and symbol dependency visualization |
+| [Filtering](docs/filtering.md) | Path, kind, symbol, visibility filters |
 | [Token Budget](docs/token-budget.md) | Truncation strategy and scoring |
 | [Caching](docs/caching.md) | Cache format and invalidation |
-| [Wiki](docs/wiki.md) | Codebase knowledge wiki generation and maintenance |
-| [MCP Server](docs/mcp-server.md) | MCP tools, protocol, and client setup |
-| [Agent Integration](docs/agent-integration.md) | Usage with Claude, Codex, Cursor, Copilot, etc. |
 
 ## Contributing
 

@@ -1,7 +1,7 @@
 # Codebase Index: indxr
 
-> Generated: 2026-04-05 19:15:47 UTC | Files: 76 | Lines: 44145
-> Languages: JSON (4), Markdown (17), Python (2), Rust (51), Shell (1), TOML (1)
+> Generated: 2026-04-07 13:02:31 UTC | Files: 77 | Lines: 46310
+> Languages: JSON (4), Markdown (18), Python (2), Rust (51), Shell (1), TOML (1)
 
 ## Directory Structure
 
@@ -30,6 +30,7 @@ indxr/
     mcp-server.md
     output-formats.md
     token-budget.md
+    wiki.md
   plan.md
   roadmap.md
   src/
@@ -114,7 +115,9 @@ indxr/
 - `# Caching`
 - `# MCP server (stdio transport — default)`
 - `# MCP server (Streamable HTTP transport — requires --features http)`
+- `# MCP server with wiki auto-update (requires --features wiki)`
 - `# File watching`
+- `# Wiki (requires --features wiki)`
 - `# Agent setup`
 - `# Workspace / monorepo`
 - `# Complexity hotspots`
@@ -134,6 +137,7 @@ indxr/
 
 **README.md**
 - `# indxr`
+- `# With wiki support:`
 - `# Codebase Index: my-project`
 
 **accuracy_bench.py**
@@ -227,6 +231,10 @@ indxr/
 - `# Agent Integration Guide`
 - `# Full structured index`
 - `# Pipe to your agent`
+- `# Build with wiki support`
+- `# Generate the wiki (requires LLM — set ANTHROPIC_API_KEY or OPENAI_API_KEY)`
+- `# Or let an agent generate it via MCP (no API key needed — the agent IS the LLM)`
+- `# Agent calls wiki_generate, plans pages, then wiki_contribute for each`
 - `# Generate a scoped index for the area you're working in`
 - `# Show structural changes since the last release`
 - `# Show what changed on this branch`
@@ -252,6 +260,14 @@ indxr/
 - `# JSON output`
 - `# Diff against a git ref (same as --since flag)`
 - `# Diff a specific project`
+- `# Generate wiki from scratch`
+- `# Dry run — see planned pages without generating`
+- `# Update wiki after code changes`
+- `# Update wiki based on changes since a specific ref`
+- `# Check wiki health`
+- `# Compound knowledge from a file`
+- `# Compound from stdin with source page references`
+- `# Use external LLM command`
 - `# Output:`
 - `# Workspace: cargo (3 members)`
 - `# core        packages/core`
@@ -312,6 +328,13 @@ indxr/
 - `# Scoped to a directory`
 - `# Limit to 2 hops from scoped files`
 - `# Write to file`
+- `# Generate a codebase knowledge wiki`
+- `# Preview planned pages without generating`
+- `# Update wiki after code changes`
+- `# Check wiki health`
+- `# Compound knowledge from a file`
+- `# Compound from stdin`
+- `# MCP server with auto-updating wiki`
 - `# Compact public API index for an agent`
 - `# Quick structural diff of backend changes`
 - `# Full JSON index without cache`
@@ -391,6 +414,21 @@ indxr/
 - `# Public API within budget`
 - `# Scoped to a directory within budget`
 - `# Specific language within budget`
+
+**docs/wiki.md**
+- `# Codebase Knowledge Wiki`
+- `# Use a specific model`
+- `# Dry run to see what pages would be created`
+- `# Use an external command as the LLM backend`
+- `# Update based on changes since a specific ref`
+- `# Update with a specific model`
+- `# From a file`
+- `# From stdin`
+- `# With source page references`
+- `# With a custom title for new pages`
+- `# Parser Module`
+- `# Option 1: Don't commit (regenerate per-developer)`
+- `# Option 2: Commit (shared team knowledge)`
 
 **plan.md**
 - `# ⚠️  DO NOT COMMIT OR PUSH THIS FILE — local planning only ⚠️`
@@ -561,6 +599,8 @@ indxr/
 - `pub(super) fn tool_wiki_read(store: &crate::wiki::store::WikiStore, args: &Value) -> Value`
 - `pub(super) fn tool_wiki_status( store: &crate::wiki::store::WikiStore, workspace: &WorkspaceIndex, ) -> Value`
 - `pub(super) fn tool_wiki_suggest_contribution( store: &crate::wiki::store::WikiStore, args: &Value, ) -> Value`
+- `pub(super) fn tool_wiki_compound(store: &mut crate::wiki::store::WikiStore, args: &Value) -> Value`
+- `pub(super) fn tool_wiki_record_failure( store: &mut crate::wiki::store::WikiStore, args: &Value, ) -> Value`
 - `pub(super) fn tool_wiki_contribute( store: &mut crate::wiki::store::WikiStore, args: &Value, ) -> Value`
 - `pub(super) fn tool_wiki_generate(workspace: &WorkspaceIndex, args: &Value) -> Value`
 - `pub(super) fn tool_wiki_update( store: &crate::wiki::store::WikiStore, workspace: &WorkspaceIndex, registry: &crate::parser::ParserRegistry, args: &Value, ) -> Value`
@@ -692,6 +732,7 @@ indxr/
 - `pub struct WikiPage`
 - `pub struct Frontmatter`
 - `pub struct Contradiction`
+- `pub struct FailurePattern`
 - `pub enum PageType`
 - `pub fn sanitize_id(id: &str) -> String`
 
@@ -729,7 +770,7 @@ indxr/
 
 ## CLAUDE.md
 
-**Language:** Markdown | **Size:** 15.0 KB | **Lines:** 238
+**Language:** Markdown | **Size:** 16.7 KB | **Lines:** 254
 
 **Declarations:**
 
@@ -737,7 +778,7 @@ indxr/
 
 ## Cargo.toml
 
-**Language:** TOML | **Size:** 1.5 KB | **Lines:** 54
+**Language:** TOML | **Size:** 1.5 KB | **Lines:** 55
 
 **Imports:**
 - `anyhow`
@@ -750,7 +791,7 @@ indxr/
 - `regex`
 - `serde`
 - `serde_json`
-- *... and 23 more imports*
+- *... and 24 more imports*
 
 **Declarations:**
 
@@ -758,7 +799,7 @@ indxr/
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 89.9 KB | **Lines:** 3255
+**Language:** Markdown | **Size:** 92.5 KB | **Lines:** 3323
 
 **Declarations:**
 
@@ -766,7 +807,7 @@ indxr/
 
 ## README.md
 
-**Language:** Markdown | **Size:** 11.4 KB | **Lines:** 267
+**Language:** Markdown | **Size:** 14.8 KB | **Lines:** 330
 
 **Declarations:**
 
@@ -842,7 +883,7 @@ indxr/
 
 ## docs/agent-integration.md
 
-**Language:** Markdown | **Size:** 18.2 KB | **Lines:** 504
+**Language:** Markdown | **Size:** 20.5 KB | **Lines:** 566
 
 **Declarations:**
 
@@ -858,7 +899,7 @@ indxr/
 
 ## docs/cli-reference.md
 
-**Language:** Markdown | **Size:** 12.5 KB | **Lines:** 439
+**Language:** Markdown | **Size:** 15.8 KB | **Lines:** 538
 
 **Declarations:**
 
@@ -898,7 +939,7 @@ indxr/
 
 ## docs/mcp-server.md
 
-**Language:** Markdown | **Size:** 27.6 KB | **Lines:** 857
+**Language:** Markdown | **Size:** 33.0 KB | **Lines:** 973
 
 **Declarations:**
 
@@ -915,6 +956,14 @@ indxr/
 ## docs/token-budget.md
 
 **Language:** Markdown | **Size:** 3.3 KB | **Lines:** 92
+
+**Declarations:**
+
+---
+
+## docs/wiki.md
+
+**Language:** Markdown | **Size:** 8.6 KB | **Lines:** 247
 
 **Declarations:**
 
@@ -1024,7 +1073,7 @@ indxr/
 
 ## src/cli.rs
 
-**Language:** Rust | **Size:** 12.9 KB | **Lines:** 449
+**Language:** Rust | **Size:** 13.3 KB | **Lines:** 464
 
 **Imports:**
 - `std::path::PathBuf`
@@ -1350,7 +1399,7 @@ indxr/
 
 ## src/llm/command.rs
 
-**Language:** Rust | **Size:** 2.6 KB | **Lines:** 83
+**Language:** Rust | **Size:** 2.8 KB | **Lines:** 88
 
 **Imports:**
 - `std::time::Duration`
@@ -1589,7 +1638,7 @@ indxr/
 
 ## src/mcp/mod.rs
 
-**Language:** Rust | **Size:** 27.2 KB | **Lines:** 791
+**Language:** Rust | **Size:** 28.0 KB | **Lines:** 813
 
 **Imports:**
 - `std::io::{self, BufRead, Write}`
@@ -1661,7 +1710,7 @@ indxr/
 
 ## src/mcp/tests.rs
 
-**Language:** Rust | **Size:** 139.6 KB | **Lines:** 3903
+**Language:** Rust | **Size:** 166.3 KB | **Lines:** 4607
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2056,7 +2105,7 @@ indxr/
 
 ## src/mcp/tools.rs
 
-**Language:** Rust | **Size:** 122.9 KB | **Lines:** 3453
+**Language:** Rust | **Size:** 136.6 KB | **Lines:** 3796
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2101,6 +2150,8 @@ indxr/
 `fn extract_excerpt(content: &str, query: &str, max_chars: usize) -> String`
 
 `fn format_wiki_page(page: &crate::wiki::page::WikiPage) -> Value`
+
+`fn record_failure_on_page( store: &mut crate::wiki::store::WikiStore, page_id: &str, failure: crate::wiki::page::FailurePattern, now: &str, ) -> Value`
 
 ---
 
@@ -2955,7 +3006,7 @@ indxr/
 
 ## src/wiki/generate.rs
 
-**Language:** Rust | **Size:** 45.5 KB | **Lines:** 1288
+**Language:** Rust | **Size:** 45.6 KB | **Lines:** 1291
 
 **Imports:**
 - `std::collections::{HashMap, HashSet}`
@@ -3039,7 +3090,7 @@ indxr/
 
 ## src/wiki/mod.rs
 
-**Language:** Rust | **Size:** 9.4 KB | **Lines:** 298
+**Language:** Rust | **Size:** 17.2 KB | **Lines:** 536
 
 **Imports:**
 - `pub(crate) use generate::UpdateResult`
@@ -3065,6 +3116,15 @@ indxr/
 
 `pub(crate) fn compute_wiki_health( store: &store::WikiStore, workspace: &WorkspaceIndex, ) -> WikiHealthReport`
 
+`pub(crate) struct CompoundResult`
+> Fields: `action: String`, `id: String`, `title: String`
+
+`pub(crate) fn compound_into_wiki( store: &mut store::WikiStore, synthesis: &str, source_pages: &[String], title: Option<&str>, ) -> Result<CompoundResult>`
+
+`pub(crate) fn score_pages( store: &store::WikiStore, synthesis: &str, source_pages: &[&str], ) -> Vec<(usize, String)>`
+
+`pub(crate) fn derive_topic_id(synthesis: &str) -> String`
+
 `fn resolve_wiki_dir(override_dir: &Option<PathBuf>, workspace_root: &std::path::Path) -> PathBuf`
 
 `pub(crate) fn commits_behind(root: &std::path::Path, since_ref: &str) -> Result<usize>`
@@ -3073,13 +3133,21 @@ indxr/
 
 ## src/wiki/page.rs
 
-**Language:** Rust | **Size:** 8.8 KB | **Lines:** 265
+**Language:** Rust | **Size:** 15.1 KB | **Lines:** 428
 
 **Imports:**
 - `anyhow::{Context, Result, bail}`
 - `serde::{Deserialize, Serialize}`
 
 **Declarations:**
+
+**`impl FailurePattern`**
+  `pub fn from_json(v: &serde_json::Value, now: &str) -> Option<Self>`
+
+  `pub fn to_json_summary(&self) -> serde_json::Value`
+
+  `pub fn to_json_detail(&self, index: usize) -> serde_json::Value`
+
 
 **`impl std::fmt::Display for PageType`**
   `fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result`
