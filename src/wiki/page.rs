@@ -106,6 +106,46 @@ impl FailurePattern {
             resolved_at: None,
         })
     }
+
+    /// Serialize to a summary JSON value (for search results — omits timestamps).
+    pub fn to_json_summary(&self) -> serde_json::Value {
+        let mut obj = serde_json::json!({
+            "symptom": self.symptom,
+            "attempted_fix": self.attempted_fix,
+            "diagnosis": self.diagnosis,
+        });
+        if let Some(ref fix) = self.actual_fix {
+            obj["actual_fix"] = serde_json::json!(fix);
+        }
+        if !self.source_files.is_empty() {
+            obj["source_files"] = serde_json::json!(self.source_files);
+        }
+        if self.resolved_at.is_some() {
+            obj["resolved"] = serde_json::json!(true);
+        }
+        obj
+    }
+
+    /// Serialize to a detailed JSON value (for page reads — includes index and timestamps).
+    pub fn to_json_detail(&self, index: usize) -> serde_json::Value {
+        let mut obj = serde_json::json!({
+            "index": index,
+            "symptom": self.symptom,
+            "attempted_fix": self.attempted_fix,
+            "diagnosis": self.diagnosis,
+            "recorded_at": self.recorded_at,
+        });
+        if let Some(ref fix) = self.actual_fix {
+            obj["actual_fix"] = serde_json::json!(fix);
+        }
+        if let Some(ref resolved) = self.resolved_at {
+            obj["resolved_at"] = serde_json::json!(resolved);
+        }
+        if !self.source_files.is_empty() {
+            obj["source_files"] = serde_json::json!(self.source_files);
+        }
+        obj
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

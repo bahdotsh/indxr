@@ -26,8 +26,8 @@ use self::tools::{
 #[cfg(feature = "wiki")]
 use self::tools::{
     tool_wiki_compound, tool_wiki_contribute, tool_wiki_generate, tool_wiki_read,
-    tool_wiki_record_failure, tool_wiki_search, tool_wiki_status,
-    tool_wiki_suggest_contribution, tool_wiki_update,
+    tool_wiki_record_failure, tool_wiki_search, tool_wiki_status, tool_wiki_suggest_contribution,
+    tool_wiki_update,
 };
 
 /// Wiki store state, conditionally compiled.

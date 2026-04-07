@@ -2836,23 +2836,7 @@ pub(super) fn tool_wiki_search(store: &crate::wiki::store::WikiStore, args: &Val
                     .frontmatter
                     .failures
                     .iter()
-                    .map(|f| {
-                        let mut obj = json!({
-                            "symptom": f.symptom,
-                            "attempted_fix": f.attempted_fix,
-                            "diagnosis": f.diagnosis,
-                        });
-                        if let Some(ref fix) = f.actual_fix {
-                            obj["actual_fix"] = json!(fix);
-                        }
-                        if !f.source_files.is_empty() {
-                            obj["source_files"] = json!(f.source_files);
-                        }
-                        if f.resolved_at.is_some() {
-                            obj["resolved"] = json!(true);
-                        }
-                        obj
-                    })
+                    .map(|f| f.to_json_summary())
                     .collect();
                 entry["failures"] = json!(failures);
             }
@@ -3055,25 +3039,7 @@ fn format_wiki_page(page: &crate::wiki::page::WikiPage) -> Value {
             .failures
             .iter()
             .enumerate()
-            .map(|(i, f)| {
-                let mut obj = json!({
-                    "index": i,
-                    "symptom": f.symptom,
-                    "attempted_fix": f.attempted_fix,
-                    "diagnosis": f.diagnosis,
-                    "recorded_at": f.recorded_at,
-                });
-                if let Some(ref fix) = f.actual_fix {
-                    obj["actual_fix"] = json!(fix);
-                }
-                if let Some(ref resolved) = f.resolved_at {
-                    obj["resolved_at"] = json!(resolved);
-                }
-                if !f.source_files.is_empty() {
-                    obj["source_files"] = json!(f.source_files);
-                }
-                obj
-            })
+            .map(|(i, f)| f.to_json_detail(i))
             .collect();
         result["failures"] = json!(failure_details);
     }
@@ -3240,28 +3206,28 @@ fn record_failure_on_page(
     page_id: &str,
     failure: crate::wiki::page::FailurePattern,
     now: &str,
-) -> Result<Value, Value> {
+) -> Value {
     let page = match store.pages.iter_mut().find(|p| p.frontmatter.id == page_id) {
         Some(p) => p,
-        None => return Err(tool_error(&format!("Page '{}' not found", page_id))),
+        None => return tool_error(&format!("Page '{}' not found", page_id)),
     };
     let failure_index = page.frontmatter.failures.len();
     page.frontmatter.failures.push(failure);
     page.frontmatter.generated_at = now.to_string();
     if let Err(e) = store.save_incremental(page_id) {
-        return Err(tool_error(&format!("Failed to save: {}", e)));
+        return tool_error(&format!("Failed to save: {}", e));
     }
     let title = store
         .get_page(page_id)
         .map(|p| p.frontmatter.title.clone())
         .unwrap_or_default();
-    Ok(tool_result(json!({
+    tool_result(json!({
         "action": "recorded_on_existing",
         "page_id": page_id,
         "title": title,
         "failure_index": failure_index,
         "total_wiki_pages": store.pages.len(),
-    })))
+    }))
 }
 
 #[cfg(feature = "wiki")]
@@ -3317,10 +3283,7 @@ pub(super) fn tool_wiki_record_failure(
         if page_id.is_empty() {
             return tool_error("Invalid page ID");
         }
-        return match record_failure_on_page(store, &page_id, failure, &now) {
-            Ok(v) => v,
-            Err(e) => e,
-        };
+        return record_failure_on_page(store, &page_id, failure, &now);
     }
 
     // Auto-route: score pages using symptom + diagnosis text
@@ -3329,11 +3292,8 @@ pub(super) fn tool_wiki_record_failure(
     let best = scored.first().map(|(score, id)| (*score, id.clone()));
 
     if let Some((best_score, target_id)) = best {
-        if best_score >= 20 {
-            return match record_failure_on_page(store, &target_id, failure, &now) {
-                Ok(v) => v,
-                Err(e) => e,
-            };
+        if best_score >= 25 {
+            return record_failure_on_page(store, &target_id, failure, &now);
         }
     }
 

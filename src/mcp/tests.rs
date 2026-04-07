@@ -4432,4 +4432,118 @@ mod wiki_tests {
         assert_eq!(failures[0]["symptom"], "MCP server returns malformed JSON");
         assert!(failures[0].get("source_files").is_some());
     }
+
+    #[test]
+    fn test_wiki_record_failure_dedup_suffix() {
+        let mut store = make_test_wiki_store();
+        // First failure creates a new page with a derived topic ID
+        let result1 = tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "Quantum flux capacitor overload in warp core",
+                "attempted_fix": "Reversed polarity",
+                "diagnosis": "Wrong subspace frequency"
+            }),
+        );
+        let content1: Value =
+            serde_json::from_str(result1["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content1["action"], "recorded_on_new");
+        let page_id1 = content1["page_id"].as_str().unwrap().to_string();
+
+        // Second failure with similar symptom should create a page with suffix
+        let result2 = tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "Quantum flux capacitor overload in warp core again",
+                "attempted_fix": "Replaced capacitor",
+                "diagnosis": "Capacitor was defective"
+            }),
+        );
+        let content2: Value =
+            serde_json::from_str(result2["content"][0]["text"].as_str().unwrap()).unwrap();
+        // Should either route to the first page (if score >= 30) or create a new suffixed page
+        let page_id2 = content2["page_id"].as_str().unwrap().to_string();
+        if content2["action"] == "recorded_on_new" {
+            // If it created a new page, the ID should have a -2 suffix
+            assert!(
+                page_id2.ends_with("-2"),
+                "Expected suffixed page ID, got: {}",
+                page_id2
+            );
+        } else {
+            // If it routed to existing, that's also valid
+            assert_eq!(page_id2, page_id1);
+        }
+    }
+
+    #[test]
+    fn test_wiki_record_failure_empty_page_id() {
+        let mut store = make_test_wiki_store();
+        let result = tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "Something broke",
+                "attempted_fix": "Tried something",
+                "diagnosis": "Did not work",
+                "page": "///..."
+            }),
+        );
+        assert!(result.get("isError").is_some());
+    }
+
+    #[test]
+    fn test_wiki_record_failure_yaml_special_chars() {
+        let mut store = make_test_wiki_store();
+        let result = tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "Error: \"unexpected token\" at line 42:\n  expected: '}'\n  got: ':'",
+                "attempted_fix": "Added escape for `:` in YAML output — didn't help",
+                "diagnosis": "The colon was inside a quoted string; real issue was\nmultiline value not being block-scalar formatted",
+                "page": "mod-parser"
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["action"], "recorded_on_existing");
+        assert_eq!(content["page_id"], "mod-parser");
+
+        // Verify roundtrip through page serialization
+        let page = store.get_page("mod-parser").unwrap();
+        assert_eq!(page.frontmatter.failures.len(), 1);
+        assert!(
+            page.frontmatter.failures[0]
+                .symptom
+                .contains("unexpected token")
+        );
+        assert!(page.frontmatter.failures[0].diagnosis.contains("multiline"));
+    }
+
+    #[test]
+    fn test_wiki_record_failure_topic_failure_fallback() {
+        let mut store = make_test_wiki_store();
+        // Create a minimal page to simulate that the symptom words are all short
+        // (< 4 chars), so derive_topic_id returns "topic-new" and sanitize_id keeps it.
+        // We need a symptom with only short words so the derive path is exercised.
+        let result = tool_wiki_record_failure(
+            &mut store,
+            &json!({
+                "symptom": "it is an odd bug",
+                "attempted_fix": "no fix yet",
+                "diagnosis": "no clue"
+            }),
+        );
+        let content: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        // Should create a new page since short words won't match existing pages
+        assert_eq!(content["action"], "recorded_on_new");
+        // The page_id should be "topic-new" since all words < 4 chars
+        // (derive_topic_id filters >= 4 chars)
+        let page_id = content["page_id"].as_str().unwrap();
+        assert!(
+            page_id.starts_with("topic-"),
+            "Expected topic- prefix, got: {}",
+            page_id
+        );
+    }
 }
