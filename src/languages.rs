@@ -33,6 +33,7 @@ pub enum Language {
     Gradle,
     Cmake,
     Properties,
+    Qml,
 }
 
 impl Language {
@@ -85,6 +86,7 @@ impl Language {
             "gradle" => Some(Language::Gradle),
             "cmake" => Some(Language::Cmake),
             "properties" => Some(Language::Properties),
+            "qml" => Some(Language::Qml),
             _ => None,
         }
     }
@@ -118,6 +120,7 @@ impl Language {
             Language::Gradle => "Gradle",
             Language::Cmake => "CMake",
             Language::Properties => "Properties",
+            Language::Qml => "QML",
         }
     }
 
@@ -150,6 +153,7 @@ impl Language {
             "gradle" => Some(Language::Gradle),
             "cmake" => Some(Language::Cmake),
             "properties" => Some(Language::Properties),
+            "qml" => Some(Language::Qml),
             _ => None,
         }
     }
@@ -167,6 +171,7 @@ impl Language {
                 | Language::Java
                 | Language::C
                 | Language::Cpp
+                | Language::Qml
         )
     }
 }

@@ -182,7 +182,11 @@ fn is_logical_binary(node: tree_sitter::Node<'_>, language: &Language) -> bool {
             if op == "&&" || op == "||" {
                 return true;
             }
-            if matches!(language, Language::JavaScript | Language::TypeScript) && op == "??" {
+            if matches!(
+                language,
+                Language::JavaScript | Language::TypeScript | Language::Qml
+            ) && op == "??"
+            {
                 return true;
             }
         }
@@ -270,7 +274,7 @@ fn function_node_kinds(language: &Language) -> &'static [&'static str] {
             "arrow_function",
             "function_expression",
         ],
-        Language::JavaScript => &[
+        Language::JavaScript | Language::Qml => &[
             "function_declaration",
             "method_definition",
             "arrow_function",
@@ -306,7 +310,7 @@ fn branch_node_kinds(language: &Language) -> &'static [&'static str] {
             "conditional_expression",
             "boolean_operator",
         ],
-        Language::TypeScript | Language::JavaScript => &[
+        Language::TypeScript | Language::JavaScript | Language::Qml => &[
             "if_statement",
             "while_statement",
             "for_statement",
@@ -371,7 +375,7 @@ fn nesting_node_kinds(language: &Language) -> &'static [&'static str] {
             "with_statement",
             "try_statement",
         ],
-        Language::TypeScript | Language::JavaScript => &[
+        Language::TypeScript | Language::JavaScript | Language::Qml => &[
             "if_statement",
             "while_statement",
             "for_statement",
@@ -780,6 +784,7 @@ mod tests {
             Language::Java => tree_sitter_java::LANGUAGE.into(),
             Language::C => tree_sitter_c::LANGUAGE.into(),
             Language::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+            Language::Qml => tree_sitter_qmljs::LANGUAGE.into(),
             _ => panic!("Unsupported language for test"),
         };
 
@@ -1114,6 +1119,33 @@ fn check(x: i32, y: i32) -> &'static str {
         // else-if doesn't add nesting, but the nested if inside the else-if body does:
         // if (depth 1) → else if (still depth 1) → if (depth 2)
         assert_eq!(c.max_nesting, 2, "nesting={}", c.max_nesting);
+    }
+
+    #[test]
+    fn qml_function() {
+        let src = r#"
+import QtQuick 2.15
+
+Rectangle {
+    function calculate(x, limit) {
+        if (x > limit) {
+            for (var i = 0; i < x; i++) {
+                if (i % 2 === 0) {
+                    return i;
+                }
+            }
+        }
+        return x || 0;
+    }
+}
+"#;
+        let decls = parse_and_annotate(src, Language::Qml);
+        let c = get_complexity(&decls, "calculate").expect("should have complexity");
+        assert_eq!(c.param_count, 2);
+        // 1 base + if + for + if + || = 5
+        assert_eq!(c.cyclomatic, 5, "cyclomatic={}", c.cyclomatic);
+        // if > for > if = depth 3
+        assert_eq!(c.max_nesting, 3, "nesting={}", c.max_nesting);
     }
 
     #[test]

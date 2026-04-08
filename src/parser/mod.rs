@@ -36,6 +36,7 @@ impl ParserRegistry {
             Language::Java,
             Language::C,
             Language::Cpp,
+            Language::Qml,
         ];
 
         for lang in ts_languages {

@@ -112,3 +112,14 @@ pages:
   page_type: topic
   file: topics/index.md
   source_files: []
+- id: lang-qml
+  page_type: topic
+  file: topics/lang-qml.md
+  source_files:
+  - src/parser/queries/qml.rs
+  - src/languages.rs
+  - src/parser/mod.rs
+  - src/parser/tree_sitter_parser.rs
+  - src/parser/queries/mod.rs
+  - src/parser/complexity.rs
+  - src/output/markdown.rs

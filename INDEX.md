@@ -1,7 +1,7 @@
 # Codebase Index: indxr
 
-> Generated: 2026-04-07 13:02:31 UTC | Files: 77 | Lines: 46310
-> Languages: JSON (4), Markdown (18), Python (2), Rust (51), Shell (1), TOML (1)
+> Generated: 2026-04-08 20:19:19 UTC | Files: 67 | Lines: 40742
+> Languages: Markdown (14), Rust (52), TOML (1)
 
 ## Directory Structure
 
@@ -11,14 +11,6 @@ indxr/
   Cargo.toml
   INDEX.md
   README.md
-  accuracy_bench.py
-  accuracy_questions.json
-  bench_questions/
-    indxr.json
-  benchmark.md
-  benchmark.sh
-  benchmark_results.json
-  benchmark_results_v2.json
   docs/
     agent-integration.md
     caching.md
@@ -31,8 +23,6 @@ indxr/
     output-formats.md
     token-budget.md
     wiki.md
-  plan.md
-  roadmap.md
   src/
     budget.rs
     cache/
@@ -78,6 +68,7 @@ indxr/
         javascript.rs
         mod.rs
         python.rs
+        qml.rs
         rust.rs
         typescript.rs
       regex_parser.rs
@@ -95,8 +86,6 @@ indxr/
     workspace.rs
   tests/
     wiki_integration.rs
-  token_count.py
-  wiki-plan.md
 ```
 
 ---
@@ -137,104 +126,20 @@ indxr/
 
 **README.md**
 - `# indxr`
-- `# With wiki support:`
+- `# Wiki — the core workflow`
+- `# MCP server — live queries + wiki tools for AI agents`
+- `# Structural indexing`
+- `# Setup`
 - `# Codebase Index: my-project`
-
-**accuracy_bench.py**
-- `DEFAULT_MODEL = "claude-sonnet-4-6"`
-- `DEFAULT_QUESTIONS = "accuracy_questions.json"`
-- `DEFAULT_OUTPUT = "benchmark_results.json"`
-- `API_DELAY = 0.5`
-- `SYSTEM_PROMPT = ( "You are answering a question about a codebase. " "Answer concisely and precisely. Be specific — include file paths, " "function names, types, and other concrete details. " "Do not hedge or speculate. If the provided context does not contain " "enough information to answer, say so." )`
-- `class IndxrMCP`
-- `def build_baseline_context(question: dict, repo_path: Path) -> str`
-- `def build_indxr_context(question: dict, mcp: IndxrMCP) -> str`
-- `def score_answer(question: dict, answer: str) -> float`
-- `def ask_claude(client, model: str, context: str, question: str) -> tuple`
-- `@dataclass class QuestionResult`
-- `def print_results(results: list, model: str)`
-- `def write_json_results(results: list, metadata: dict, output_path: str)`
-- `def dry_run(questions: list, repo_path: Path, mcp: IndxrMCP)`
-- `def main()`
-
-**accuracy_questions.json**
-- `"version": 1`
-- `"description": "indxr accuracy benchmark: measures LLM answer quality with full-file context vs indxr structural context"`
-- `"questions": [`
-
-**bench_questions/indxr.json**
-- `"version": 2`
-- `"description": "indxr accuracy benchmark v2: agent-loop comparison on indxr's own codebase"`
-- `"repo": "self"`
-- `"questions": [`
-
-**benchmark.md**
-- `# Benchmarks`
-- `# Python environment (first time only)`
-- `# Benchmark the current project (defaults to cwd)`
-- `# Benchmark specific projects`
-- `# With Claude token counts (set your key first)`
-- `# Set your API key`
-- `# Full benchmark (3 runs, ~$15-25)`
-- `# Quick single run (~$5-8)`
-- `# Dry run — show tools and questions without API calls (free)`
-- `# Run one category`
-- `# Run one question`
-- `# Verbose — show agent tool traces and answers`
-- `# External repo`
-- `# Different model`
-- `# One-time setup`
-- `# Token efficiency (no API key needed if tiktoken is installed)`
-- `# Accuracy v2 — quick single run (~$5-8)`
-- `# Accuracy v2 — full with statistical rigor (~$15-25)`
-
-**benchmark.sh**
-- `show_help()`
-- `count_tokens_openai()`
-- `count_tokens_claude()`
-- `_fallback_count()`
-- `compute_stats()`
-- `fmt_stats()`
-- `stat_field()`
-- `fmt_num()`
-- `pct()`
-- `ratio()`
-- `sep()`
-- `section()`
-- `progress_dot()`
-- `progress_done()`
-- `_time_indxr()`
-- `run_indxr_multi()`
-- `run_indxr_cold_multi()`
-- `run_indxr_warm_multi()`
-- `mcp_query()`
-- `fmt_tok()`
-- `detect_environment()`
-- `json_add_project()`
-- `benchmark_project()`
-- `print()`
-- `print()`
-- `print()`
-
-**benchmark_results.json**
-- `"metadata": {`
-- `"results": [`
-- `"summary": {`
-
-**benchmark_results_v2.json**
-- `"metadata": {`
-- `"summary": {`
-- `"per_question": [`
-- `"runs": [`
 
 **docs/agent-integration.md**
 - `# Agent Integration Guide`
-- `# Full structured index`
-- `# Pipe to your agent`
 - `# Build with wiki support`
 - `# Generate the wiki (requires LLM — set ANTHROPIC_API_KEY or OPENAI_API_KEY)`
 - `# Or let an agent generate it via MCP (no API key needed — the agent IS the LLM)`
 - `# Agent calls wiki_generate, plans pages, then wiki_contribute for each`
+- `# Full structured index`
+- `# Pipe to your agent`
 - `# Generate a scoped index for the area you're working in`
 - `# Show structural changes since the last release`
 - `# Show what changed on this branch`
@@ -429,13 +334,6 @@ indxr/
 - `# Parser Module`
 - `# Option 1: Don't commit (regenerate per-developer)`
 - `# Option 2: Commit (shared team knowledge)`
-
-**plan.md**
-- `# ⚠️  DO NOT COMMIT OR PUSH THIS FILE — local planning only ⚠️`
-- `# Plan: Adapt cx Ideas into indxr`
-
-**roadmap.md**
-- `# indxr Roadmap`
 
 **src/budget.rs**
 - `pub fn estimate_tokens(text: &str) -> usize`
@@ -684,12 +582,16 @@ indxr/
 - `pub mod javascript`
 - `pub mod python`
 - `pub mod rust`
+- `pub mod qml`
 - `pub mod typescript`
 - `pub trait DeclExtractor: Send + Sync`
 - `pub fn get_extractor(language: &Language) -> Box<dyn DeclExtractor>`
 
 **src/parser/queries/python.rs**
 - `pub struct PythonExtractor`
+
+**src/parser/queries/qml.rs**
+- `pub struct QmlExtractor`
 
 **src/parser/queries/rust.rs**
 - `pub struct RustExtractor`
@@ -755,17 +657,6 @@ indxr/
 - `pub fn detect_workspace(root: &Path) -> Result<Workspace>`
 - `pub fn single_root_workspace(root: &Path) -> Workspace`
 
-**token_count.py**
-- `def count_openai(text: str) -> int | None`
-- `def count_claude(text: str) -> int | None`
-- `def main()`
-
-**wiki-plan.md**
-- `# Wiki Feature — Phase 2 & 3 Plan`
-- `# Current Wiki Page`
-- `# Structural Changes Since <old_ref>`
-- `# Fresh Structural Data`
-
 ---
 
 ## CLAUDE.md
@@ -774,11 +665,35 @@ indxr/
 
 **Declarations:**
 
+`pub # indxr`
+  `pub ## Codebase Navigation — MUST USE indxr MCP tools`
+    `pub ### Token savings reference`
+
+    `pub ### Exploration workflow (follow this order)`
+      `pub #### Wiki tools (available when built with `--features wiki`)`
+
+
+    `pub ### Compact output mode`
+
+    `pub ### When to use the Read tool instead`
+
+    `pub ### DO NOT`
+
+    `pub ### After making code changes`
+
+
+  `pub ## CLI Reference (for shell commands)`
+
+
+`pub # --max-depth, --max-file-size, -e/--exclude, --no-gitignore, --cache-dir, --member, --no-workspace`
+  `pub ## Architecture`
+
+
 ---
 
 ## Cargo.toml
 
-**Language:** TOML | **Size:** 1.5 KB | **Lines:** 55
+**Language:** TOML | **Size:** 1.5 KB | **Lines:** 56
 
 **Imports:**
 - `anyhow`
@@ -791,101 +706,437 @@ indxr/
 - `regex`
 - `serde`
 - `serde_json`
-- *... and 24 more imports*
+- *... and 25 more imports*
 
 **Declarations:**
+
+`pub [package]`
+  `name = "indxr"`
+
+  `version = "0.4.0"`
+
+  `edition = "2024"`
+
+  `rust-version = "1.85"`
+
+  `description = "Fast codebase indexer for AI agents"`
+
+  `authors = ["bahdotsh"]`
+
+  `readme = "README.md"`
+
+  `license = "MIT"`
+
+  `repository = "https://github.com/bahdotsh/indxr"`
+
+  `keywords = ["indexer", "tree-sitter", "mcp", "codebase", "ai"]`
+
+  `categories = ["command-line-utilities", "development-tools"]`
+
+
+`pub [features]`
+  `default = []`
+
+  `http = ["axum", "tokio", "uuid", "async-stream"]`
+
+  `wiki = ["reqwest", "tokio"]`
+
+
+`pub [dependencies]`
+  `anyhow = "1"`
+
+  `bincode = "1"`
+
+  `chrono = "0.4"`
+
+  `clap = { version = "4", features = ["derive"] }`
+
+  `globset = "0.4"`
+
+  `ignore = "0.4"`
+
+  `rayon = "1"`
+
+  `regex = "1"`
+
+  `serde = { version = "1", features = ["derive"] }`
+
+  `serde_json = "1"`
+
+  `shlex = "1.3"`
+
+  `serde_yaml = "0.9"`
+
+  `thiserror = "2"`
+
+  `toml = "0.8"`
+
+  `tree-sitter = "0.24"`
+
+  `tree-sitter-c = "0.23"`
+
+  `tree-sitter-cpp = "0.23"`
+
+  `tree-sitter-go = "0.23"`
+
+  `tree-sitter-java = "0.23"`
+
+  `tree-sitter-javascript = "0.23"`
+
+  `tree-sitter-python = "0.23"`
+
+  `tree-sitter-rust = "0.23"`
+
+  `tree-sitter-qmljs = "0.3"`
+
+  `tree-sitter-typescript = "0.23"`
+
+  `notify = "7"`
+
+  `notify-debouncer-mini = "0.5"`
+
+  `ureq = { version = "2", features = ["json"] }`
+
+  `xxhash-rust = { version = "0.8", features = ["xxh3"] }`
+
+  `axum = { version = "0.8", optional = true }`
+
+  `tokio = { version = "1", features = ["full"], optional = true }`
+
+  `uuid = { version = "1", features = ["v4"], optional = true }`
+
+  `async-stream = { version = "0.3", optional = true }`
+
+  `reqwest = { version = "0.12", features = ["json", "rustls-tls"], optional = true }`
+
+
+`pub [dev-dependencies]`
+  `tempfile = "3"`
+
+  `tower = { version = "0.5", features = ["util"] }`
+
 
 ---
 
 ## INDEX.md
 
-**Language:** Markdown | **Size:** 92.5 KB | **Lines:** 3323
+**Language:** Markdown | **Size:** 89.6 KB | **Lines:** 3171
 
 **Declarations:**
+
+`pub # Codebase Index: indxr`
+  `pub ## Directory Structure`
+
+  `pub ## Public API Surface`
+
+  `pub ## CLAUDE.md`
+
+  `pub ## Cargo.toml`
+
+  `pub ## INDEX.md`
+
+  `pub ## README.md`
+
+  `pub ## docs/agent-integration.md`
+
+  `pub ## docs/caching.md`
+
+  `pub ## docs/cli-reference.md`
+
+  `pub ## docs/dep-graph.md`
+
+  `pub ## docs/filtering.md`
+
+  `pub ## docs/git-diffing.md`
+
+  `pub ## docs/languages.md`
+
+  `pub ## docs/mcp-server.md`
+
+  `pub ## docs/output-formats.md`
+
+  `pub ## docs/token-budget.md`
+
+  `pub ## docs/wiki.md`
+
+  `pub ## src/budget.rs`
+
+  `pub ## src/cache/fingerprint.rs`
+
+  `pub ## src/cache/mod.rs`
+
+  `pub ## src/cli.rs`
+
+  `pub ## src/dep_graph.rs`
+
+  `pub ## src/diff.rs`
+
+  `pub ## src/error.rs`
+
+  `pub ## src/filter.rs`
+
+  `pub ## src/github.rs`
+
+  `pub ## src/indexer.rs`
+
+  `pub ## src/init.rs`
+
+  `pub ## src/languages.rs`
+
+  `pub ## src/llm/claude.rs`
+
+  `pub ## src/llm/command.rs`
+
+  `pub ## src/llm/mod.rs`
+
+  `pub ## src/llm/openai.rs`
+
+  `pub ## src/main.rs`
+
+  `pub ## src/mcp/helpers.rs`
+
+  `pub ## src/mcp/http.rs`
+
+  `pub ## src/mcp/mod.rs`
+
+  `pub ## src/mcp/tests.rs`
+
+  `pub ## src/mcp/tools.rs`
+
+  `pub ## src/mcp/type_flow.rs`
+
+  `pub ## src/model/declarations.rs`
+
+  `pub ## src/model/mod.rs`
+
+  `pub ## src/output/markdown.rs`
+
+  `pub ## src/output/mod.rs`
+
+  `pub ## src/output/yaml.rs`
+
+  `pub ## src/parser/complexity.rs`
+
+  `pub ## src/parser/mod.rs`
+
+  `pub ## src/parser/queries/c.rs`
+
+  `pub ## src/parser/queries/cpp.rs`
+
+  `pub ## src/parser/queries/go.rs`
+
+  `pub ## src/parser/queries/java.rs`
+
+  `pub ## src/parser/queries/javascript.rs`
+
+  `pub ## src/parser/queries/mod.rs`
+
+  `pub ## src/parser/queries/python.rs`
+
+  `pub ## src/parser/queries/qml.rs`
+
+  `pub ## src/parser/queries/rust.rs`
+
+  `pub ## src/parser/queries/typescript.rs`
+
+  `pub ## src/parser/regex_parser.rs`
+
+  `pub ## src/parser/tree_sitter_parser.rs`
+
+  `pub ## src/utils.rs`
+
+  `pub ## src/walker/mod.rs`
+
+  `pub ## src/watch.rs`
+
+  `pub ## src/wiki/generate.rs`
+
+  `pub ## src/wiki/mod.rs`
+
+  `pub ## src/wiki/page.rs`
+
+  `pub ## src/wiki/prompts.rs`
+
+  `pub ## src/wiki/store.rs`
+
+  `pub ## src/workspace.rs`
+
+  `pub ## tests/qml_ast_explore.rs`
+
+  `pub ## tests/wiki_integration.rs`
+
 
 ---
 
 ## README.md
 
-**Language:** Markdown | **Size:** 14.8 KB | **Lines:** 330
+**Language:** Markdown | **Size:** 14.6 KB | **Lines:** 334
 
 **Declarations:**
 
----
+`pub # indxr`
+  `pub ## Features`
 
-## accuracy_bench.py
+  `pub ## Install`
 
-**Language:** Python | **Size:** 17.8 KB | **Lines:** 502
+  `pub ## Usage`
 
-**Imports:**
-- `import argparse`
-- `import json`
-- `import os`
-- `import subprocess`
-- `import sys`
-- `import time`
-- `from dataclasses import dataclass, field, asdict`
-- `from pathlib import Path`
 
-**Declarations:**
+`pub # Setup`
+  `pub ## Codebase Knowledge Wiki`
+    `pub ### How agents use the wiki`
 
-`def _find_indxr() -> str`
+    `pub ### Wiki MCP tools (9 tools)`
 
----
+    `pub ### Auto-updating wiki`
 
-## accuracy_questions.json
 
-**Language:** JSON | **Size:** 12.5 KB | **Lines:** 267
+  `pub ## Agent Setup`
 
-**Declarations:**
+  `pub ## MCP Server`
+    `pub ### Default tools (3 compound)`
 
----
+    `pub ### Granular tools (23 — requires `--all-tools`)`
 
-## bench_questions/indxr.json
 
-**Language:** JSON | **Size:** 22.0 KB | **Lines:** 437
+  `pub ## Output`
 
-**Declarations:**
 
----
+`pub # Codebase Index: my-project`
+  `pub ## Directory Structure`
 
-## benchmark.md
+  `pub ## src/main.rs`
 
-**Language:** Markdown | **Size:** 10.1 KB | **Lines:** 260
+  `pub ## Filtering`
 
-**Declarations:**
+  `pub ## Git Structural Diffing`
 
----
+  `pub ## Modified Files`
+    `pub ### src/parser/mod.rs`
 
-## benchmark.sh
 
-**Language:** Shell | **Size:** 39.5 KB | **Lines:** 1065
+  `pub ## Complexity Hotspots`
 
-**Declarations:**
+  `pub ## Dependency Graph`
 
----
+  `pub ## Token Budget`
 
-## benchmark_results.json
+  `pub ## Languages`
 
-**Language:** JSON | **Size:** 26.4 KB | **Lines:** 321
+  `pub ## Performance`
 
-**Declarations:**
+  `pub ## Documentation`
 
----
+  `pub ## Contributing`
 
-## benchmark_results_v2.json
+  `pub ## License`
 
-**Language:** JSON | **Size:** 400.6 KB | **Lines:** 2557
-
-**Declarations:**
 
 ---
 
 ## docs/agent-integration.md
 
-**Language:** Markdown | **Size:** 20.5 KB | **Lines:** 566
+**Language:** Markdown | **Size:** 21.1 KB | **Lines:** 564
 
 **Declarations:**
+
+`pub # Agent Integration Guide`
+  `pub ## The Problem`
+
+  `pub ## The Solution`
+
+  `pub ## Three Integration Modes`
+    `pub ### 1. Static Index (dump to file)`
+
+    `pub ### 2. Live Watch (auto-updating file)`
+
+    `pub ### 3. MCP Server (live queries)`
+
+
+  `pub ## Quick Setup`
+
+  `pub ## Wiki Setup`
+
+
+`pub # Agent calls wiki_generate, plans pages, then wiki_contribute for each`
+  `pub ### Recommended MCP server setup`
+
+  `pub ### Agent workflow with wiki`
+
+  `pub ## Agent-Specific Setup`
+    `pub ### Claude Code`
+
+
+  `pub ## Codebase Navigation — MUST USE indxr MCP tools`
+    `pub ### Exploration workflow (follow this order)`
+
+    `pub ### When to use Read instead`
+
+    `pub ### Claude Desktop`
+
+    `pub ### Cursor`
+
+    `pub ### Windsurf`
+
+    `pub ### OpenAI Codex CLI`
+
+    `pub ### GitHub Copilot`
+
+    `pub ### Aider`
+
+    `pub ### Custom Agents / LLM Pipelines`
+
+
+
+`pub # Pipe to your agent`
+  `pub ## Token-Aware Exploration`
+    `pub ### Compound tools for efficient exploration`
+
+    `pub ### `get_token_estimate` (requires `--all-tools`)`
+
+    `pub ### Reinforcing with Hooks and CLAUDE.md`
+
+
+  `pub ## Effective Usage Patterns`
+    `pub ### Pattern 1: Wiki-Enhanced Exploration (MCP)`
+
+    `pub ### Pattern 2: Orientation First`
+
+
+
+`pub # Generate a scoped index for the area you're working in`
+  `pub ### Pattern 3: Review Recent Changes`
+
+
+`pub # Show structural changes for a GitHub PR`
+  `pub ### Pattern 4: API Surface for Library Work`
+
+
+`pub # Public API only, compact`
+  `pub ### Pattern 5: Symbol Lookup During Development`
+
+  `pub ### Pattern 6: Token-Budget-Aware Exploration (MCP)`
+
+  `pub ### Pattern 7: Architecture Documentation`
+
+
+`pub # Full signatures for detailed reference`
+  `pub ### Pattern 8: CI/CD Integration`
+
+
+`pub # .github/workflows/index.yml`
+  `pub ### Pattern 9: Monorepo / Workspace Projects`
+
+
+`pub # lookup_symbol(name: "Config", member: "cli")`
+  `pub ### Pattern 10: Multi-Language Projects`
+
+
+`pub # Only the TypeScript frontend`
+  `pub ## Token Budget Guidelines`
+
+  `pub ## Best Practices`
+
 
 ---
 
@@ -895,6 +1146,26 @@ indxr/
 
 **Declarations:**
 
+`pub # Caching`
+  `pub ## How It Works`
+
+  `pub ## Cache Location`
+    `pub ### Custom Location`
+
+    `pub ### Gitignore`
+
+
+  `pub ## Disabling Cache`
+
+  `pub ## Cache Format`
+
+  `pub ## Performance Impact`
+
+  `pub ## When the Cache Rebuilds`
+
+  `pub ## Cache and MCP Server`
+
+
 ---
 
 ## docs/cli-reference.md
@@ -902,6 +1173,98 @@ indxr/
 **Language:** Markdown | **Size:** 15.8 KB | **Lines:** 538
 
 **Declarations:**
+
+`pub # CLI Reference`
+  `pub ## Synopsis`
+
+  `pub ## Commands`
+    `pub ### `init``
+
+    `pub ### `watch``
+
+    `pub ### `diff``
+
+
+
+`pub # Diff a specific project`
+  `pub ### `serve``
+
+  `pub ### `wiki``
+
+
+`pub # Use external LLM command`
+  `pub ### `members``
+
+
+`pub # web         packages/web`
+  `pub ## Arguments`
+    `pub ### `[PATH]``
+
+
+  `pub ## Options`
+    `pub ### Output`
+
+    `pub ### Filtering`
+
+    `pub ### File Discovery`
+
+    `pub ### Caching`
+
+    `pub ### Complexity Hotspots`
+
+    `pub ### Dependency Graph`
+
+    `pub ### Advanced`
+
+
+  `pub ## Examples`
+    `pub ### Basic Usage`
+
+
+
+`pub # Write to file`
+  `pub ### Output Formats`
+
+
+`pub # Full detail with metadata`
+  `pub ### Filtering`
+
+
+`pub # Combined: public structs in src/model`
+  `pub ### Git Diffing`
+
+
+`pub # PR-aware structural diff (via diff subcommand)`
+  `pub ### Token Budget`
+
+
+`pub # Budget with JSON output`
+  `pub ### File Control`
+
+
+`pub # Skip large files`
+  `pub ### File Watching`
+
+
+`pub # MCP server with auto-reindex`
+  `pub ### Agent Setup`
+
+
+`pub # Re-run after initial setup (skips existing files)`
+  `pub ### Complexity Hotspots`
+
+
+`pub # 5.3    2     1      1      5  src/utils.rs:35   internal_helper`
+  `pub ### Dependency Graph`
+
+
+`pub # Write to file`
+  `pub ### Wiki (requires `--features wiki`)`
+
+
+`pub # MCP server with auto-updating wiki`
+  `pub ### Combining Options`
+
 
 ---
 
@@ -911,6 +1274,46 @@ indxr/
 
 **Declarations:**
 
+`pub # Dependency Graph`
+  `pub ## Usage`
+
+  `pub ## Graph Levels`
+    `pub ### File Level (default)`
+
+    `pub ### Symbol Level`
+
+
+  `pub ## Scoping`
+
+
+`pub # Graph centered on the MCP module`
+  `pub ## Depth Limiting`
+
+
+`pub # Up to 2 hops`
+  `pub ## Output Formats`
+    `pub ### DOT (Graphviz)`
+
+    `pub ### Mermaid`
+
+    `pub ### JSON`
+
+
+  `pub ## Examples`
+    `pub ### Full project file dependency graph`
+
+    `pub ### Module-scoped Mermaid diagram`
+
+    `pub ### Symbol-level graph for a specific module`
+
+    `pub ### JSON graph for analysis tooling`
+
+
+  `pub ## MCP Tool`
+
+  `pub ## Combining with Other Options`
+
+
 ---
 
 ## docs/filtering.md
@@ -918,6 +1321,48 @@ indxr/
 **Language:** Markdown | **Size:** 3.5 KB | **Lines:** 171
 
 **Declarations:**
+
+`pub # Filtering & Scoped Output`
+  `pub ## Path Filtering`
+
+  `pub ## Language Filtering`
+
+
+`pub # Config files only`
+  `pub ## Declaration Kind`
+
+  `pub ## Symbol Search`
+
+
+`pub # Find all "new" constructors`
+  `pub ## Visibility`
+
+  `pub ## Combining Filters`
+
+
+`pub # Find all async functions`
+  `pub ## File Discovery Options`
+
+
+`pub # Include gitignored files`
+  `pub ## Output Control`
+
+
+`pub # Both — just declarations`
+  `pub ## Practical Examples`
+    `pub ### Agent orientation for a subsystem`
+
+    `pub ### API reference generation`
+
+    `pub ### Find all test functions`
+
+    `pub ### Scope to a workspace member in a monorepo`
+
+
+
+`pub # Or use path filtering for non-workspace layouts`
+  `pub ### Minimal index for small context windows`
+
 
 ---
 
@@ -927,6 +1372,54 @@ indxr/
 
 **Declarations:**
 
+`pub # Git-Aware Structural Diffing`
+  `pub ## Usage`
+    `pub ### By git ref`
+
+
+
+`pub # Since a specific commit`
+  `pub ### By GitHub PR`
+
+
+`pub # The diff subcommand also supports --since`
+  `pub ### MCP tool`
+
+  `pub ## Output Format`
+    `pub ### Markdown`
+
+
+
+`pub # Structural Changes (since main)`
+  `pub ## Added Files`
+
+  `pub ## Removed Files`
+
+  `pub ## Modified Files`
+    `pub ### src/parser/mod.rs`
+
+    `pub ### src/model/declarations.rs`
+
+    `pub ### JSON`
+
+
+  `pub ## How It Works`
+
+  `pub ## Combining with Other Options`
+
+
+`pub # Only public API changes`
+  `pub ## Use Cases`
+    `pub ### Code Review Preparation`
+
+    `pub ### Release Notes`
+
+    `pub ### Agent Context for Recent Changes`
+
+    `pub ### Monitoring API Stability`
+
+
+
 ---
 
 ## docs/languages.md
@@ -935,13 +1428,183 @@ indxr/
 
 **Declarations:**
 
+`pub # Supported Languages`
+  `pub ## Tree-Sitter Languages (Full AST Parsing)`
+    `pub ### Rust`
+
+    `pub ### Python`
+
+    `pub ### TypeScript`
+
+    `pub ### JavaScript`
+
+    `pub ### Go`
+
+    `pub ### Java`
+
+    `pub ### C`
+
+    `pub ### C++`
+
+
+  `pub ## Regex Languages (Structural Extraction)`
+    `pub ### Shell`
+
+    `pub ### TOML`
+
+    `pub ### YAML`
+
+    `pub ### JSON`
+
+    `pub ### SQL`
+
+    `pub ### Markdown`
+
+    `pub ### Protobuf`
+
+    `pub ### GraphQL`
+
+    `pub ### Ruby`
+
+    `pub ### Kotlin`
+
+    `pub ### Swift`
+
+    `pub ### C#`
+
+    `pub ### Objective-C`
+
+    `pub ### XML`
+
+    `pub ### HTML`
+
+    `pub ### CSS`
+
+    `pub ### Gradle`
+
+    `pub ### CMake`
+
+    `pub ### Properties`
+
+
+  `pub ## Language Detection`
+
+  `pub ## Filtering by Language`
+
+
 ---
 
 ## docs/mcp-server.md
 
-**Language:** Markdown | **Size:** 33.0 KB | **Lines:** 973
+**Language:** Markdown | **Size:** 33.2 KB | **Lines:** 973
 
 **Declarations:**
+
+`pub # MCP Server`
+  `pub ## Starting the Server`
+    `pub ### stdio transport (default)`
+
+    `pub ### Streamable HTTP transport`
+
+
+
+`pub # Start on a specific address`
+  `pub ### Server Options`
+
+  `pub ### Auto-Reindexing with `--watch``
+
+  `pub ## Protocol`
+    `pub ### Lifecycle`
+
+
+  `pub ## Available Tools`
+    `pub ### `list_workspace_members``
+
+    `pub ### `lookup_symbol``
+
+    `pub ### `list_declarations``
+
+    `pub ### `search_signatures``
+
+    `pub ### `get_tree``
+
+    `pub ### `get_imports``
+
+    `pub ### `get_stats``
+
+    `pub ### `get_file_summary``
+
+    `pub ### `read_source``
+
+    `pub ### `get_file_context``
+
+    `pub ### `get_token_estimate``
+
+    `pub ### `search_relevant``
+
+    `pub ### `regenerate_index``
+
+    `pub ### `explain_symbol``
+
+    `pub ### `batch_file_summaries``
+
+    `pub ### `get_public_api``
+
+    `pub ### `get_callers``
+
+    `pub ### `get_related_tests``
+
+    `pub ### `get_dependency_graph``
+
+    `pub ### `get_diff_summary``
+
+    `pub ### `get_hotspots``
+
+    `pub ### `get_health``
+
+    `pub ### `get_type_flow``
+
+
+  `pub ## Wiki Tools`
+    `pub ### `wiki_generate``
+
+    `pub ### `wiki_search``
+
+    `pub ### `wiki_read``
+
+    `pub ### `wiki_status``
+
+    `pub ### `wiki_contribute``
+
+    `pub ### `wiki_update``
+
+    `pub ### `wiki_suggest_contribution``
+
+    `pub ### `wiki_compound``
+
+    `pub ### `wiki_record_failure``
+
+
+  `pub ## Configuration for AI Tools`
+    `pub ### Claude Code`
+
+    `pub ### Claude Desktop`
+
+    `pub ### Cursor`
+
+    `pub ### Windsurf`
+
+    `pub ### Codex CLI`
+
+    `pub ### Custom Integration`
+      `pub #### stdio`
+
+
+
+
+`pub # Call a compound tool`
+  `pub #### Streamable HTTP`
+
 
 ---
 
@@ -951,6 +1614,40 @@ indxr/
 
 **Declarations:**
 
+`pub # Output Formats`
+  `pub ## Formats`
+    `pub ### Markdown (default)`
+
+
+
+`pub # Codebase Index: project-name`
+  `pub ## Directory Structure`
+
+  `pub ## Public API Surface`
+
+  `pub ## src/main.rs`
+    `pub ### JSON`
+
+    `pub ### YAML`
+
+
+  `pub ## Detail Levels`
+    `pub ### `summary``
+
+
+
+`pub # Codebase Index: my-project`
+  `pub ## Directory Structure`
+    `pub ### `signatures` (default)`
+
+
+
+`pub # or just`
+  `pub ### `full``
+
+  `pub ## Choosing the Right Combination`
+
+
 ---
 
 ## docs/token-budget.md
@@ -959,29 +1656,83 @@ indxr/
 
 **Declarations:**
 
+`pub # Token Budget`
+  `pub ## Usage`
+
+  `pub ## Token Estimation`
+
+  `pub ## Progressive Truncation Strategy`
+    `pub ### 1. Truncate Long Doc Comments`
+
+    `pub ### 2. Strip All Doc Comments`
+
+    `pub ### 3. Remove Private Declarations`
+
+    `pub ### 4. Remove Children`
+
+    `pub ### 5. Drop Least-Important Files`
+
+
+  `pub ## What's Always Preserved`
+
+  `pub ## Recommended Budgets`
+
+  `pub ## Combining with Filters`
+
+
+`pub # Specific language within budget`
+  `pub ## Tips`
+
+
 ---
 
 ## docs/wiki.md
 
-**Language:** Markdown | **Size:** 8.6 KB | **Lines:** 247
+**Language:** Markdown | **Size:** 8.6 KB | **Lines:** 245
 
 **Declarations:**
 
----
+`pub # Codebase Knowledge Wiki`
+  `pub ## Overview`
+    `pub ### Page Types`
 
-## plan.md
 
-**Language:** Markdown | **Size:** 8.9 KB | **Lines:** 216
+  `pub ## CLI Usage`
+    `pub ### Generate a wiki from scratch`
 
-**Declarations:**
 
----
 
-## roadmap.md
+`pub # Use an external command as the LLM backend`
+  `pub ### Update wiki after code changes`
 
-**Language:** Markdown | **Size:** 2.9 KB | **Lines:** 58
 
-**Declarations:**
+`pub # Update with a specific model`
+  `pub ### Check wiki health`
+
+  `pub ### Compound knowledge into the wiki`
+
+
+`pub # With a custom title for new pages`
+  `pub ## LLM Configuration`
+
+  `pub ## MCP Tools`
+    `pub ### Agent-driven workflow`
+
+    `pub ### Auto-updating wiki with `serve --watch``
+
+
+  `pub ## Wiki Structure on Disk`
+
+
+`pub # Parser Module`
+  `pub ### Cross-references`
+
+  `pub ### Contradiction tracking`
+
+  `pub ### Failure pattern recording`
+
+  `pub ## Gitignore`
+
 
 ---
 
@@ -1051,6 +1802,9 @@ indxr/
 `struct CacheEntry`
 > Fields: `mtime: u64`, `size: u64`, `content_hash: u64`, `file_index: FileIndex`
 
+`pub struct Cache`
+> Fields: `store: CacheStore`, `cache_dir: PathBuf`, `dirty: bool`
+
 **`impl Cache`**
   `pub fn load(cache_dir: &Path) -> Self`
 
@@ -1082,6 +1836,27 @@ indxr/
 
 **Declarations:**
 
+`pub struct Cli`
+> Fields: `command: Option<Command>`, `path: PathBuf`, `output: Option<PathBuf>`, `format: OutputFormat`, `detail: DetailLevel`, `max_depth: Option<usize>`, `max_file_size: u64`, `languages: Option<Vec<String>>`, `exclude: Option<Vec<String>>`, `no_gitignore: bool`, `no_cache: bool`, `cache_dir: PathBuf`, `quiet: bool`, `stats: bool`, `filter_path: Option<String>`, `symbol: Option<String>`, `kind: Option<String>`, `public_only: bool`, `since: Option<String>`, `max_tokens: Option<usize>`, `omit_imports: bool`, `omit_tree: bool`, `hotspots: bool`, `graph: Option<GraphFormat>`, `graph_level: Option<GraphLevel>`, `graph_depth: Option<usize>`
+
+`pub struct IndexOpts`
+> Fields: `path: PathBuf`, `cache_dir: PathBuf`, `max_file_size: u64`, `max_depth: Option<usize>`, `exclude: Option<Vec<String>>`, `no_gitignore: bool`, `member: Option<Vec<String>>`, `no_workspace: bool`
+
+`pub enum Command`
+> Variants: `Serve`, `Watch`, `Diff`, `Members`, `Wiki`, `Init`
+
+`pub enum WikiAction`
+> Variants: `Generate`, `Update`, `Status`, `Compound`
+
+`pub enum OutputFormat`
+> Variants: `Markdown`, `Json`, `Yaml`
+
+`pub enum GraphFormat`
+> Variants: `Dot`, `Mermaid`, `Json`
+
+`pub enum GraphLevel`
+> Variants: `File`, `Symbol`
+
 `mod tests`
 
 ---
@@ -1100,6 +1875,21 @@ indxr/
 - `crate::utils::contains_word_boundary`
 
 **Declarations:**
+
+`pub struct DepGraph`
+> Fields: `nodes: Vec<GraphNode>`, `edges: Vec<GraphEdge>`
+
+`pub struct GraphNode`
+> Fields: `id: String`, `label: String`, `kind: NodeKind`
+
+`pub enum NodeKind`
+> Variants: `File`, `Symbol`
+
+`pub struct GraphEdge`
+> Fields: `from: String`, `to: String`, `kind: EdgeKind`
+
+`pub enum EdgeKind`
+> Variants: `Imports`, `References`, `Extends`, `Implements`
 
 `struct PathInfo<'a>`
 > Fields: `path: &'a Path`, `lower: String`, `no_ext_lower: String`
@@ -1152,6 +1942,18 @@ indxr/
 
 **Declarations:**
 
+`pub struct StructuralDiff`
+> Fields: `since_ref: String`, `files_added: Vec<PathBuf>`, `files_removed: Vec<PathBuf>`, `files_modified: Vec<FileDiff>`
+
+`pub struct FileDiff`
+> Fields: `path: PathBuf`, `declarations_added: Vec<DeclChange>`, `declarations_removed: Vec<DeclChange>`, `declarations_modified: Vec<DeclModification>`
+
+`pub struct DeclChange`
+> Fields: `kind: DeclKind`, `name: String`, `signature: String`
+
+`pub struct DeclModification`
+> Fields: `kind: DeclKind`, `name: String`, `old_signature: String`, `new_signature: String`
+
 `fn git_diff_names(root: &Path, since_ref: &str, diff_filter: Option<&str>) -> Result<Vec<PathBuf>>`
 
 `fn diff_declarations(path: PathBuf, old: &[Declaration], new: &[Declaration]) -> FileDiff`
@@ -1171,6 +1973,9 @@ indxr/
 
 **Declarations:**
 
+`pub enum IndxrError`
+> Variants: `Io`, `Parse`, `UnsupportedLanguage`
+
 ---
 
 ## src/filter.rs
@@ -1183,6 +1988,9 @@ indxr/
 - `crate::model::declarations::{DeclKind, Declaration, Visibility}`
 
 **Declarations:**
+
+`pub struct FilterOptions`
+> Fields: `filter_path: Option<String>`, `symbol: Option<String>`, `kind: Option<DeclKind>`, `public_only: bool`
 
 **`impl FilterOptions`**
   `pub fn is_active(&self) -> bool`
@@ -1217,6 +2025,9 @@ indxr/
 
 `struct GitHubRef`
 > Fields: `ref_name: String`
+
+`pub struct PrInfo`
+> Fields: `number: u64`, `title: String`, `base_ref: String`, `head_ref: String`
 
 `fn get_github_token() -> Result<String>`
 
@@ -1253,6 +2064,15 @@ indxr/
 
 **Declarations:**
 
+`pub struct IndexConfig`
+> Fields: `root: PathBuf`, `cache_dir: PathBuf`, `max_file_size: u64`, `max_depth: Option<usize>`, `exclude: Vec<String>`, `no_gitignore: bool`
+
+`pub struct ParseResult`
+> Fields: `file_index: FileIndex`, `relative_path: PathBuf`, `size: u64`, `mtime: u64`, `content_bytes: Option<Vec<u8>>`
+
+`pub struct WorkspaceConfig`
+> Fields: `workspace: Workspace`, `template: IndexConfig`
+
 `fn aggregate_stats(members: &[MemberIndex], duration: std::time::Duration) -> IndexStats`
 
 ---
@@ -1273,6 +2093,9 @@ indxr/
 - `crate::workspace::{self, WorkspaceKind}`
 
 **Declarations:**
+
+`pub struct InitOptions`
+> Fields: `path: PathBuf`, `claude: bool`, `cursor: bool`, `windsurf: bool`, `codex: bool`, `global: bool`, `generate_index: bool`, `force: bool`, `include_hooks: bool`, `include_rtk: bool`, `max_file_size: u64`
 
 `enum WriteResult`
 > Variants: `Created`, `Updated`, `Skipped`, `Appended`
@@ -1347,7 +2170,7 @@ indxr/
 
 ## src/languages.rs
 
-**Language:** Rust | **Size:** 6.3 KB | **Lines:** 178
+**Language:** Rust | **Size:** 6.5 KB | **Lines:** 183
 
 **Imports:**
 - `std::fmt`
@@ -1355,6 +2178,9 @@ indxr/
 - `serde::{Deserialize, Serialize}`
 
 **Declarations:**
+
+`pub enum Language`
+> Variants: `Rust`, `Python`, `TypeScript`, `JavaScript`, `Go`, `Java`, `C`, `Cpp`, `Shell`, `Toml`, `Yaml`, `Json`, `Sql`, `Markdown`, `Protobuf`, `GraphQL`, `Ruby`, `Kotlin`, `Swift`, `CSharp`, `ObjectiveC`, `Xml`, `Html`, `Css`, `Gradle`, `Cmake`, `Properties`, `Qml`
 
 **`impl Language`**
   `pub fn detect(path: &Path) -> Option<Self>`
@@ -1438,6 +2264,21 @@ indxr/
 
 
 **`impl std::error::Error for TransientLlmError`**
+
+`pub struct Message`
+> Fields: `role: Role`, `content: String`
+
+`pub enum Role`
+> Variants: `User`, `Assistant`
+
+`pub struct LlmConfig`
+> Fields: `provider: Provider`, `api_key: String`, `model: String`, `max_tokens: usize`
+
+`pub enum Provider`
+> Variants: `Claude`, `OpenAiCompatible`, `Command`
+
+`pub struct LlmClient`
+> Fields: `config: LlmConfig`, `http: reqwest::Client`, `max_retries: usize`
 
 **`impl LlmClient`**
   `pub fn from_env(model_override: Option<&str>) -> Result<Self>`
@@ -1572,6 +2413,18 @@ indxr/
 
 **Declarations:**
 
+`pub(super) struct SymbolMatch`
+> Fields: `file: String`, `kind: String`, `name: String`, `signature: String`, `line: usize`, `doc_comment: Option<String>`
+
+`pub(super) struct SignatureMatch`
+> Fields: `file: String`, `kind: String`, `name: String`, `signature: String`, `line: usize`
+
+`pub(super) struct ShallowDeclaration`
+> Fields: `kind: String`, `name: String`, `signature: String`, `line: usize`, `children_count: Option<usize>`
+
+`pub(super) struct RelevanceMatch`
+> Fields: `file: String`, `symbol: Option<String>`, `kind: Option<String>`, `signature: Option<String>`, `line: Option<usize>`, `match_on: String`, `score: u32`
+
 ---
 
 ## src/mcp/http.rs
@@ -1668,6 +2521,9 @@ indxr/
 `pub(crate) type WikiStoreOption = Option<crate::wiki::store::WikiStore>`
 
 `pub(crate) type WikiStoreOption = ()`
+
+`pub struct McpServerConfig`
+> Fields: `watch: bool`, `debounce_ms: u64`, `all_tools: bool`, `wiki_auto_update: bool`, `wiki_debounce_ms: u64`, `wiki_model: Option<String>`, `wiki_exec: Option<String>`
 
 `fn reload_wiki_store(root: &std::path::Path) -> WikiStoreOption`
 
@@ -2167,6 +3023,12 @@ indxr/
 
 **Declarations:**
 
+`pub(super) struct TypeInfo`
+> Fields: `param_types: Vec<String>`, `return_types: Vec<String>`
+
+`pub(super) struct TypeFlowEntry`
+> Fields: `file: String`, `name: String`, `kind: String`, `signature: String`, `line: usize`, `role: String`
+
 `const PRIMITIVE_TYPES: &[&str] = &[ "str", "string", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "int", "float", "double", "long", "short", "byte", "void", "undefined", "null", "none", "any", "object", "number", "boolean", "self", "error", ]`
 
 `fn is_primitive(name: &str) -> bool`
@@ -2207,6 +3069,24 @@ indxr/
 
 **Declarations:**
 
+`pub struct Declaration`
+> Fields: `kind: DeclKind`, `name: String`, `signature: String`, `visibility: Visibility`, `line: usize`, `doc_comment: Option<String>`, `children: Vec<Declaration>`, `is_test: bool`, `is_async: bool`, `is_deprecated: bool`, `body_lines: Option<usize>`, `complexity: Option<ComplexityMetrics>`, `relationships: Vec<Relationship>`
+
+`pub struct ComplexityMetrics`
+> Fields: `cyclomatic: u16`, `max_nesting: u16`, `param_count: u16`
+
+`pub struct Relationship`
+> Fields: `kind: RelKind`, `target: String`
+
+`pub enum RelKind`
+> Variants: `Implements`, `Extends`
+
+`pub enum DeclKind`
+> Variants: `Function`, `Struct`, `Enum`, `Trait`, `Impl`, `Constant`, `Static`, `TypeAlias`, `Module`, `Class`, `Field`, `Variant`, `Method`, `Interface`, `Namespace`, `Macro`, `ConfigKey`, `Heading`, `TableDef`, `Service`, `Message`, `RpcMethod`, `ShellFunction`, `SchemaType`, `Route`
+
+`pub enum Visibility`
+> Variants: `Public`, `PublicCrate`, `Private`
+
 **`impl Declaration`**
   `pub fn new( kind: DeclKind, name: String, signature: String, visibility: Visibility, line: usize, ) -> Self`
 
@@ -2239,6 +3119,30 @@ indxr/
 
 **Declarations:**
 
+`pub enum DetailLevel`
+> Variants: `Summary`, `Signatures`, `Full`
+
+`pub struct CodebaseIndex`
+> Fields: `root: PathBuf`, `root_name: String`, `generated_at: String`, `files: Vec<FileIndex>`, `tree: Vec<TreeEntry>`, `stats: IndexStats`
+
+`pub struct FileIndex`
+> Fields: `path: PathBuf`, `language: Language`, `size: u64`, `lines: usize`, `imports: Vec<Import>`, `declarations: Vec<Declaration>`
+
+`pub struct Import`
+> Fields: `text: String`
+
+`pub struct TreeEntry`
+> Fields: `path: String`, `is_dir: bool`, `depth: usize`
+
+`pub struct IndexStats`
+> Fields: `total_files: usize`, `total_lines: usize`, `languages: HashMap<String, usize>`, `duration_ms: u64`
+
+`pub struct WorkspaceIndex`
+> Fields: `root: PathBuf`, `root_name: String`, `workspace_kind: WorkspaceKind`, `generated_at: String`, `members: Vec<MemberIndex>`, `stats: IndexStats`
+
+`pub struct MemberIndex`
+> Fields: `name: String`, `relative_path: PathBuf`, `index: CodebaseIndex`
+
 **`impl WorkspaceIndex`**
   `pub fn find_member(&self, name: &str) -> Option<&MemberIndex>`
 
@@ -2251,7 +3155,7 @@ indxr/
 
 ## src/output/markdown.rs
 
-**Language:** Rust | **Size:** 11.5 KB | **Lines:** 352
+**Language:** Rust | **Size:** 11.6 KB | **Lines:** 353
 
 **Imports:**
 - `std::collections::HashSet`
@@ -2263,6 +3167,12 @@ indxr/
 - `super::OutputFormatter`
 
 **Declarations:**
+
+`pub struct MarkdownOptions`
+> Fields: `omit_imports: bool`, `omit_tree: bool`
+
+`pub struct MarkdownFormatter`
+> Fields: `options: MarkdownOptions`
 
 **`impl MarkdownFormatter`**
   `pub fn new() -> Self`
@@ -2297,6 +3207,10 @@ indxr/
 
 **Declarations:**
 
+`pub trait OutputFormatter`
+  `fn format(&self, index: &CodebaseIndex, detail: DetailLevel) -> Result<String>`
+
+
 ---
 
 ## src/output/yaml.rs
@@ -2319,7 +3233,7 @@ indxr/
 
 ## src/parser/complexity.rs
 
-**Language:** Rust | **Size:** 36.7 KB | **Lines:** 1185
+**Language:** Rust | **Size:** 37.6 KB | **Lines:** 1213
 
 **Imports:**
 - `std::collections::HashMap`
@@ -2357,7 +3271,16 @@ indxr/
 
 `fn is_ts_function_kind(kind: &DeclKind) -> bool`
 
+`pub struct HotspotEntry`
+> Fields: `file: String`, `name: String`, `kind: String`, `line: usize`, `cyclomatic: u16`, `max_nesting: u16`, `param_count: u16`, `body_lines: usize`, `score: f64`
+
 `fn collect_hotspots_from_decls( file_path: &str, decls: &[Declaration], min_complexity: u16, entries: &mut Vec<HotspotEntry>, )`
+
+`pub struct HottestFile`
+> Fields: `file: String`, `functions: usize`, `avg_complexity: f64`, `max_complexity: u16`
+
+`pub struct HealthReport`
+> Fields: `total_functions: usize`, `analyzed: usize`, `avg_cc: f64`, `median_cc: u16`, `max_cc: u16`, `p90_cc: u16`, `avg_nesting: f64`, `avg_params: f64`, `avg_body_lines: f64`, `high_complexity_count: usize`, `high_complexity_pct: f64`, `documented_pct: f64`, `test_count: usize`, `deprecated_count: usize`, `public_api_count: usize`, `hottest_files: Vec<HottestFile>`
 
 `struct HealthAccumulator`
 > Fields: `total_functions: usize`, `analyzed: usize`, `cc_values: Vec<u16>`, `nesting_sum: f64`, `params_sum: f64`, `body_lines_sum: f64`, `high_complexity: usize`, `documented: usize`, `test_count: usize`, `deprecated_count: usize`, `public_api_count: usize`, `file_stats: HashMap<String, (Vec<u16>, u16)>`
@@ -2376,7 +3299,7 @@ indxr/
 
 ## src/parser/mod.rs
 
-**Language:** Rust | **Size:** 2.0 KB | **Lines:** 81
+**Language:** Rust | **Size:** 2.0 KB | **Lines:** 82
 
 **Imports:**
 - `std::path::Path`
@@ -2385,6 +3308,15 @@ indxr/
 - `crate::model::FileIndex`
 
 **Declarations:**
+
+`pub trait LanguageParser: Send + Sync`
+  `fn language(&self) -> Language`
+
+  `fn parse_file(&self, path: &Path, content: &str) -> Result<FileIndex>`
+
+
+`pub struct ParserRegistry`
+> Fields: `parsers: Vec<Box<dyn LanguageParser>>`
 
 **`impl ParserRegistry`**
   `pub fn new() -> Self`
@@ -2668,7 +3600,7 @@ indxr/
 
 ## src/parser/queries/mod.rs
 
-**Language:** Rust | **Size:** 1.0 KB | **Lines:** 31
+**Language:** Rust | **Size:** 1.1 KB | **Lines:** 33
 
 **Imports:**
 - `crate::languages::Language`
@@ -2676,6 +3608,10 @@ indxr/
 - `crate::model::declarations::Declaration`
 
 **Declarations:**
+
+`pub trait DeclExtractor: Send + Sync`
+  `fn extract(&self, root: tree_sitter::Node<'_>, source: &str) -> (Vec<Import>, Vec<Declaration>)`
+
 
 ---
 
@@ -2730,6 +3666,52 @@ indxr/
 `fn extract_decorated(node: Node<'_>, source: &str) -> Vec<Declaration>`
 
 `fn extract_assignment(node: Node<'_>, source: &str) -> Option<Declaration>`
+
+---
+
+## src/parser/queries/qml.rs
+
+**Language:** Rust | **Size:** 17.2 KB | **Lines:** 570
+
+**Imports:**
+- `tree_sitter::Node`
+- `crate::model::Import`
+- `crate::model::declarations::{DeclKind, Declaration, Visibility}`
+- `super::DeclExtractor`
+
+**Declarations:**
+
+**`impl DeclExtractor for QmlExtractor`**
+  `fn extract(&self, root: Node<'_>, source: &str) -> (Vec<Import>, Vec<Declaration>)`
+
+
+`fn node_text<'a>(node: Node<'_>, source: &'a str) -> &'a str`
+
+`fn extract_doc_comment(node: Node<'_>, source: &str) -> Option<String>`
+
+`fn extract_import(node: Node<'_>, source: &str) -> Option<Import>`
+
+`fn extract_object_definition(node: Node<'_>, source: &str) -> Option<Declaration>`
+
+`fn extract_object_members(initializer: Node<'_>, source: &str) -> Vec<Declaration>`
+
+`fn extract_member(node: Node<'_>, source: &str) -> Option<Declaration>`
+
+`fn extract_property(node: Node<'_>, source: &str) -> Option<Declaration>`
+
+`fn extract_signal(node: Node<'_>, source: &str) -> Option<Declaration>`
+
+`fn extract_binding(node: Node<'_>, source: &str) -> Option<Declaration>`
+
+`fn extract_function(node: Node<'_>, source: &str) -> Option<Declaration>`
+
+`fn extract_enum(node: Node<'_>, source: &str) -> Option<Declaration>`
+
+`fn extract_inline_component(node: Node<'_>, source: &str) -> Option<Declaration>`
+
+`fn extract_object_definition_binding(node: Node<'_>, source: &str) -> Option<Declaration>`
+
+`mod tests`
 
 ---
 
@@ -2866,6 +3848,9 @@ indxr/
 
 **Declarations:**
 
+`pub struct RegexParser`
+> Fields: `language: Language`
+
 **`impl RegexParser`**
   `pub fn new(language: Language) -> Self`
 
@@ -2928,7 +3913,7 @@ indxr/
 
 ## src/parser/tree_sitter_parser.rs
 
-**Language:** Rust | **Size:** 2.4 KB | **Lines:** 76
+**Language:** Rust | **Size:** 2.5 KB | **Lines:** 77
 
 **Imports:**
 - `std::path::Path`
@@ -2940,6 +3925,9 @@ indxr/
 - `super::queries`
 
 **Declarations:**
+
+`pub struct TreeSitterParser`
+> Fields: `language: Language`
 
 **`impl TreeSitterParser`**
   `pub fn new(language: Language) -> Self`
@@ -2977,6 +3965,12 @@ indxr/
 
 **Declarations:**
 
+`pub struct WalkResult`
+> Fields: `files: Vec<FileEntry>`, `tree: Vec<TreeEntry>`
+
+`pub struct FileEntry`
+> Fields: `path: PathBuf`, `relative_path: PathBuf`, `language: Language`, `size: u64`, `mtime: u64`
+
 ---
 
 ## src/watch.rs
@@ -2995,6 +3989,12 @@ indxr/
 - `crate::languages::Language`
 
 **Declarations:**
+
+`pub struct WatchGuard`
+> Fields: `_debouncer: notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>`
+
+`pub struct WatchOptions`
+> Fields: `ws_config: WorkspaceConfig`, `output: Option<PathBuf>`, `debounce_ms: u64`, `quiet: bool`
 
 `fn write_workspace_index( ws_config: &WorkspaceConfig, output_path: &Path, ) -> Result<crate::model::WorkspaceIndex>`
 
@@ -3026,11 +4026,17 @@ indxr/
 `struct PagePlan`
 > Fields: `id: String`, `page_type: PageType`, `title: String`, `source_files: Vec<String>`
 
+`pub struct UpdateResult`
+> Fields: `pages_updated: usize`, `pages_removed: usize`, `pages_created: usize`
+
 `struct IncrementalPlan`
 > Fields: `assignments: Vec<FileAssignment>`, `new_pages: Vec<PagePlan>`
 
 `struct FileAssignment`
 > Fields: `file: String`, `page_id: String`
+
+`pub struct WikiGenerator<'a>`
+> Fields: `llm: &'a LlmClient`, `workspace: &'a WorkspaceIndex`, `file_index: HashMap<String, Vec<(&'a FileIndex, String)>>`
 
 **`impl<'a> WikiGenerator<'a>`**
   `pub fn new(llm: &'a LlmClient, workspace: &'a WorkspaceIndex) -> Self`
@@ -3141,6 +4147,18 @@ indxr/
 
 **Declarations:**
 
+`pub struct WikiPage`
+> Fields: `frontmatter: Frontmatter`, `content: String`
+
+`pub struct Frontmatter`
+> Fields: `id: String`, `title: String`, `page_type: PageType`, `source_files: Vec<String>`, `generated_at_ref: String`, `generated_at: String`, `links_to: Vec<String>`, `covers: Vec<String>`, `contradictions: Vec<Contradiction>`, `failures: Vec<FailurePattern>`
+
+`pub struct Contradiction`
+> Fields: `description: String`, `source: String`, `detected_at: String`, `resolved_at: Option<String>`
+
+`pub struct FailurePattern`
+> Fields: `symptom: String`, `attempted_fix: String`, `diagnosis: String`, `actual_fix: Option<String>`, `source_files: Vec<String>`, `recorded_at: String`, `resolved_at: Option<String>`
+
 **`impl FailurePattern`**
   `pub fn from_json(v: &serde_json::Value, now: &str) -> Option<Self>`
 
@@ -3148,6 +4166,9 @@ indxr/
 
   `pub fn to_json_detail(&self, index: usize) -> serde_json::Value`
 
+
+`pub enum PageType`
+> Variants: `Architecture`, `Module`, `Entity`, `Topic`, `Index`
 
 **`impl std::fmt::Display for PageType`**
   `fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result`
@@ -3196,9 +4217,18 @@ indxr/
 
 **Declarations:**
 
+`pub struct ManifestEntry`
+> Fields: `id: String`, `page_type: PageType`, `file: String`, `source_files: Vec<String>`
+
+`pub struct WikiManifest`
+> Fields: `version: u32`, `generated_at_ref: String`, `generated_at: String`, `pages: Vec<ManifestEntry>`
+
 **`impl Default for WikiManifest`**
   `fn default() -> Self`
 
+
+`pub struct WikiStore`
+> Fields: `root: PathBuf`, `manifest: WikiManifest`, `pages: Vec<WikiPage>`
 
 **`impl WikiStore`**
   `pub fn new(wiki_dir: &Path) -> Self`
@@ -3237,9 +4267,18 @@ indxr/
 
 **Declarations:**
 
+`pub enum WorkspaceKind`
+> Variants: `Cargo`, `Npm`, `Go`, `None`
+
 **`impl WorkspaceKind`**
   `pub fn as_str(&self) -> &'static str`
 
+
+`pub struct WorkspaceMember`
+> Fields: `name: String`, `path: PathBuf`, `relative_path: PathBuf`
+
+`pub struct Workspace`
+> Fields: `root: PathBuf`, `kind: WorkspaceKind`, `members: Vec<WorkspaceMember>`
 
 `fn detect_cargo_workspace(root: &Path, cargo_toml: &Path) -> Result<Option<Workspace>>`
 
@@ -3299,25 +4338,4 @@ indxr/
 `fn test_wiki_update_no_changes()`
 
 `fn test_mock_llm_script_returns_valid_plan()`
-
----
-
-## token_count.py
-
-**Language:** Python | **Size:** 2.9 KB | **Lines:** 89
-
-**Imports:**
-- `import sys`
-- `import os`
-- `import argparse`
-
-**Declarations:**
-
----
-
-## wiki-plan.md
-
-**Language:** Markdown | **Size:** 8.3 KB | **Lines:** 253
-
-**Declarations:**
 
