@@ -9,14 +9,14 @@ source_files:
 - src/model/mod.rs
 - src/model/declarations.rs
 generated_at_ref: ''
-generated_at: 2026-04-07T13:24:22Z
+generated_at: 2026-04-08T20:28:01Z
 links_to: []
 covers: []
 ---
 
 # Architecture Overview
 
-indxr is a fast Rust codebase indexer designed for AI agents. It extracts structural maps (declarations, imports, directory trees) using tree-sitter and regex parsing across 27 languages, then serves that information through an MCP (Model Context Protocol) server or CLI output.
+indxr is a fast Rust codebase indexer designed for AI agents. It extracts structural maps (declarations, imports, directory trees) using tree-sitter and regex parsing across 28 languages, then serves that information through an MCP (Model Context Protocol) server or CLI output.
 
 ## Core Pipeline
 
@@ -24,11 +24,11 @@ The indexing pipeline follows a linear flow:
 
 1. **Directory Walking** (`src/walker/mod.rs`) — Traverses the file tree respecting `.gitignore` rules via the `ignore` crate. Produces a list of `FileEntry` values with paths and metadata.
 
-2. **Language Detection** (`src/languages.rs`) — Each file's extension is mapped to one of 27 `Language` variants. This determines which parser strategy to use (tree-sitter or regex).
+2. **Language Detection** (`src/languages.rs`) — Each file's extension is mapped to one of 28 `Language` variants. This determines which parser strategy to use (tree-sitter or regex).
 
 3. **Cache Check** (`src/cache/`) — Before parsing, the cache is consulted using mtime + xxh3 hash fingerprinting. If a file hasn't changed, the cached `FileIndex` is reused. Binary format via `bincode` for speed.
 
-4. **Parallel Parsing** (`src/parser/`, `src/indexer.rs`) — Files are parsed in parallel using `rayon`. The `ParserRegistry` dispatches to either `TreeSitterParser` (8 languages: Rust, Python, JavaScript, TypeScript, Go, Java, C, C++) or `RegexParser` (19 languages). Each parser implements the `LanguageParser` trait, producing a `FileIndex` with declarations, imports, and metadata.
+4. **Parallel Parsing** (`src/parser/`, `src/indexer.rs`) — Files are parsed in parallel using `rayon`. The `ParserRegistry` dispatches to either `TreeSitterParser` (9 languages: Rust, Python, JavaScript, TypeScript, Go, Java, C, C++, QML) or `RegexParser` (19 languages). Each parser implements the `LanguageParser` trait, producing a `FileIndex` with declarations, imports, and metadata.
 
 5. **Complexity Analysis** (`src/parser/complexity.rs`) — For tree-sitter languages, per-function complexity metrics are computed (nesting depth, branch count, line count). These feed the hotspot analysis.
 
@@ -69,7 +69,7 @@ Monitors the filesystem using `notify` crate with debounced re-indexing. Keeps `
 
 ## Key Design Decisions
 
-- **Tree-sitter + regex dual strategy**: Tree-sitter provides accurate AST parsing for 8 major languages. Regex provides "good enough" extraction for 19 more languages, maximizing coverage without needing grammar files for every language.
+- **Tree-sitter + regex dual strategy**: Tree-sitter provides accurate AST parsing for 9 major languages. Regex provides "good enough" extraction for 19 more languages, maximizing coverage without needing grammar files for every language.
 - **Workspace-first architecture**: Everything operates through `WorkspaceIndex`, even single projects. This makes monorepo support (Cargo, npm, Go workspaces) natural.
 - **Token-aware output**: The budget system means the output is always usable by LLMs regardless of codebase size.
 - **Incremental caching**: Only re-parses changed files, making repeated indexing near-instant.

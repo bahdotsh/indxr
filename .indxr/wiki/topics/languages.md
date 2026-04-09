@@ -5,18 +5,18 @@ page_type: topic
 source_files:
 - src/languages.rs
 generated_at_ref: ''
-generated_at: 2026-04-07T13:27:50Z
+generated_at: 2026-04-08T20:26:52Z
 links_to: []
 covers: []
 ---
 
 # Language Support
 
-indxr supports 27 programming languages, detected by file extension and parsed using one of two strategies.
+indxr supports 28 programming languages, detected by file extension and parsed using one of two strategies.
 
 ## Language Detection (`src/languages.rs`)
 
-The `Language` enum has 27 variants. `Language::from_path(path)` maps file extensions to languages:
+The `Language` enum has 28 variants. `Language::from_path(path)` maps file extensions to languages:
 
 | Language | Extensions |
 |----------|-----------|
@@ -28,6 +28,7 @@ The `Language` enum has 27 variants. `Language::from_path(path)` maps file exten
 | Java | `.java` |
 | C | `.c`, `.h` |
 | Cpp | `.cpp`, `.hpp`, `.cc`, `.cxx`, `.hxx`, `.hh` |
+| QML | `.qml` |
 | Ruby | `.rb` |
 | Kotlin | `.kt`, `.kts` |
 | Swift | `.swift` |
@@ -52,8 +53,8 @@ The `Language` enum has 27 variants. `Language::from_path(path)` maps file exten
 
 `Language::uses_tree_sitter()` determines the parsing strategy:
 
-### Tree-Sitter (8 languages) — Full AST parsing
-Rust, Python, JavaScript, TypeScript, Go, Java, C, C++
+### Tree-Sitter (9 languages) — Full AST parsing
+Rust, Python, JavaScript, TypeScript, Go, Java, C, C++, QML
 
 These languages get:
 - Accurate declaration extraction via AST traversal
@@ -74,5 +75,5 @@ Regex parsing provides:
 
 `Language::is_config()` identifies configuration/data languages (TOML, YAML, JSON, XML, Properties, Gradle, CMake) which may receive different treatment in some contexts (e.g., file importance scoring).
 
-`Display` trait implementation provides human-readable names (e.g., `Language::Cpp` → `"C++"`).
+`Display` trait implementation provides human-readable names (e.g., `Language::Cpp` → `"C++"`, `Language::Qml` → `"QML"`).
 

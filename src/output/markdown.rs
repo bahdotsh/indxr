@@ -196,10 +196,11 @@ fn format_declaration(
     let indent = "  ".repeat(depth);
 
     // Skip top-level public declarations that were already shown in the API surface
-    // (but always show impl blocks and their children)
+    // (but always show impl blocks and declarations with children, e.g. QML root components)
     if depth == 0
         && matches!(decl.visibility, Visibility::Public)
         && !matches!(decl.kind, DeclKind::Impl)
+        && decl.children.is_empty()
         && shown_in_api.contains(&(file_path.to_string(), decl.line))
     {
         return Ok(());
@@ -275,9 +276,9 @@ fn format_declaration(
                 if !fields.is_empty() {
                     writeln!(out, "{}> Fields: {}", indent, fields.join(", "))?;
                 }
-                // Methods inside class/struct
+                // Methods, functions, nested classes/enums inside class/struct
                 for child in &decl.children {
-                    if child.kind == DeclKind::Method || child.kind == DeclKind::Function {
+                    if !matches!(child.kind, DeclKind::Field | DeclKind::Variant) {
                         format_declaration(out, child, depth + 1, detail, shown_in_api, file_path)?;
                     }
                 }

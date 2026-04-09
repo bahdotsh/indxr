@@ -4,6 +4,7 @@ pub mod go;
 pub mod java;
 pub mod javascript;
 pub mod python;
+pub mod qml;
 pub mod rust;
 pub mod typescript;
 
@@ -26,6 +27,7 @@ pub fn get_extractor(language: &Language) -> Box<dyn DeclExtractor> {
         Language::Java => Box::new(java::JavaExtractor),
         Language::C => Box::new(c::CExtractor),
         Language::Cpp => Box::new(cpp::CppExtractor),
+        Language::Qml => Box::new(qml::QmlExtractor),
         _ => unreachable!("get_extractor should only be called for tree-sitter languages"),
     }
 }

@@ -9,7 +9,7 @@ source_files:
 - src/parser/complexity.rs
 - src/parser/queries/mod.rs
 generated_at_ref: ''
-generated_at: 2026-04-07T13:24:41Z
+generated_at: 2026-04-08T20:27:00Z
 links_to: []
 covers: []
 ---
@@ -35,7 +35,7 @@ The `ParserRegistry` holds both parser implementations and dispatches based on l
 
 ### Tree-Sitter Parser (`src/parser/tree_sitter_parser.rs`)
 
-Parses 8 languages with full AST accuracy: **Rust, Python, JavaScript, TypeScript, Go, Java, C, C++**.
+Parses 9 languages with full AST accuracy: **Rust, Python, JavaScript, TypeScript, Go, Java, C, C++, QML**.
 
 Each language has a dedicated `DeclExtractor` trait implementation in `src/parser/queries/`:
 - `rust.rs` — Rust extractor (functions, structs, enums, traits, impls, modules, type aliases)
@@ -46,6 +46,7 @@ Each language has a dedicated `DeclExtractor` trait implementation in `src/parse
 - `java.rs` — Java extractor (classes, interfaces, enums, methods, fields)
 - `c.rs` — C extractor (functions, structs, enums, typedefs, macros)
 - `cpp.rs` — C++ extractor (classes, namespaces, templates, plus C features)
+- `qml.rs` — QML extractor (components, properties, signals, functions, enums, inline components)
 
 The `DeclExtractor` trait pattern decouples language-specific extraction logic from the generic tree-walking machinery in `TreeSitterParser`.
 
@@ -63,6 +64,8 @@ For tree-sitter languages, per-function complexity metrics are computed:
 - **Nesting depth** — maximum nesting level of control flow
 - **Branch count** — number of branches (if/else/match arms)
 - **Line count** — function body length
+
+QML shares the same complexity node tables as JavaScript (function_declaration, method_definition, arrow_function, function_expression for function boundaries; standard JS branch/nesting nodes), since QML embeds JavaScript for its imperative logic.
 
 These metrics feed:
 - `collect_hotspots()` — ranks functions by composite complexity score
